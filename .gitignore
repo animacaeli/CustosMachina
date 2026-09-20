@@ -1,0 +1,22 @@
+# --- 根 ---
+.DS_Store
+*.log
+
+# --- backend (Go) ---
+backend/server
+backend/data/
+backend/coverage.out
+
+# --- frontend (vben / pnpm) ---
+frontend/node_modules/
+frontend/**/dist/
+frontend/**/dist.zip
+frontend/.turbo/
+frontend/.cache/
+frontend**/.vite/
+
+# --- 本地环境 ---
+.env.local
+deploy/.env
+.vscode
+.idea

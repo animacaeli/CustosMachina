@@ -1,0 +1,27 @@
+# CustosMachina 平台自身部署栈（MVP：单机 docker-compose）。
+# 使用：cp .env.example .env && docker compose up -d
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      CUSTOS_HTTP_ADDR: ":8080"
+      CUSTOS_DATABASE_DRIVER: ${CUSTOS_DATABASE_DRIVER:-sqlite}
+      CUSTOS_DATABASE_DSN: ${CUSTOS_DATABASE_DSN:-/data/custos.db}
+      CUSTOS_AUTH_JWT_SECRET: ${CUSTOS_AUTH_JWT_SECRET:?请在 .env 中设置}
+      CUSTOS_SECRETS_MASTER_KEY: ${CUSTOS_SECRETS_MASTER_KEY:-}
+    volumes:
+      - backend-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # 前端镜像（或选择 go embed 单镜像交付，见 plan.md D13）；M5 打磨阶段启用
+  # frontend:
+  #   build:
+  #     context: ../frontend
+  #     dockerfile: Dockerfile
+
+volumes:
+  backend-data:
