@@ -55,8 +55,7 @@ export async function refreshTokenApi(): Promise<{ data: string }> {
  * 获取用户权限码（FR3.3 后端下发）
  */
 export async function getAccessCodesApi() {
-  const result = await requestClient.get<AuthApi.PermissionResult>(
-    '/auth/permissions',
-  );
+  const result =
+    await requestClient.get<AuthApi.PermissionResult>('/auth/permissions');
   return result.permissions;
 }

@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { PlatformUser } from '#/api/system/user';
+
 import { onMounted, reactive, ref } from 'vue';
 
 import { message } from 'ant-design-vue';
@@ -6,7 +8,6 @@ import { message } from 'ant-design-vue';
 import {
   createUserApi,
   getUserListApi,
-  type PlatformUser,
   updateUserRolesApi,
 } from '#/api/system/user';
 
@@ -57,7 +58,9 @@ const editRoles = ref<string[]>([]);
 
 function openEdit(user: PlatformUser) {
   editUser.value = user;
-  editRoles.value = user.roles ? user.roles.split(',').map((r) => r.trim()) : [];
+  editRoles.value = user.roles
+    ? user.roles.split(',').map((r) => r.trim())
+    : [];
   editOpen.value = true;
 }
 
@@ -96,7 +99,9 @@ async function submitRoles() {
         </a-table-column>
         <a-table-column title="状态" data-index="status" :width="90">
           <template #default="{ text }">
-            <a-tag :color="text === 'active' ? 'green' : 'red'">{{ text }}</a-tag>
+            <a-tag :color="text === 'active' ? 'green' : 'red'">
+              {{ text }}
+            </a-tag>
           </template>
         </a-table-column>
         <a-table-column title="操作" :width="120">
@@ -112,20 +117,35 @@ async function submitRoles() {
     <a-modal v-model:open="createOpen" title="新建用户" @ok="submitCreate">
       <a-form layout="vertical" class="pt-2">
         <a-form-item label="显示名" required>
-          <a-input v-model:value="createForm.displayName" placeholder="如：张三" />
+          <a-input
+            v-model:value="createForm.displayName"
+            placeholder="如：张三"
+          />
         </a-form-item>
         <a-form-item label="登录账号（可留空，IM 用户无本地账号）">
           <a-input v-model:value="createForm.username" />
         </a-form-item>
         <a-form-item label="角色">
-          <a-select v-model:value="createForm.roles" :options="BUILTIN_ROLES.map((r) => ({ label: r, value: r }))" />
+          <a-select
+            v-model:value="createForm.roles"
+            :options="BUILTIN_ROLES.map((r) => ({ label: r, value: r }))"
+          />
         </a-form-item>
       </a-form>
     </a-modal>
 
-    <a-modal v-model:open="editOpen" :title="`调整角色：${editUser?.displayName ?? ''}`" @ok="submitRoles">
-      <a-checkbox-group v-model:value="editRoles" class="flex flex-col gap-2 py-2">
-        <a-checkbox v-for="r in BUILTIN_ROLES" :key="r" :value="r">{{ r }}</a-checkbox>
+    <a-modal
+      v-model:open="editOpen"
+      :title="`调整角色：${editUser?.displayName ?? ''}`"
+      @ok="submitRoles"
+    >
+      <a-checkbox-group
+        v-model:value="editRoles"
+        class="flex flex-col gap-2 py-2"
+      >
+        <a-checkbox v-for="r in BUILTIN_ROLES" :key="r" :value="r">
+          {{ r }}
+        </a-checkbox>
       </a-checkbox-group>
     </a-modal>
   </div>

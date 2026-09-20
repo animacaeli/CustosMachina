@@ -44,8 +44,16 @@ function openEdit(role: RoleWithPolicies) {
   editOpen.value = true;
 }
 
+/** 权限概览列：超出 6 条时的省略提示（空串表示不显示） */
+function more(record: RoleWithPolicies) {
+  const n = record.policies.length;
+  return n > 6 ? `+${n - 6} 条` : '';
+}
+
 function addRow() {
-  draft.value.push({ act: 'GET', path: '', role: editRole.value!.name });
+  if (editRole.value) {
+    draft.value.push({ act: 'GET', path: '', role: editRole.value.name });
+  }
 }
 
 function removeRow(index: number) {
@@ -76,21 +84,31 @@ async function save() {
         type="info"
         show-icon
       />
-      <a-table :data-source="roles" :loading="loading" :pagination="false" row-key="name">
+      <a-table
+        :data-source="roles"
+        :loading="loading"
+        :pagination="false"
+        row-key="name"
+      >
         <a-table-column title="角色" data-index="name" :width="120">
           <template #default="{ text }">
             <a-tag color="purple">{{ text }}</a-tag>
           </template>
         </a-table-column>
         <a-table-column title="权限数" :width="80">
-          <template #default="{ record }">{{ record.policies.length }}</template>
+          <template #default="{ record }">
+            {{ record.policies.length }}
+          </template>
         </a-table-column>
         <a-table-column title="权限概览">
           <template #default="{ record }">
-            <a-tag v-for="p in record.policies.slice(0, 6)" :key="`${p.path}:${p.act}`">
+            <a-tag
+              v-for="p in record.policies.slice(0, 6)"
+              :key="`${p.path}:${p.act}`"
+            >
               {{ p.path }} · {{ p.act }}
             </a-tag>
-            <span v-if="record.policies.length > 6">等 {{ record.policies.length }} 条</span>
+            <span v-if="more(record)">{{ more(record) }}</span>
             <span v-if="record.policies.length === 0">（无权限）</span>
           </template>
         </a-table-column>
@@ -109,14 +127,29 @@ async function save() {
       </a-table>
     </a-card>
 
-    <a-modal v-model:open="editOpen" :title="`编辑权限矩阵：${editRole?.name ?? ''}`" width="640px" @ok="save">
+    <a-modal
+      v-model:open="editOpen"
+      :title="`编辑权限矩阵：${editRole?.name ?? ''}`"
+      width="640px"
+      @ok="save"
+    >
       <div class="mb-2">
         <a-button size="small" @click="addRow">+ 添加策略</a-button>
       </div>
-      <div v-for="(p, i) in draft" :key="i" class="mb-2 flex items-center gap-2">
+      <div
+        v-for="(p, i) in draft"
+        :key="i"
+        class="mb-2 flex items-center gap-2"
+      >
         <a-input v-model:value="p.path" placeholder="/services/*" />
-        <a-input v-model:value="p.act" placeholder="GET|POST" style="width: 160px" />
-        <a-button danger size="small" type="link" @click="removeRow(i)">删除</a-button>
+        <a-input
+          v-model:value="p.act"
+          placeholder="GET|POST"
+          style="width: 160px"
+        />
+        <a-button danger size="small" type="link" @click="removeRow(i)">
+          删除
+        </a-button>
       </div>
     </a-modal>
   </div>
