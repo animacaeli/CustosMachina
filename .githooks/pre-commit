@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# pre-commit：快速增量检查（只查暂存文件，保持秒级）
+set -euo pipefail
+
+staged() { git diff --cached --name-only --diff-filter=ACM | grep -E "$1" || true; }
+
+# Go：gofmt + vet（有暂存的 .go 文件才跑）
+if [ -n "$(staged '^backend/.*\.go$')" ]; then
+  cd backend
+  unformatted=$(gofmt -l .)
+  if [ -n "$unformatted" ]; then
+    echo "❌ gofmt 未通过："; echo "$unformatted"; exit 1
+  fi
+  go vet ./...
+  cd ..
+fi
+
+# 前端：eslint --fix 暂存的自研代码（web-antd 应用；vben 上游包不在本项目维护范围）
+fe_files=$(staged '^frontend/(apps/web-antd|api)/.*\.(ts|vue)$')
+if [ -n "$fe_files" ]; then
+  cd frontend
+  echo "$fe_files" | sed 's|^frontend/||' | xargs pnpm exec eslint --fix
+  cd ..
+  # --fix 可能改动文件，若有改动需重新暂存
+  if ! git diff --quiet -- $(echo "$fe_files"); then
+    echo "⚠️  eslint --fix 修改了部分文件，请重新 git add 后再提交"
+    exit 1
+  fi
+fi
+
+echo "✅ pre-commit 通过"

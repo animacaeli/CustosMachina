@@ -8,7 +8,7 @@ export namespace AuthApi {
   }
 
   /** 后端原始返回：{token, user} */
-  interface BackendLoginResult {
+  export interface BackendLoginResult {
     token: string;
     user: Record<string, any>;
   }
@@ -44,9 +44,10 @@ export async function logoutApi() {
 }
 
 /**
- * 刷新 token：后端暂未实现（无状态 JWT，过期重登），保留导出以满足 request.ts 引用
+ * 刷新 token：后端暂未实现（无状态 JWT，过期重登录），
+ * 保留签名以满足 request.ts 引用，调用即抛错。
  */
-export async function refreshTokenApi(): Promise<never> {
+export async function refreshTokenApi(): Promise<{ data: string }> {
   throw new Error('token 刷新未启用');
 }
 

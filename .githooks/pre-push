@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# pre-push：完整门禁（后端测试 + 前端构建），较慢但在推送前兜底
+set -euo pipefail
+
+echo "▶ 后端 go test..."
+(cd backend && go test -race -count=1 ./...)
+
+echo "▶ 后端 go vet..."
+(cd backend && go vet ./...)
+
+echo "▶ 前端 lint + 构建主应用..."
+(cd frontend && pnpm lint && pnpm build:antd)
+
+echo "✅ pre-push 通过"
