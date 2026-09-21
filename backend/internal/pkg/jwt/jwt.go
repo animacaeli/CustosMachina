@@ -30,6 +30,11 @@ func NewManager(cfg *config.Config) *Manager {
 }
 
 func (m *Manager) Generate(userID uint, displayName string, isAdmin bool) (string, error) {
+	return m.GenerateWithTTL(userID, displayName, isAdmin, m.ttl)
+}
+
+// GenerateWithTTL 按给定有效期签发（access 短效 / refresh 由调用方另行存储，不走 JWT）。
+func (m *Manager) GenerateWithTTL(userID uint, displayName string, isAdmin bool, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID:      userID,
@@ -39,7 +44,7 @@ func (m *Manager) Generate(userID uint, displayName string, isAdmin bool) (strin
 			Issuer:    m.issuer,
 			Subject:   displayName,
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)

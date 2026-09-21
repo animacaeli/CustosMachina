@@ -19,6 +19,7 @@ interface WebAntdPreferencesExtension {
 export const overridesPreferences = defineOverridesPreferences({
   // overrides
   app: {
+    enableRefreshToken: true,
     locale: 'zh-CN',
     name: import.meta.env.VITE_APP_TITLE,
   },

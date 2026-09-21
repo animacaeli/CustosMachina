@@ -9,16 +9,26 @@ import (
 	"github.com/custos-machina/backend/internal/server"
 )
 
-// registerQRLoginRoutes 扫码登录相关路由（公开）+ 提供商配置管理（admin）。
+// registerQRLoginRoutes 扫码登录相关路由（公开）+ 会话与配置管理。
 func (h *Handler) registerQRLoginRoutes(r server.Router) {
 	r.Public.GET("/auth/qrlogin/url", h.qrLoginURL)
 	r.Public.GET("/auth/qrlogin/callback", h.qrCallback)
+	r.Public.POST("/auth/refresh", h.refresh)
+	r.Authed.POST("/auth/logout", h.logout)
 
 	im := r.Authed.Group("/im-configs")
 	{
-		im.GET("/wecom", h.wecomStatus)
-		im.PUT("/wecom", h.wecomSave)
-		im.POST("/wecom/verify", h.wecomVerify)
+		im.GET("", h.imStatus)
+		im.PUT("/:provider", h.imSave)
+		im.POST("/:provider/verify", h.imVerify)
+	}
+
+	st := r.Authed.Group("/settings")
+	{
+		st.GET("/token-ttl", h.tokenTTLGet)
+		st.PUT("/token-ttl", h.tokenTLTPut)
+		st.GET("/redis", h.redisGet)
+		st.PUT("/redis", h.redisPut)
 	}
 }
 
@@ -36,56 +46,144 @@ func (h *Handler) qrCallback(c *gin.Context) {
 	state := c.Query("state")
 	result, err := h.svc.HandleQRCallback(c.Request.Context(), code, state)
 	if err != nil {
-		// 回调由企微浏览器发起，返回 JSON 无意义，重定向到前端错误态
+		// 回调由 IM 浏览器发起，返回 JSON 无意义，重定向到前端错误态
 		httpx.OK(c, gin.H{"error": err.Error()})
 		return
 	}
-	c.Redirect(http.StatusFound, h.svc.FrontendCallbackURL(result.Token))
+	c.Redirect(http.StatusFound, h.svc.FrontendCallbackURL(result.AccessToken, result.RefreshToken))
 }
 
-type wecomConfigInput struct {
-	CorpID  string `json:"corpId" binding:"required"`
-	AgentID string `json:"agentId" binding:"required"`
-	Secret  string `json:"secret" binding:"required"`
-	Enabled bool   `json:"enabled"`
+type refreshInput struct {
+	RefreshToken string `json:"refreshToken" binding:"required"`
 }
 
-func (h *Handler) wecomStatus(c *gin.Context) {
-	status, err := h.svc.WeComStatus(c.Request.Context())
-	if err != nil {
-		httpx.FailServer(c, err)
-		return
-	}
-	httpx.OK(c, status)
-}
-
-func (h *Handler) wecomSave(c *gin.Context) {
-	var in wecomConfigInput
+// refresh 用 refresh token 换新的 token 对（轮换）。
+func (h *Handler) refresh(c *gin.Context) {
+	var in refreshInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	if err := h.svc.SaveWeComConfig(c.Request.Context(), WeComConfig{
-		CorpID: in.CorpID, AgentID: in.AgentID, Secret: in.Secret,
-	}, in.Enabled); err != nil {
+	result, err := h.svc.Refresh(c.Request.Context(), in.RefreshToken)
+	if err != nil {
+		httpx.FailUnauthorized(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{
+		"accessToken": result.AccessToken, "refreshToken": result.RefreshToken,
+	})
+}
+
+// logout 吊销 refresh token（access 短效自然过期）。
+func (h *Handler) logout(c *gin.Context) {
+	var in refreshInput
+	_ = c.ShouldBindJSON(&in) // 允许空 body：access 自行过期
+	if in.RefreshToken != "" {
+		if err := h.svc.Logout(c.Request.Context(), in.RefreshToken); err != nil {
+			httpx.FailServer(c, err)
+			return
+		}
+	}
+	httpx.OK(c, gin.H{"ok": true})
+}
+
+// --- IM 提供商配置（通用，三家） ---
+
+func (h *Handler) imStatus(c *gin.Context) {
+	httpx.OK(c, h.svc.IMProviderStatus(c.Request.Context()))
+}
+
+type imSaveInput struct {
+	Config  map[string]string `json:"config" binding:"required"`
+	Enabled bool              `json:"enabled"`
+}
+
+func (h *Handler) imSave(c *gin.Context) {
+	provider := c.Param("provider")
+	var in imSaveInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	cfgJSON, err := jsonMarshalString(in.Config)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SaveIMProviderConfig(c.Request.Context(), provider, cfgJSON, in.Enabled); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	httpx.OK(c, gin.H{"saved": true})
 }
 
-// wecomVerify 测试凭证连通性；body 为空时测试已保存凭证。
-func (h *Handler) wecomVerify(c *gin.Context) {
-	var in *wecomConfigInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		in = nil // 允许空 body：测试已保存的凭证
+// imVerify 连通性测试；body 带 config 时测新凭证，空 body 测已存凭证。
+func (h *Handler) imVerify(c *gin.Context) {
+	provider := c.Param("provider")
+	var in imSaveInput
+	cfgJSON := ""
+	if err := c.ShouldBindJSON(&in); err == nil && in.Config != nil {
+		b, _ := jsonMarshalString(in.Config)
+		cfgJSON = b
 	}
-	var cfg *WeComConfig
-	if in != nil && in.CorpID != "" {
-		cfg = &WeComConfig{CorpID: in.CorpID, AgentID: in.AgentID, Secret: in.Secret}
-	}
-	if err := h.svc.VerifyWeComConfig(c.Request.Context(), cfg); err != nil {
+	if err := h.svc.VerifyProviderConfig(c.Request.Context(), provider, cfgJSON); err != nil {
 		httpx.Fail(c, http.StatusBadGateway, 502, "连通性测试失败: "+err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"ok": true})
+}
+
+// --- token 有效期与 Redis 设置 ---
+
+func (h *Handler) tokenTTLGet(c *gin.Context) {
+	access, refresh := h.svc.TokenTTLs()
+	httpx.OK(c, gin.H{"accessTtl": access.String(), "refreshTtl": refresh.String()})
+}
+
+type tokenTTLInput struct {
+	AccessTtl  string `json:"accessTtl" binding:"required"`  // 如 30m
+	RefreshTtl string `json:"refreshTtl" binding:"required"` // 如 168h
+}
+
+func (h *Handler) tokenTLTPut(c *gin.Context) {
+	var in tokenTTLInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	access, refresh, err := h.svc.parseDurations(in.AccessTtl, in.RefreshTtl)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SetTokenTTLs(c.Request.Context(), access, refresh); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"accessTtl": access.String(), "refreshTtl": refresh.String()})
+}
+
+func (h *Handler) redisGet(c *gin.Context) {
+	cfg := h.svc.RedisConfigCurrent()
+	httpx.OK(c, gin.H{"addr": cfg.Addr, "db": cfg.DB, "configured": cfg.Addr != ""})
+}
+
+type redisInput struct {
+	Addr     string `json:"addr" binding:"required"`
+	Password string `json:"password"`
+	DB       int    `json:"db"`
+}
+
+func (h *Handler) redisPut(c *gin.Context) {
+	var in redisInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SaveRedisConfig(c.Request.Context(), RedisConfig{
+		Addr: in.Addr, Password: in.Password, DB: in.DB,
+	}); err != nil {
+		httpx.Fail(c, http.StatusBadGateway, 502, err.Error())
 		return
 	}
 	httpx.OK(c, gin.H{"ok": true})

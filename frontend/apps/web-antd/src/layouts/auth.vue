@@ -12,6 +12,7 @@ const logoDark = computed(() => preferences.logo.sourceDark);
 <template>
   <AuthPageLayout
     :app-name="appName"
+    :copyright="false"
     :logo="logo"
     :logo-dark="logoDark"
     page-description="轻量级 AI DevOps 运维平台"

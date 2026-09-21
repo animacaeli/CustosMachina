@@ -18,29 +18,110 @@ import (
 const qrStateTTL = 5 * time.Minute
 
 // activeProvider 返回当前激活的 IM 插件实例（凭证已注入）。
-// wecom 需要 DB 配置；mock 免配置直接可用（仅限本地联调）。
+// 选择规则：env 指定 mock（本地联调）→ 否则取 im_provider_configs 中唯一启用行；
+// 多行启用时按 provider 名字母序取第一（配置页应保证只启用一家，FR1.4）。
 func (s *AuthService) activeProvider(ctx context.Context) (IdentityProvider, error) {
-	name := s.cfg.IM.Provider
-	p, err := NewProvider(name)
+	if s.cfg.IM.Provider == "mock" {
+		return NewProvider("mock")
+	}
+	rows, err := s.bindings.ListProviderConfigs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if w, ok := p.(*WeComProvider); ok {
-		stored, err := s.bindings.GetProviderConfig(ctx, name)
-		if err != nil || !stored.Enabled {
-			return nil, ErrProviderNotConfigured
+	var stored *identity.IMProviderConfig
+	for i := range rows {
+		if rows[i].Enabled {
+			stored = &rows[i]
+			break
 		}
-		plain, err := s.cipher.Decrypt(stored.CredentialsEncrypted)
-		if err != nil {
-			return nil, fmt.Errorf("解密企微凭证失败: %w", err)
-		}
-		var wc WeComConfig
-		if err := json.Unmarshal([]byte(plain), &wc); err != nil {
+	}
+	if stored == nil {
+		return nil, ErrProviderNotConfigured
+	}
+	return s.buildProvider(stored)
+}
+
+// buildProvider 从加密配置行构建插件实例。
+func (s *AuthService) buildProvider(stored *identity.IMProviderConfig) (IdentityProvider, error) {
+	p, err := NewProvider(stored.Provider)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := s.cipher.Decrypt(stored.CredentialsEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("解密 %s 凭证失败: %w", stored.Provider, err)
+	}
+	switch v := p.(type) {
+	case *WeComProvider:
+		var c WeComConfig
+		if err := json.Unmarshal([]byte(plain), &c); err != nil {
 			return nil, fmt.Errorf("企微凭证格式错误: %w", err)
 		}
-		w.Configure(wc)
+		v.Configure(c)
+	case *DingTalkProvider:
+		var c DingTalkConfig
+		if err := json.Unmarshal([]byte(plain), &c); err != nil {
+			return nil, fmt.Errorf("钉钉凭证格式错误: %w", err)
+		}
+		v.Configure(c)
+	case *FeishuProvider:
+		var c FeishuConfig
+		if err := json.Unmarshal([]byte(plain), &c); err != nil {
+			return nil, fmt.Errorf("飞书凭证格式错误: %w", err)
+		}
+		v.Configure(c)
 	}
 	return p, nil
+}
+
+// SaveIMProviderConfig 通用：按 provider 存 JSON 配置（加密）并设启用位。
+// 启用某家时其余家自动禁用（单选语义）。
+func (s *AuthService) SaveIMProviderConfig(ctx context.Context, provider, cfgJSON string, enabled bool) error {
+	if _, err := NewProvider(provider); err != nil {
+		return err
+	}
+	if s.cipher == nil {
+		return cryptopkg.ErrNoMasterKey
+	}
+	enc, err := s.cipher.Encrypt(cfgJSON)
+	if err != nil {
+		return err
+	}
+	if enabled {
+		// 关掉其他家
+		rows, _ := s.bindings.ListProviderConfigs(ctx)
+		for _, r := range rows {
+			if r.Provider != provider && r.Enabled {
+				r.Enabled = false
+				_ = s.bindings.SaveProviderConfig(ctx, &r)
+			}
+		}
+	}
+	return s.bindings.SaveProviderConfig(ctx, &identity.IMProviderConfig{
+		Provider: provider, CredentialsEncrypted: enc, Enabled: enabled,
+	})
+}
+
+// IMProviderStatus 所有提供商配置状态（配置页/setup 用；不含密文）。
+func (s *AuthService) IMProviderStatus(ctx context.Context) []map[string]any {
+	rows, _ := s.bindings.ListProviderConfigs(ctx)
+	byName := map[string]identity.IMProviderConfig{}
+	for _, r := range rows {
+		byName[r.Provider] = r
+	}
+	out := []map[string]any{}
+	for _, name := range ProviderNames() {
+		if name == "mock" {
+			continue
+		}
+		entry := map[string]any{"provider": name, "configured": false, "enabled": false}
+		if r, ok := byName[name]; ok {
+			entry["configured"] = true
+			entry["enabled"] = r.Enabled
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // redirectURI 企微回调地址：{PublicURL}/api/auth/qrlogin/callback。
@@ -119,70 +200,54 @@ func (s *AuthService) HandleQRCallback(ctx context.Context, code, state string) 
 	if u.Status == identity.StatusDisabled {
 		return nil, ErrUserDisabled
 	}
-	return s.IssueToken(u)
+	return s.IssueTokenPair(ctx, u)
 }
 
-// FrontendCallbackURL 回调成功后带 token 重定向回前端扫码页。
-func (s *AuthService) FrontendCallbackURL(token string) string {
-	u, _ := url.Parse(strings.TrimRight(s.cfg.IM.FrontendURL, "/") + "/auth/qrcode-login")
+// FrontendCallbackURL 回调成功后带双 token 重定向回前端扫码页。
+// refresh 放 URL fragment（# 后），不进服务器日志与 Referer。
+func (s *AuthService) FrontendCallbackURL(accessToken, refreshToken string) string {
+	base := strings.TrimRight(s.cfg.IM.FrontendURL, "/") + "/auth/qrcode-login"
+	u, _ := url.Parse(base)
 	q := u.Query()
-	q.Set("token", token)
+	q.Set("token", accessToken)
 	u.RawQuery = q.Encode()
-	return u.String()
+	return u.String() + "#refresh=" + refreshToken
 }
 
-// --- 提供商配置管理（admin） ---
+// --- 提供商配置管理（admin / setup）---
 
-// SaveWeComConfig 加密落库企微凭证（admin 配置页）。
-func (s *AuthService) SaveWeComConfig(ctx context.Context, cfg WeComConfig, enabled bool) error {
-	if s.cipher == nil {
-		return cryptopkg.ErrNoMasterKey
-	}
-	plain, err := json.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	enc, err := s.cipher.Encrypt(string(plain))
-	if err != nil {
-		return err
-	}
-	return s.bindings.SaveProviderConfig(ctx, &identity.IMProviderConfig{
-		Provider: "wecom", CredentialsEncrypted: enc, Enabled: enabled,
-	})
-}
-
-// WeComStatus 企微配置状态（不回传 secret 明文）。
-func (s *AuthService) WeComStatus(ctx context.Context) (map[string]any, error) {
-	stored, err := s.bindings.GetProviderConfig(ctx, "wecom")
-	if err != nil {
-		return map[string]any{"provider": "wecom", "configured": false, "enabled": false}, nil
-	}
-	corpID := ""
-	if plain, err := s.cipher.Decrypt(stored.CredentialsEncrypted); err == nil {
-		var wc WeComConfig
-		if json.Unmarshal([]byte(plain), &wc) == nil {
-			corpID = wc.CorpID
-		}
-	}
-	return map[string]any{
-		"provider": "wecom", "configured": true, "enabled": stored.Enabled, "corpId": corpID,
-	}, nil
-}
-
-// VerifyWeComConfig 验证给定凭证（保存前测试）或已存凭证。
-func (s *AuthService) VerifyWeComConfig(ctx context.Context, cfg *WeComConfig) error {
-	w := &WeComProvider{}
-	if cfg != nil {
-		w.Configure(*cfg)
-	} else {
-		p, err := s.activeProvider(ctx)
+// VerifyProviderConfig 验证给定凭证 JSON（保存前测试）或已存凭证。
+func (s *AuthService) VerifyProviderConfig(ctx context.Context, provider, cfgJSON string) error {
+	var p IdentityProvider
+	var err error
+	if cfgJSON != "" {
+		p, err = NewProvider(provider)
 		if err != nil {
 			return err
 		}
-		var ok bool
-		if w, ok = p.(*WeComProvider); !ok {
-			return errors.New("当前激活的提供商不是企微")
+		switch v := p.(type) {
+		case *WeComProvider:
+			c := WeComConfig{}
+			_ = json.Unmarshal([]byte(cfgJSON), &c)
+			v.Configure(c)
+		case *DingTalkProvider:
+			c := DingTalkConfig{}
+			_ = json.Unmarshal([]byte(cfgJSON), &c)
+			v.Configure(c)
+		case *FeishuProvider:
+			c := FeishuConfig{}
+			_ = json.Unmarshal([]byte(cfgJSON), &c)
+			v.Configure(c)
+		}
+	} else {
+		stored, err2 := s.bindings.GetProviderConfig(ctx, provider)
+		if err2 != nil || !stored.Enabled {
+			return ErrProviderNotConfigured
+		}
+		p, err = s.buildProvider(stored)
+		if err != nil {
+			return err
 		}
 	}
-	return w.Verify(ctx)
+	return p.Verify(ctx)
 }

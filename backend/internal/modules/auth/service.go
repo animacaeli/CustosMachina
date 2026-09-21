@@ -21,27 +21,33 @@ var (
 )
 
 type AuthService struct {
-	users    identity.UserRepository
-	bindings identity.IMBindingRepository
-	jwt      *jwtpkg.Manager
-	cfg      *config.Config
-	cipher   *cryptopkg.Cipher
-	qrStates sync.Map // state -> 过期时间，5 分钟有效
+	users         identity.UserRepository
+	bindings      identity.IMBindingRepository
+	settings      identity.SettingsRepository
+	jwt           *jwtpkg.Manager
+	cfg           *config.Config
+	cipher        *cryptopkg.Cipher
+	qrStates      sync.Map            // state -> 过期时间，5 分钟有效
+	refreshHolder *refreshStoreHolder // refresh token 存储（Redis/内存）
 }
 
 func NewAuthService(
 	users identity.UserRepository,
 	bindings identity.IMBindingRepository,
+	settings identity.SettingsRepository,
 	jwt *jwtpkg.Manager,
 	cfg *config.Config,
 	cipher *cryptopkg.Cipher,
 ) *AuthService {
-	return &AuthService{users: users, bindings: bindings, jwt: jwt, cfg: cfg, cipher: cipher}
-}
-
-type LoginResult struct {
-	Token string        `json:"token"`
-	User  identity.User `json:"user"`
+	return &AuthService{
+		users:         users,
+		bindings:      bindings,
+		settings:      settings,
+		jwt:           jwt,
+		cfg:           cfg,
+		cipher:        cipher,
+		refreshHolder: newRefreshStoreHolder(),
+	}
 }
 
 // LoginLocal 本地账号登录（超管 break-glass / 开发期使用）。
@@ -59,20 +65,7 @@ func (s *AuthService) LoginLocal(ctx context.Context, username, password string)
 	if u.Status == identity.StatusDisabled {
 		return nil, ErrUserDisabled
 	}
-	token, err := s.jwt.Generate(u.ID, u.DisplayName, u.IsLocalAdmin)
-	if err != nil {
-		return nil, err
-	}
-	return &LoginResult{Token: token, User: *u}, nil
-}
-
-// IssueToken 为 IM 扫码登录（JIT 注册后）签发 token 复用。
-func (s *AuthService) IssueToken(u *identity.User) (*LoginResult, error) {
-	token, err := s.jwt.Generate(u.ID, u.DisplayName, u.IsLocalAdmin)
-	if err != nil {
-		return nil, err
-	}
-	return &LoginResult{Token: token, User: *u}, nil
+	return s.IssueTokenPair(ctx, u)
 }
 
 func (s *AuthService) ParseToken(tokenStr string) (*jwtpkg.Claims, error) {

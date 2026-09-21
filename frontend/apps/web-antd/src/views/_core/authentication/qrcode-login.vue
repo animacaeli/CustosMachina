@@ -23,11 +23,21 @@ const loading = ref(true);
 const error = ref('');
 const isMock = ref(false);
 
-/** 回调落地：?token=xxx → 保存会话并进入首页 */
+/** 回调落地：?token=access + #refresh=refresh → 保存会话并进入首页 */
 async function handleCallbackToken(token: string) {
   loading.value = true;
   try {
     accessStore.setAccessToken(token);
+    // refresh token 走 URL fragment（不进服务端日志/Referer）
+    const m = window.location.hash.match(/refresh=([a-f0-9]+)/);
+    if (m?.[1]) {
+      accessStore.setRefreshToken(m[1]);
+      history.replaceState(
+        null,
+        '',
+        window.location.pathname + window.location.search,
+      );
+    }
     await authStore.fetchUserInfo();
     await router.push({ path: preferences.app.defaultHomePath, replace: true });
   } catch {

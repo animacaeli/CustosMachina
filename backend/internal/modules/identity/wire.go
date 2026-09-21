@@ -6,6 +6,7 @@ import "github.com/google/wire"
 var Set = wire.NewSet(
 	NewUserRepository,
 	NewIMBindingRepository,
+	NewSettingsRepository,
 	NewUserService,
 	NewHandler,
 )

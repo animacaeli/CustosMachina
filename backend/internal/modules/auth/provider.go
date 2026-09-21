@@ -49,11 +49,7 @@ func NewProvider(name string) (IdentityProvider, error) {
 	return f(), nil
 }
 
-// ProviderNames 列出全部已注册插件。
+// ProviderNames 列出全部已注册插件（固定顺序）。
 func ProviderNames() []string {
-	names := make([]string, 0, len(providerRegistry))
-	for n := range providerRegistry {
-		names = append(names, n)
-	}
-	return names
+	return []string{"wecom", "dingtalk", "feishu", "mock"}
 }

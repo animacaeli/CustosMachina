@@ -46,14 +46,16 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   }
 
   /**
-   * 刷新token逻辑
+   * 刷新token逻辑：refresh token 换新 token 对（轮换），两个都落 store
    */
   async function doRefreshToken() {
     const accessStore = useAccessStore();
-    const resp = await refreshTokenApi();
-    const newToken = resp.data;
-    accessStore.setAccessToken(newToken);
-    return newToken;
+    const pair = await refreshTokenApi();
+    accessStore.setAccessToken(pair.accessToken);
+    if (pair.refreshToken) {
+      accessStore.setRefreshToken(pair.refreshToken);
+    }
+    return pair.accessToken;
   }
 
   function formatToken(token: null | string) {

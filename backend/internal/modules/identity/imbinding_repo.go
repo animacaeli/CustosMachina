@@ -12,6 +12,7 @@ type IMBindingRepository interface {
 	GetBinding(ctx context.Context, provider, imUserID string) (*UserIMBinding, error)
 	SaveBinding(ctx context.Context, b *UserIMBinding) error
 	GetProviderConfig(ctx context.Context, provider string) (*IMProviderConfig, error)
+	ListProviderConfigs(ctx context.Context) ([]IMProviderConfig, error)
 	SaveProviderConfig(ctx context.Context, cfg *IMProviderConfig) error
 }
 
@@ -51,4 +52,13 @@ func (r *imBindingRepository) SaveProviderConfig(ctx context.Context, cfg *IMPro
 		Columns:   []clause.Column{{Name: "provider"}},
 		DoUpdates: clause.AssignmentColumns([]string{"credentials_encrypted", "enabled", "updated_at"}),
 	}).Create(cfg).Error
+}
+
+// ListProviderConfigs 全部 IM 提供商配置行（setup 向导与配置页用）。
+func (r *imBindingRepository) ListProviderConfigs(ctx context.Context) ([]IMProviderConfig, error) {
+	var list []IMProviderConfig
+	if err := r.db.WithContext(ctx).Order("provider").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
 }

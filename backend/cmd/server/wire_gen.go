@@ -33,12 +33,13 @@ func InitializeServer() (*server.Server, func(), error) {
 	}
 	userRepository := identity.NewUserRepository(db)
 	imBindingRepository := identity.NewIMBindingRepository(db)
+	settingsRepository := identity.NewSettingsRepository(db)
 	manager := jwt.NewManager(configConfig)
 	cipher := auth.ProvideCipher(configConfig)
-	authService := auth.NewAuthService(userRepository, imBindingRepository, manager, configConfig, cipher)
+	authService := auth.NewAuthService(userRepository, imBindingRepository, settingsRepository, manager, configConfig, cipher)
 	authHandler := auth.NewHandler(authService)
 	userService := identity.NewUserService(userRepository)
-	setupHandler := setup.NewHandler(userService)
+	setupHandler := setup.NewHandler(userService, authService)
 	identityHandler := identity.NewHandler(userService)
 	syncedEnforcer, cleanup2, err := rbac.NewEnforcer(db)
 	if err != nil {

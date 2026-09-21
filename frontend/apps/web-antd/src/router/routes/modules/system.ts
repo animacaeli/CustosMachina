@@ -24,6 +24,16 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'SystemSetting',
+        path: 'setting',
+        component: () => import('#/views/system/setting.vue'),
+        meta: {
+          icon: 'lucide:sliders-horizontal',
+          authority: ['admin'],
+          title: '系统设置',
+        },
+      },
+      {
         name: 'SystemIM',
         path: 'im',
         component: () => import('#/views/system/im.vue'),

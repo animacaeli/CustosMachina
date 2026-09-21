@@ -62,6 +62,7 @@ func newTestAuthService(t *testing.T) *AuthService {
 	return NewAuthService(
 		&mockUsers{byID: map[uint]*identity.User{}},
 		&mockBindings{bindings: map[string]*identity.UserIMBinding{}},
+		&mockSettings{kv: map[string]string{}},
 		jwtpkg.NewManager(cfg),
 		cfg,
 		nil,
@@ -90,7 +91,7 @@ func TestQRCallback_JITRegisterThenRelogin(t *testing.T) {
 	if r1.User.DisplayName != "Mock 用户 zhangsan" {
 		t.Errorf("显示名应取 IM 昵称，实际 %q", r1.User.DisplayName)
 	}
-	if r1.Token == "" {
+	if r1.AccessToken == "" || r1.RefreshToken == "" {
 		t.Error("应签发 token")
 	}
 
@@ -119,5 +120,73 @@ func TestQRLoginURL_MockShape(t *testing.T) {
 	}
 	if want := svc.cfg.IM.PublicURL + "/api/auth/qrlogin/callback?provider=mock&code=mock-user&state="; len(u) < len(want) || u[:len(want)] != want {
 		t.Errorf("mock 授权地址形态不符: %s", u)
+	}
+}
+
+// mockSettings KV 设置桩。
+type mockSettings struct {
+	identity.SettingsRepository
+	kv map[string]string
+}
+
+func (m *mockSettings) Get(_ context.Context, key string) (string, bool, error) {
+	v, ok := m.kv[key]
+	return v, ok, nil
+}
+
+func (m *mockSettings) Set(_ context.Context, key, value string) error {
+	m.kv[key] = value
+	return nil
+}
+
+func TestTokenPair_RefreshRotateAndLogout(t *testing.T) {
+	svc := newTestAuthService(t)
+	ctx := context.Background()
+
+	u := &identity.User{DisplayName: "u", Roles: "guest"}
+	if err := svc.users.Create(ctx, u); err != nil {
+		t.Fatalf("建用户失败: %v", err)
+	}
+	pair, err := svc.IssueTokenPair(ctx, u)
+	if err != nil {
+		t.Fatalf("签发失败: %v", err)
+	}
+	// 刷新（轮换）
+	pair2, err := svc.Refresh(ctx, pair.RefreshToken)
+	if err != nil {
+		t.Fatalf("刷新失败: %v", err)
+	}
+	if pair2.AccessToken == "" || pair2.RefreshToken == "" {
+		t.Fatal("刷新后应返回新 token 对")
+	}
+	// 旧 refresh 已作废
+	if _, err := svc.Refresh(ctx, pair.RefreshToken); err == nil {
+		t.Error("旧 refresh token 应已轮换作废")
+	}
+	// 登出吊销
+	if err := svc.Logout(ctx, pair2.RefreshToken); err != nil {
+		t.Fatalf("登出失败: %v", err)
+	}
+	if _, err := svc.Refresh(ctx, pair2.RefreshToken); err == nil {
+		t.Error("登出后 refresh token 应已吊销")
+	}
+}
+
+func TestSetTokenTTLs(t *testing.T) {
+	svc := newTestAuthService(t)
+	ctx := context.Background()
+	a, r := svc.TokenTTLs()
+	if a != 30*time.Minute || r != 7*24*time.Hour {
+		t.Errorf("默认 TTL 不符: %v / %v", a, r)
+	}
+	if err := svc.SetTokenTTLs(ctx, time.Hour, 48*time.Hour); err != nil {
+		t.Fatalf("设置失败: %v", err)
+	}
+	a, r = svc.TokenTTLs()
+	if a != time.Hour || r != 48*time.Hour {
+		t.Errorf("设置后 TTL 不符: %v / %v", a, r)
+	}
+	if err := svc.SetTokenTTLs(ctx, 2*time.Hour, time.Hour); err == nil {
+		t.Error("access >= refresh 应被拒绝")
 	}
 }

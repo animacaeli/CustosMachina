@@ -1,21 +1,23 @@
-import { requestClient } from '#/api/request';
+import { baseRequestClient, requestClient } from '#/api/request';
 
 export namespace AuthApi {
-  /** 登录接口参数 */
+  /** 登录接口参数（超管账密登录） */
   export interface LoginParams {
     password?: string;
     username?: string;
   }
 
-  /** 后端原始返回：{token, user} */
+  /** 后端原始返回：双 token + user */
   export interface BackendLoginResult {
-    token: string;
+    accessToken: string;
+    refreshToken: string;
     user: Record<string, any>;
   }
 
   /** vben 约定的登录返回 */
   export interface LoginResult {
     accessToken: string;
+    refreshToken?: string;
   }
 
   /** GET /auth/permissions 返回 */
@@ -26,29 +28,43 @@ export namespace AuthApi {
 }
 
 /**
- * 登录（后端返回 {token,user}，映射为 vben 约定的 accessToken）
+ * 超管账密登录（扫码登录经回调落地页直接注入 token，不经此接口）
  */
 export async function loginApi(data: AuthApi.LoginParams) {
   const result = await requestClient.post<AuthApi.BackendLoginResult>(
     '/auth/login',
     data,
   );
-  return { accessToken: result.token } as AuthApi.LoginResult;
+  return {
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+  } as AuthApi.LoginResult;
 }
 
 /**
- * 登出：后端为无状态 JWT，前端清空会话即可，无需请求
+ * 登出：吊销 refresh token（后端 FR2.3）
  */
 export async function logoutApi() {
-  await Promise.resolve();
+  const { useAccessStore } = await import('@vben/stores');
+  const refreshToken = useAccessStore().refreshToken;
+  if (refreshToken) {
+    await baseRequestClient.post('/auth/logout', { refreshToken });
+  }
 }
 
 /**
- * 刷新 token：后端暂未实现（无状态 JWT，过期重登录），
- * 保留签名以满足 request.ts 引用，调用即抛错。
+ * 刷新 token：用未过期的 refresh token 换新的 token 对（轮换）
  */
-export async function refreshTokenApi(): Promise<{ data: string }> {
-  throw new Error('token 刷新未启用');
+export async function refreshTokenApi(): Promise<{
+  accessToken: string;
+  refreshToken: string;
+}> {
+  const { useAccessStore } = await import('@vben/stores');
+  const refreshToken = useAccessStore().refreshToken;
+  if (!refreshToken) {
+    throw new Error('无 refresh token');
+  }
+  return requestClient.post('/auth/refresh', { refreshToken });
 }
 
 /**
