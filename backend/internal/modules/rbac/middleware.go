@@ -16,6 +16,7 @@ import (
 var exemptAnyRole = map[string]bool{
 	"/auth/me":          true,
 	"/auth/permissions": true,
+	"/auth/logout":      true, // 登出吊销，任何已登录用户可用
 	"/user/info":        true,
 }
 

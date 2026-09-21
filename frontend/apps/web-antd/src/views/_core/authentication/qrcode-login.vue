@@ -7,6 +7,7 @@ import { useAccessStore } from '@vben/stores';
 
 import { useQRCode } from '@vueuse/integrations/useQRCode';
 
+import { getAccessCodesApi } from '#/api/core';
 import { requestClient } from '#/api/request';
 import { useAuthStore } from '#/store';
 
@@ -38,7 +39,11 @@ async function handleCallbackToken(token: string) {
         window.location.pathname + window.location.search,
       );
     }
-    await authStore.fetchUserInfo();
+    const [, accessCodes] = await Promise.all([
+      authStore.fetchUserInfo(),
+      getAccessCodesApi(),
+    ]);
+    accessStore.setAccessCodes(accessCodes);
     await router.push({ path: preferences.app.defaultHomePath, replace: true });
   } catch {
     error.value = '登录信息获取失败，请重试';

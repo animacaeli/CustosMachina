@@ -45,17 +45,31 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
     }
   }
 
+  // 刷新单飞：并发 401 时共享同一次刷新（refresh 轮换语义下，
+  // 第二次用旧 token 刷新会失败导致误登出）
+  let refreshing: null | Promise<string> = null;
+
   /**
    * 刷新token逻辑：refresh token 换新 token 对（轮换），两个都落 store
    */
-  async function doRefreshToken() {
+  function doRefreshToken() {
     const accessStore = useAccessStore();
-    const pair = await refreshTokenApi();
-    accessStore.setAccessToken(pair.accessToken);
-    if (pair.refreshToken) {
-      accessStore.setRefreshToken(pair.refreshToken);
+    if (refreshing) {
+      return refreshing;
     }
-    return pair.accessToken;
+    refreshing = (async () => {
+      try {
+        const pair = await refreshTokenApi();
+        accessStore.setAccessToken(pair.accessToken);
+        if (pair.refreshToken) {
+          accessStore.setRefreshToken(pair.refreshToken);
+        }
+        return pair.accessToken;
+      } finally {
+        refreshing = null;
+      }
+    })();
+    return refreshing;
   }
 
   function formatToken(token: null | string) {

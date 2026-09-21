@@ -1,4 +1,4 @@
-import { baseRequestClient, requestClient } from '#/api/request';
+import { requestClient } from '#/api/request';
 
 export namespace AuthApi {
   /** 登录接口参数（超管账密登录） */
@@ -42,13 +42,14 @@ export async function loginApi(data: AuthApi.LoginParams) {
 }
 
 /**
- * 登出：吊销 refresh token（后端 FR2.3）
+ * 登出：吊销 refresh token（后端 FR2.3）。
+ * 必须用 requestClient（携带 Authorization；/auth/logout 需认证）。
  */
 export async function logoutApi() {
   const { useAccessStore } = await import('@vben/stores');
   const refreshToken = useAccessStore().refreshToken;
   if (refreshToken) {
-    await baseRequestClient.post('/auth/logout', { refreshToken });
+    await requestClient.post('/auth/logout', { refreshToken });
   }
 }
 
