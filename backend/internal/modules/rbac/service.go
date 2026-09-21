@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/casbin/casbin/v2"
+
+	"github.com/custos-machina/backend/internal/modules/identity"
 )
 
 // Policy 一条权限矩阵项：角色 → 资源路径模板 → HTTP 方法（支持 "GET|POST" 正则形式）。
@@ -27,16 +29,12 @@ type RoleWithPolicies struct {
 }
 
 func (s *Service) ListRoles() []RoleWithPolicies {
-	builtin := map[string]bool{}
-	for _, r := range BuiltinRoles {
-		builtin[r] = true
-	}
 	result := []RoleWithPolicies{{Name: "admin", Builtin: true, Policies: []Policy{{Role: "admin", Path: "/*", Act: ".*"}}}}
-	for _, role := range BuiltinRoles {
+	for _, role := range identity.BuiltinRoles {
 		if role == "admin" {
 			continue
 		}
-		result = append(result, RoleWithPolicies{Name: role, Builtin: builtin[role], Policies: s.listPolicies(role)})
+		result = append(result, RoleWithPolicies{Name: role, Builtin: true, Policies: s.listPolicies(role)})
 	}
 	return result
 }

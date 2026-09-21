@@ -63,3 +63,18 @@ func TestCountUsers_SetupNeeded(t *testing.T) {
 		t.Fatalf("空仓储应返回 0，实际 %d", n)
 	}
 }
+
+func TestValidateRoles(t *testing.T) {
+	if err := ValidateRoles("ops, dev"); err != nil {
+		t.Errorf("合法角色不应报错: %v", err)
+	}
+	if err := ValidateRoles("guest,root"); err == nil {
+		t.Error("未知角色应被拒绝")
+	}
+	if err := ValidateRoles("admin"); err == nil {
+		t.Error("admin 不可分配给普通用户")
+	}
+	if err := ValidateRoles(""); err != nil {
+		t.Errorf("空角色串应放行: %v", err)
+	}
+}

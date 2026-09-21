@@ -8,6 +8,7 @@ import '@vben/styles';
 import '@vben/styles/antd';
 
 import { useTitle } from '@vueuse/core';
+import Antd from 'ant-design-vue';
 
 import { $t, setupI18n } from '#/locales';
 
@@ -23,6 +24,10 @@ async function bootstrap(namespace: string) {
   // 初始化表单组件
   await initSetupVbenForm();
 
+  // 全量注册 ant-design-vue 组件（a-* 标签可直接使用；体积优化留给后续按需引入）
+  const app = createApp(App);
+  app.use(Antd);
+
   // // 设置弹窗的默认配置
   // setDefaultModalProps({
   //   fullscreenButton: false,
@@ -31,8 +36,6 @@ async function bootstrap(namespace: string) {
   // setDefaultDrawerProps({
   //   zIndex: 1020,
   // });
-
-  const app = createApp(App);
 
   // 注册v-loading指令
   registerLoadingDirective(app, {

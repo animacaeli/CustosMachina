@@ -19,7 +19,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/user.vue'),
         meta: {
           icon: 'lucide:users',
-          roles: ['admin', 'super'],
+          roles: ['admin'],
           title: '用户管理',
         },
       },
@@ -29,7 +29,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/role.vue'),
         meta: {
           icon: 'lucide:shield-check',
-          roles: ['admin', 'super'],
+          roles: ['admin'],
           title: '角色权限',
         },
       },

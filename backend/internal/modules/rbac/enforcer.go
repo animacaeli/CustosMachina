@@ -27,9 +27,6 @@ e = some(where (p.eft == allow))
 m = r.sub == p.sub && keyMatch(r.obj, p.obj) && (r.act == p.act || regexMatch(r.act, p.act))
 `
 
-// 内置角色（FR3.2）。角色集合固定，权限矩阵可经 API 调整。
-var BuiltinRoles = []string{"admin", "ops", "dev", "guest"}
-
 // 默认权限矩阵：admin 全量（中间件放行，此处仅作展示），其余按资源点。
 // 资源点规划：services（服务操作）、ci、config（配置读写）、alerts（告警处理）、users/roles（系统设置）。
 var defaultPolicies = [][]string{

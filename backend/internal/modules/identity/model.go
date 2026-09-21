@@ -16,6 +16,9 @@ const (
 	StatusDisabled UserStatus = "disabled"
 )
 
+// BuiltinRoles 内置角色集合（FR3.2）。admin 专属本地超管，不可分配给普通用户。
+var BuiltinRoles = []string{"admin", "ops", "dev", "guest"}
+
 type User struct {
 	ID           uint           `gorm:"primarykey" json:"id"`
 	DisplayName  string         `gorm:"size:64;uniqueIndex;not null" json:"displayName"`

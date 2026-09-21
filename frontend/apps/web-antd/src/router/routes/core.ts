@@ -57,6 +57,14 @@ const coreRoutes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'Setup',
+        path: 'setup',
+        component: () => import('#/views/_core/setup/index.vue'),
+        meta: {
+          title: '系统初始化',
+        },
+      },
+      {
         name: 'CodeLogin',
         path: 'code-login',
         component: () => import('#/views/_core/authentication/code-login.vue'),

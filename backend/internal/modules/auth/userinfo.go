@@ -34,7 +34,7 @@ func (h *Handler) userInfo(c *gin.Context) {
 		}
 		roles = identity.ParseRoleList(u.Roles)
 	} else {
-		roles = []string{"admin", "super"}
+		roles = []string{"admin"}
 	}
 	httpx.OK(c, UserInfo{
 		UserID:   claims.UserID,

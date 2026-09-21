@@ -1,4 +1,4 @@
-import { baseRequestClient, requestClient } from '#/api/request';
+import { requestClient } from '#/api/request';
 
 export namespace AuthApi {
   /** 登录接口参数 */
@@ -37,10 +37,10 @@ export async function loginApi(data: AuthApi.LoginParams) {
 }
 
 /**
- * 登出：后端为无状态 JWT，由前端清空会话即可（此请求失败会被 store 吞掉）
+ * 登出：后端为无状态 JWT，前端清空会话即可，无需请求
  */
 export async function logoutApi() {
-  return baseRequestClient.post('/auth/logout');
+  await Promise.resolve();
 }
 
 /**

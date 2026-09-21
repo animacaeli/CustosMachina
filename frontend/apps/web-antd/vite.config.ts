@@ -1,3 +1,5 @@
+import process from 'node:process';
+
 import { defineConfig } from '@vben/vite-config';
 
 export default defineConfig(async () => {
@@ -8,8 +10,8 @@ export default defineConfig(async () => {
         proxy: {
           '/api': {
             changeOrigin: true,
-            // CustosMachina 后端（backend/，默认 :8080），路径保持 /api 前缀
-            target: 'http://localhost:8080',
+            // CustosMachina 后端；本机 8080 被占用时用 CUSTOS_API_TARGET 覆盖
+            target: process.env.CUSTOS_API_TARGET ?? 'http://localhost:8080',
             ws: true,
           },
         },
