@@ -15,7 +15,7 @@ const logoDark = computed(() => preferences.logo.sourceDark);
     :copyright="false"
     :logo="logo"
     :logo-dark="logoDark"
-    :toolbar-list="['color', 'theme']"
+    :toolbar-list="['color', 'layout', 'theme']"
     page-description="轻量级 AI DevOps 运维平台"
     page-title="统一控制台 · 告警 AI 诊断"
     slogan-image="/logo.svg"
