@@ -1,4 +1,4 @@
-import { requestClient } from '#/api/request';
+import { baseRequestClient, requestClient } from '#/api/request';
 
 export namespace AuthApi {
   /** 登录接口参数（超管账密登录） */
@@ -43,13 +43,25 @@ export async function loginApi(data: AuthApi.LoginParams) {
 
 /**
  * 登出：吊销 refresh token（后端 FR2.3）。
- * 必须用 requestClient（携带 Authorization；/auth/logout 需认证）。
+ * /auth/logout 需认证，但必须用无拦截器的 baseRequestClient 手动带头：
+ * 若走 requestClient，登出请求自身的 401（access 已过期场景）会再次触发
+ * 刷新→失败→登出 的拦截器链路，形成无限循环。
  */
 export async function logoutApi() {
   const { useAccessStore } = await import('@vben/stores');
-  const refreshToken = useAccessStore().refreshToken;
-  if (refreshToken) {
-    await requestClient.post('/auth/logout', { refreshToken });
+  const accessStore = useAccessStore();
+  const { accessToken, refreshToken } = accessStore;
+  if (!accessToken || !refreshToken) {
+    return;
+  }
+  try {
+    await baseRequestClient.post(
+      '/auth/logout',
+      { refreshToken },
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch {
+    // 吊销失败不阻塞前端登出（token 服务端自然过期兜底）
   }
 }
 
