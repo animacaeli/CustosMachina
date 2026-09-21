@@ -19,7 +19,13 @@ interface WebAntdPreferencesExtension {
 export const overridesPreferences = defineOverridesPreferences({
   // overrides
   app: {
+    locale: 'zh-CN',
     name: import.meta.env.VITE_APP_TITLE,
+  },
+  // 决策 D15：UI 单语言中文（i18n 机制保留但不维护第二语言），
+  // 隐藏 header 的语言切换按钮
+  widget: {
+    languageToggle: false,
   },
   copyright: appCopyrightPreferences,
   // 品牌 logo：盾牌+齿轮+脉冲为渐变色，浅深主题通用；

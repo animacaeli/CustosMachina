@@ -81,6 +81,7 @@
 | D12 | 平台自库 | 默认 SQLite,compose env 可切换 MySQL / PostgreSQL(v0.2) |
 | D13 | 仓库策略 | 开源单仓库 monorepo:backend / frontend / deploy / docs 同仓(v0.2) |
 | D14 | 测试环境模型 | 槽位制 + 配置容器解耦:占用(人 + 分支)→ 推送自动部署 → 释放销毁容器、保留配置;AgileConfig 仅存 PROD + TEST 基线,槽位覆盖配置存平台库(v0.3) |
+| D15 | UI 语言 | 单语言中文:保留 vue-i18n 机制(拆除需 fork vben 上游,成本高)但只锁 zh-CN、隐藏语言切换;自研页面直接硬编码中文,不维护第二语言,国际化留给未来社区贡献(2026-09-21 定) |
 
 ---
 
@@ -169,7 +170,7 @@
 | 部署形态 | 平台自身 docker-compose 一键拉起;目标机 4C8G 可承载平台 + 全部被管组件 |
 | 网络前提 | 公网 HTTPS 域名(IM 扫码回调 + 应用消息必需);内网部署需自备反代,文档写明 |
 | 平台自库 | 默认 SQLite(零依赖、备份即拷文件);docker-compose 环境变量(`DATABASE_DRIVER` / `DATABASE_DSN`)切换 MySQL / PostgreSQL;迁移与查询需三方言兼容 |
-| 开源工程 | license 待定;中文文档优先,vue-i18n 预留;README / 部署文档从 MVP 当功能做 |
+| 开源工程 | license 待定;UI 单语言中文(决策 D15:保留 i18n 机制、不维护第二语言);README / 部署文档从 MVP 当功能做 |
 | 安全 | 见 4.5 安全要点 |
 
 ---
