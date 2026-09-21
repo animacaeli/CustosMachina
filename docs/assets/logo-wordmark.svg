@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" role="img" aria-label="CustosMachina">
+  <defs>
+    <linearGradient id="shieldGrad2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="pulseGrad2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#a5b4fc"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 左侧图形：与 logo.svg 相同 -->
+  <g transform="translate(4 8) scale(1.25)">
+    <path d="M32 4 L54 12 V30 C54 45.2 44.8 55.4 32 60 C19.2 55.4 10 45.2 10 30 V12 Z"
+          fill="none" stroke="url(#shieldGrad2)" stroke-width="5" stroke-linejoin="round"/>
+    <g transform="translate(32 26)">
+      <rect x="-2.2" y="-13.5" width="4.4" height="5" rx="1.2"/>
+      <rect x="-2.2" y="8.5"  width="4.4" height="5" rx="1.2"/>
+      <rect x="-13.5" y="-2.2" width="5" height="4.4" rx="1.2"/>
+      <rect x="8.5"  y="-2.2" width="5" height="4.4" rx="1.2"/>
+      <rect x="-2.2" y="-13.5" width="4.4" height="5" rx="1.2" transform="rotate(45)"/>
+      <rect x="-2.2" y="8.5"  width="4.4" height="5" rx="1.2" transform="rotate(45)"/>
+      <rect x="-13.5" y="-2.2" width="5" height="4.4" rx="1.2" transform="rotate(45)"/>
+      <rect x="8.5"  y="-2.2" width="5" height="4.4" rx="1.2" transform="rotate(45)"/>
+      <circle r="9.5" fill="none" stroke="url(#shieldGrad2)" stroke-width="4.4"/>
+    </g>
+    <path d="M17 46 H25 L29 42 L35 50 L39 46 H47"
+          fill="none" stroke="url(#pulseGrad2)" stroke-width="3.4"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 文字 -->
+  <text x="96" y="46" font-family="'SF Pro Display','Segoe UI',system-ui,sans-serif"
+        font-size="30" font-weight="700" fill="#0f172a" letter-spacing="0.5">Custos<tspan fill="#2563eb">Machina</tspan></text>
+  <text x="97" y="70" font-family="'SF Mono','Cascadia Code',ui-monospace,monospace"
+        font-size="12" fill="#64748b" letter-spacing="4">AI DEVOPS PLATFORM</text>
+</svg>
