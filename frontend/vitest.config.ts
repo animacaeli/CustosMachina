@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [Vue(), VueJsx()],
   test: {
     environment: 'happy-dom',
+    setupFiles: ['./vitest.setup.ts'],
     environmentOptions: {
       happyDOM: {
         settings: {
