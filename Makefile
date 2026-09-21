@@ -7,16 +7,21 @@
 FRONTEND_DIR := frontend
 BACKEND_DIR  := backend
 
-## 一键本地开发：并行启动后端(:8080) + 前端(:5666，代理 /api)
+# 端口可覆盖：make dev HTTP_ADDR=:18080（本机 8080 被其他服务占用时）
+HTTP_ADDR        ?= :8080
+CUSTOS_API_TARGET ?= http://localhost$(HTTP_ADDR)
+
+## 一键本地开发：并行启动后端(默认 :8080) + 前端(:5666，代理 /api)
+## 本机 8080 被占用时：make dev HTTP_ADDR=:18080
 dev:
 	@trap 'kill 0' INT TERM; \
 	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-backend:
-	@cd $(BACKEND_DIR) && go run ./cmd/server
+	@cd $(BACKEND_DIR) && CUSTOS_HTTP_ADDR=$(HTTP_ADDR) go run ./cmd/server
 
 dev-frontend:
-	@cd $(FRONTEND_DIR) && pnpm dev:antd
+	@cd $(FRONTEND_DIR) && CUSTOS_API_TARGET=$(CUSTOS_API_TARGET) pnpm dev:antd
 
 ## 首次安装依赖 + 启用 git hooks
 setup:

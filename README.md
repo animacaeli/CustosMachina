@@ -24,6 +24,16 @@ go generate ./cmd/server   # 依赖变更后重新生成 wire 注入代码
 go run ./cmd/server        # 默认 :8080，SQLite 存储 backend/data/
 ```
 
+### 一键启动（make dev）
+
+```bash
+make setup   # 首次：安装依赖 + 启用 git hooks
+make dev     # 并行启动后端(:8080) + 前端(:5666，/api 代理到后端)
+```
+
+本机 8080 被其他服务占用时换端口：`make dev HTTP_ADDR=:18080`（前端代理自动跟随）。
+启动前若有残留进程：`lsof -nP -iTCP:8080 -sTCP:LISTEN` 查看并清理。
+
 环境变量均带 `CUSTOS_` 前缀（`CUSTOS_HTTP_ADDR`、`CUSTOS_DATABASE_DRIVER`、`CUSTOS_DATABASE_DSN`、`CUSTOS_AUTH_JWT_SECRET`…），完整清单见 `internal/config/config.go`。
 
 ### 前端
