@@ -52,6 +52,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -100,6 +102,12 @@ jobs:
               - frontend/internal
               - frontend/playground
               - frontend/docs
+
+      # autobuild 对 Go 会尝试 make，而根 Makefile 默认 target 是 dev（启动服务器），
+      # 会阻塞到超时；改为显式构建产物供提取
+      - name: 构建后端（供 CodeQL 提取）
+        if: matrix.language == 'go'
+        run: cd backend && go build ./...
 
       - uses: github/codeql-action/analyze@v3
         with:
