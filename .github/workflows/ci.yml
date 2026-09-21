@@ -48,6 +48,10 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    env:
+      # vben 上游 date 测试断言 IANA 时区（如 Asia/Shanghai），
+      # runner 默认 TZ=UTC 会失败；固定为东八区
+      TZ: Asia/Shanghai
     steps:
       - uses: actions/checkout@v4
 
