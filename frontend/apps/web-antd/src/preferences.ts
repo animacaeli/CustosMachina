@@ -22,6 +22,13 @@ export const overridesPreferences = defineOverridesPreferences({
     name: import.meta.env.VITE_APP_TITLE,
   },
   copyright: appCopyrightPreferences,
+  // 品牌 logo：盾牌+齿轮+脉冲为渐变色，浅深主题通用；
+  // 横版 wordmark（logo-wordmark / logo-wordmark-dark）保留在 public/ 供文档与物料使用
+  logo: {
+    enable: true,
+    source: '/logo.svg',
+    sourceDark: '/logo.svg',
+  },
 });
 
 export const preferencesExtension =
