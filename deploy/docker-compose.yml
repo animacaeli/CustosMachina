@@ -1,5 +1,6 @@
-# CustosMachina 平台自身部署栈（MVP：单机 docker-compose）。
-# 使用：cp .env.example .env && docker compose up -d
+# CustosMachina 平台自身部署栈（MVP：单机 docker-compose 一键拉起）。
+# 使用：cp .env.example .env（改密钥与公网地址）&& docker compose up -d --build
+# 访问：http://<主机>:80（前端），/api 由 nginx 反代到 backend。
 services:
   backend:
     build:
@@ -10,18 +11,31 @@ services:
       CUSTOS_DATABASE_DRIVER: ${CUSTOS_DATABASE_DRIVER:-sqlite}
       CUSTOS_DATABASE_DSN: ${CUSTOS_DATABASE_DSN:-/data/custos.db}
       CUSTOS_AUTH_JWT_SECRET: ${CUSTOS_AUTH_JWT_SECRET:?请在 .env 中设置}
+      # 组件/IM 凭证加密主密钥（32 字节 hex）；不设则无法保存 IM 凭证
       CUSTOS_SECRETS_MASTER_KEY: ${CUSTOS_SECRETS_MASTER_KEY:-}
+      # IM 扫码登录：wecom / dingtalk / feishu（凭证在 setup 向导里配置）；
+      # 本地无公网回调联调可用 mock，生产严禁
+      CUSTOS_IM_PROVIDER: ${CUSTOS_IM_PROVIDER:-wecom}
+      # 平台对外可达地址（IM 扫码回调需公网 HTTPS，如 https://custos.example.com）
+      CUSTOS_IM_PUBLIC_URL: ${CUSTOS_IM_PUBLIC_URL:-}
+      # 扫码成功后重定向回的前端地址（默认与访问地址一致即可）
+      CUSTOS_IM_FRONTEND_URL: ${CUSTOS_IM_FRONTEND_URL:-http://localhost}
     volumes:
       - backend-data:/data
-    ports:
-      - "8080:8080"
+    # 不直接对外暴露，仅经 frontend 的 nginx 反代访问
+    expose:
+      - "8080"
     restart: unless-stopped
 
-  # 前端镜像（或选择 go embed 单镜像交付，见 plan.md D13）；M5 打磨阶段启用
-  # frontend:
-  #   build:
-  #     context: ../frontend
-  #     dockerfile: Dockerfile
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   backend-data:

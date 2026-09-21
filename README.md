@@ -14,6 +14,16 @@ custos-machina/
 └── docs/        # 文档（含总纲 plan.md）
 ```
 
+## 部署（docker-compose 一键拉起）
+
+```bash
+cd deploy
+cp .env.example .env   # 修改 JWT 密钥、主密钥、公网地址（IM 扫码回调需公网 HTTPS）
+docker compose up -d --build
+```
+
+访问 `http://<主机>`，首次启动自动进入初始化向导（IM 提供商三选一 → Redis（可跳过）→ 本地超管）。
+
 ## 快速开始（开发）
 
 ### 后端
