@@ -55,7 +55,6 @@
     "lint": "vsh lint",
     "postinstall": "pnpm -r run --if-present stub",
     "preinstall": "npx only-allow pnpm",
-    "prepare": "is-ci || pnpm exec lefthook install",
     "preview": "turbo-run preview",
     "publint": "vsh publint",
     "reinstall": "pnpm run clean -- --del-lock && pnpm install",

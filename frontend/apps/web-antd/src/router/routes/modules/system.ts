@@ -19,8 +19,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/user.vue'),
         meta: {
           icon: 'lucide:users',
-          roles: ['admin'],
+          authority: ['admin'],
           title: '用户管理',
+        },
+      },
+      {
+        name: 'SystemIM',
+        path: 'im',
+        component: () => import('#/views/system/im.vue'),
+        meta: {
+          icon: 'lucide:scan-line',
+          authority: ['admin'],
+          title: '登录配置',
         },
       },
       {
@@ -29,7 +39,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/role.vue'),
         meta: {
           icon: 'lucide:shield-check',
-          roles: ['admin'],
+          authority: ['admin'],
           title: '角色权限',
         },
       },

@@ -32,8 +32,10 @@ func InitializeServer() (*server.Server, func(), error) {
 		return nil, nil, err
 	}
 	userRepository := identity.NewUserRepository(db)
+	imBindingRepository := identity.NewIMBindingRepository(db)
 	manager := jwt.NewManager(configConfig)
-	authService := auth.NewAuthService(userRepository, manager)
+	cipher := auth.ProvideCipher(configConfig)
+	authService := auth.NewAuthService(userRepository, imBindingRepository, manager, configConfig, cipher)
 	authHandler := auth.NewHandler(authService)
 	userService := identity.NewUserService(userRepository)
 	setupHandler := setup.NewHandler(userService)

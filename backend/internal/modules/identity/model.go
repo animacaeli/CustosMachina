@@ -46,4 +46,6 @@ func ParseRoleList(s string) []string {
 }
 
 // Models 返回本模块需要自动迁移的模型。
-func Models() []any { return []any{User{}} }
+func Models() []any {
+	return []any{User{}, UserIMBinding{}, IMProviderConfig{}}
+}

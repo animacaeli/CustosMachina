@@ -14,6 +14,7 @@ type Config struct {
 	Database Database
 	Auth     Auth
 	Secrets  Secrets
+	IM       IM
 }
 
 type HTTP struct {
@@ -38,6 +39,13 @@ type Secrets struct {
 	MasterKey string // 32 字节 hex；生产环境必须显式注入
 }
 
+// IM 扫码登录相关（FR2）。Provider: wecom / mock（本地联调）。
+type IM struct {
+	Provider    string
+	PublicURL   string // 平台对外可达地址（企微回调要求公网 HTTPS）
+	FrontendURL string // 回调成功后重定向回的前端地址
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("CUSTOS")
@@ -53,6 +61,9 @@ func Load() (*Config, error) {
 	v.SetDefault("auth.token_ttl", "24h")
 	v.SetDefault("auth.issuer", "custos-machina")
 	v.SetDefault("secrets.master_key", "")
+	v.SetDefault("im.provider", "wecom")
+	v.SetDefault("im.public_url", "")
+	v.SetDefault("im.frontend_url", "http://localhost:5666")
 
 	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
 	// 这里显式逐项读取，保证 env 覆盖一定生效。
@@ -73,6 +84,11 @@ func Load() (*Config, error) {
 		},
 		Secrets: Secrets{
 			MasterKey: v.GetString("secrets.master_key"),
+		},
+		IM: IM{
+			Provider:    v.GetString("im.provider"),
+			PublicURL:   v.GetString("im.public_url"),
+			FrontendURL: v.GetString("im.frontend_url"),
 		},
 	}
 	return cfg, nil

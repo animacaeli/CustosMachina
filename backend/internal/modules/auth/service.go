@@ -1,14 +1,17 @@
-// Package auth 提供本地超管登录（批次 1）与 JWT 会话；
-// IM 扫码登录（IdentityProvider 插件，FR2.1）在 T3 选型后加入本模块。
+// Package auth 提供本地超管登录、JWT 会话与 IM 扫码登录
+// （IdentityProvider 插件，FR2.1；首家实现企业微信，T3 已定）。
 package auth
 
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/identity"
+	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
 )
 
@@ -18,12 +21,22 @@ var (
 )
 
 type AuthService struct {
-	users identity.UserRepository
-	jwt   *jwtpkg.Manager
+	users    identity.UserRepository
+	bindings identity.IMBindingRepository
+	jwt      *jwtpkg.Manager
+	cfg      *config.Config
+	cipher   *cryptopkg.Cipher
+	qrStates sync.Map // state -> 过期时间，5 分钟有效
 }
 
-func NewAuthService(users identity.UserRepository, jwt *jwtpkg.Manager) *AuthService {
-	return &AuthService{users: users, jwt: jwt}
+func NewAuthService(
+	users identity.UserRepository,
+	bindings identity.IMBindingRepository,
+	jwt *jwtpkg.Manager,
+	cfg *config.Config,
+	cipher *cryptopkg.Cipher,
+) *AuthService {
+	return &AuthService{users: users, bindings: bindings, jwt: jwt, cfg: cfg, cipher: cipher}
 }
 
 type LoginResult struct {

@@ -41,6 +41,7 @@
     "@vben/types": "workspace:*",
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
+    "@vueuse/integrations": "catalog:",
     "ant-design-vue": "catalog:",
     "dayjs": "catalog:",
     "pinia": "catalog:",

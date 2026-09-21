@@ -19,6 +19,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	r.Public.POST("/auth/login", h.login)
 	r.Authed.GET("/auth/me", h.me)
 	r.Authed.GET("/user/info", h.userInfo)
+	h.registerQRLoginRoutes(r)
 }
 
 type loginInput struct {
