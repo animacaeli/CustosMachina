@@ -59,7 +59,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <SelectItem v-model="appLocale" :items="languageList">
+  <!-- 单语言部署（如 CustosMachina D15：仅中文）时隐藏语言切换 -->
+  <SelectItem
+    v-if="languageList.length > 1"
+    v-model="appLocale"
+    :items="languageList"
+  >
     {{ $t('preferences.language') }}
   </SelectItem>
   <SelectItem v-model="appTimezone" :items="timezoneOptionsRef">

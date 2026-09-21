@@ -168,13 +168,3 @@ func jsonMarshalString(v any) (string, error) {
 	}
 	return string(b), nil
 }
-
-// parseDurations 解析并校验两个时长字符串。
-func (s *AuthService) parseDurations(access, refresh string) (time.Duration, time.Duration, error) {
-	a, err1 := time.ParseDuration(access)
-	r, err2 := time.ParseDuration(refresh)
-	if err1 != nil || err2 != nil {
-		return 0, 0, errors.New("时长格式错误，示例：30m / 2h / 168h")
-	}
-	return a, r, nil
-}

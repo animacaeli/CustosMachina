@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -135,14 +136,18 @@ func (h *Handler) imVerify(c *gin.Context) {
 
 // --- token 有效期与 Redis 设置 ---
 
+// token TTL 统一以秒为单位对外（UI 用数字输入，避免时长字符串格式坑）。
 func (h *Handler) tokenTTLGet(c *gin.Context) {
 	access, refresh := h.svc.TokenTTLs()
-	httpx.OK(c, gin.H{"accessTtl": access.String(), "refreshTtl": refresh.String()})
+	httpx.OK(c, gin.H{
+		"accessSeconds":  int64(access.Seconds()),
+		"refreshSeconds": int64(refresh.Seconds()),
+	})
 }
 
 type tokenTTLInput struct {
-	AccessTtl  string `json:"accessTtl" binding:"required"`  // 如 30m
-	RefreshTtl string `json:"refreshTtl" binding:"required"` // 如 168h
+	AccessSeconds  int64 `json:"accessSeconds" binding:"required,min=1"`  // access 有效期（秒）
+	RefreshSeconds int64 `json:"refreshSeconds" binding:"required,min=1"` // refresh 有效期（秒）
 }
 
 func (h *Handler) tokenTLTPut(c *gin.Context) {
@@ -151,16 +156,16 @@ func (h *Handler) tokenTLTPut(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	access, refresh, err := h.svc.parseDurations(in.AccessTtl, in.RefreshTtl)
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
+	access := time.Duration(in.AccessSeconds) * time.Second
+	refresh := time.Duration(in.RefreshSeconds) * time.Second
 	if err := h.svc.SetTokenTTLs(c.Request.Context(), access, refresh); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"accessTtl": access.String(), "refreshTtl": refresh.String()})
+	httpx.OK(c, gin.H{
+		"accessSeconds":  in.AccessSeconds,
+		"refreshSeconds": in.RefreshSeconds,
+	})
 }
 
 func (h *Handler) redisGet(c *gin.Context) {
