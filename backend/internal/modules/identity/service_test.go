@@ -20,7 +20,7 @@ func newMockRepo() *mockUserRepository {
 }
 
 func (m *mockUserRepository) Create(_ context.Context, u *User) error {
-	m.users[u.Username] = u
+	m.users[u.UsernameOf()] = u
 	return nil
 }
 
@@ -37,7 +37,7 @@ func (m *mockUserRepository) Count(_ context.Context) (int64, error) {
 
 func TestCreateUser_DefaultRoles(t *testing.T) {
 	svc := NewUserService(newMockRepo())
-	u, err := svc.Create(context.Background(), CreateUserInput{DisplayName: "张三"})
+	u, err := svc.Create(context.Background(), CreateUserInput{DisplayName: "张三"}, true)
 	if err != nil {
 		t.Fatalf("创建用户失败: %v", err)
 	}
@@ -49,10 +49,10 @@ func TestCreateUser_DefaultRoles(t *testing.T) {
 func TestCreateUser_DuplicateUsername(t *testing.T) {
 	svc := NewUserService(newMockRepo())
 	ctx := context.Background()
-	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "a", Username: "admin"}); err != nil {
+	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "a", Username: "admin"}, true); err != nil {
 		t.Fatalf("首次创建失败: %v", err)
 	}
-	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "b", Username: "admin"}); !errors.Is(err, ErrAlreadyExists) {
+	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "b", Username: "admin"}, true); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("重复用户名应返回 ErrAlreadyExists，实际 %v", err)
 	}
 }
@@ -71,10 +71,26 @@ func TestValidateRoles(t *testing.T) {
 	if err := ValidateRoles("guest,root"); err == nil {
 		t.Error("未知角色应被拒绝")
 	}
-	if err := ValidateRoles("admin"); err == nil {
-		t.Error("admin 不可分配给普通用户")
+	if err := ValidateRoles("admin"); err != nil {
+		t.Errorf("admin 应为合法角色: %v", err)
+	}
+	if err := ValidateRoles("superadmin"); err == nil {
+		t.Error("superadmin 不可分配")
 	}
 	if err := ValidateRoles(""); err != nil {
 		t.Errorf("空角色串应放行: %v", err)
+	}
+}
+
+func TestAdminAssignPermission(t *testing.T) {
+	svc := NewUserService(newMockRepo())
+	ctx := context.Background()
+	// 普通管理员（actorSuper=false）不能任命 admin
+	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "x", Roles: "admin"}, false); err == nil {
+		t.Error("非超管不能任命 admin")
+	}
+	// 超管可以
+	if _, err := svc.Create(ctx, CreateUserInput{DisplayName: "y", Roles: "admin"}, true); err != nil {
+		t.Errorf("超管应可任命 admin: %v", err)
 	}
 }

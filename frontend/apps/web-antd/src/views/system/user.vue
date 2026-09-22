@@ -1,7 +1,9 @@
 <script lang="ts" setup>
 import type { PlatformUser } from '#/api/system/user';
 
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+
+import { useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
@@ -13,7 +15,14 @@ import {
 
 defineOptions({ name: 'SystemUser' });
 
-const BUILTIN_ROLES = ['ops', 'dev', 'guest'];
+const userStore = useUserStore();
+// 超管可任命 admin；普通管理员只能分配业务角色（后端双重校验）
+const isSuper = computed(() =>
+  (userStore.userInfo?.roles ?? []).includes('superadmin'),
+);
+const BUILTIN_ROLES = computed(() =>
+  isSuper.value ? ['admin', 'ops', 'dev', 'guest'] : ['ops', 'dev', 'guest'],
+);
 
 const loading = ref(false);
 const list = ref<PlatformUser[]>([]);

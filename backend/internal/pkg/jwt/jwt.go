@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/custos-machina/backend/internal/config"
@@ -65,4 +66,17 @@ func (m *Manager) Parse(tokenStr string) (*Claims, error) {
 		return nil, ErrInvalidToken
 	}
 	return claims, nil
+}
+
+// CtxClaimsKey gin context 中存放 Claims 的键。
+const CtxClaimsKey = "auth.claims"
+
+// ClaimsFromContext 供任意业务模块读取当前登录人（避免模块间相互依赖）。
+func ClaimsFromContext(c *gin.Context) *Claims {
+	v, ok := c.Get(CtxClaimsKey)
+	if !ok {
+		return nil
+	}
+	claims, _ := v.(*Claims)
+	return claims
 }

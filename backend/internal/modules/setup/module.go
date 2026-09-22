@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/server"
@@ -19,11 +18,10 @@ var ErrSetupClosed = errors.New("初始化已完成，向导已关闭")
 
 type Handler struct {
 	users *identity.UserService
-	auth  *auth.SetupGate
 }
 
-func NewHandler(users *identity.UserService, authSvc *auth.AuthService) *Handler {
-	return &Handler{users: users, auth: auth.NewSetupGate(authSvc)}
+func NewHandler(users *identity.UserService) *Handler {
+	return &Handler{users: users}
 }
 
 func (h *Handler) Name() string { return "setup" }
@@ -86,5 +84,5 @@ func (h *Handler) createAdmin(c *gin.Context) {
 		httpx.FailServer(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"username": u.Username, "displayName": u.DisplayName})
+	httpx.OK(c, gin.H{"username": u.UsernameOf(), "displayName": u.DisplayName})
 }

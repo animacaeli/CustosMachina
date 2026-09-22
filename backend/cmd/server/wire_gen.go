@@ -39,7 +39,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	authService := auth.NewAuthService(userRepository, imBindingRepository, settingsRepository, manager, configConfig, cipher)
 	authHandler := auth.NewHandler(authService)
 	userService := identity.NewUserService(userRepository)
-	setupHandler := setup.NewHandler(userService, authService)
+	setupHandler := setup.NewHandler(userService)
 	identityHandler := identity.NewHandler(userService)
 	syncedEnforcer, cleanup2, err := rbac.NewEnforcer(db)
 	if err != nil {

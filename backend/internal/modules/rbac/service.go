@@ -29,11 +29,11 @@ type RoleWithPolicies struct {
 }
 
 func (s *Service) ListRoles() []RoleWithPolicies {
-	result := []RoleWithPolicies{{Name: "admin", Builtin: true, Policies: []Policy{{Role: "admin", Path: "/*", Act: ".*"}}}}
+	result := []RoleWithPolicies{{
+		Name: "superadmin", Builtin: true,
+		Policies: []Policy{{Role: "superadmin", Path: "/*", Act: ".*"}},
+	}}
 	for _, role := range identity.BuiltinRoles {
-		if role == "admin" {
-			continue
-		}
 		result = append(result, RoleWithPolicies{Name: role, Builtin: true, Policies: s.listPolicies(role)})
 	}
 	return result
@@ -52,8 +52,8 @@ func (s *Service) listPolicies(role string) []Policy {
 
 // ReplaceRolePolicies 整体替换某角色的权限矩阵（权限矩阵页保存语义）。
 func (s *Service) ReplaceRolePolicies(role string, policies []Policy) error {
-	if role == "admin" {
-		return fmt.Errorf("admin 为本地超管专属角色，权限不可编辑")
+	if role == "superadmin" {
+		return fmt.Errorf("superadmin 为超管专属角色，权限不可编辑")
 	}
 	if _, err := s.enforcer.RemoveFilteredPolicy(0, role); err != nil {
 		return fmt.Errorf("清除旧策略失败: %w", err)

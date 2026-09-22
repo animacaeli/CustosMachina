@@ -28,7 +28,9 @@ type CreateUserInput struct {
 
 func (s *UserService) List(ctx context.Context) ([]User, error) { return s.repo.List(ctx) }
 
-// ValidateRoles 校验角色串：每项须为内置角色，且不允许把 admin 分配给普通用户。
+var ErrAdminAssignForbidden = errors.New("admin 角色仅超管可任命")
+
+// ValidateRoles 校验角色串：每项须为内置可分配角色（superadmin 不可分配）。
 // 未知角色在 casbin 默认拒绝下虽无权限，但仍拒绝写入以保持数据干净。
 func ValidateRoles(s string) error {
 	for _, r := range ParseRoleList(s) {
@@ -42,15 +44,27 @@ func ValidateRoles(s string) error {
 		if !known {
 			return fmt.Errorf("未知角色: %s（可选：%s）", r, strings.Join(BuiltinRoles, "/"))
 		}
-		if r == "admin" {
-			return errors.New("admin 为本地超管专属角色，不可分配")
+	}
+	return nil
+}
+
+// validateAssign 权限校验：admin 仅超管可任命（actorSuper = 操作者是本地超管）。
+func validateAssign(s string, actorSuper bool) error {
+	if err := ValidateRoles(s); err != nil {
+		return err
+	}
+	if !actorSuper {
+		for _, r := range ParseRoleList(s) {
+			if r == "admin" {
+				return ErrAdminAssignForbidden
+			}
 		}
 	}
 	return nil
 }
 
-func (s *UserService) Create(ctx context.Context, in CreateUserInput) (*User, error) {
-	if err := ValidateRoles(in.Roles); err != nil {
+func (s *UserService) Create(ctx context.Context, in CreateUserInput, actorSuper bool) (*User, error) {
+	if err := validateAssign(in.Roles, actorSuper); err != nil {
 		return nil, err
 	}
 	if in.Username != "" {
@@ -58,7 +72,8 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput) (*User, er
 			return nil, ErrAlreadyExists
 		}
 	}
-	u := &User{DisplayName: in.DisplayName, Username: in.Username, Roles: in.Roles}
+	u := &User{DisplayName: in.DisplayName, Roles: in.Roles}
+	u.SetUsername(in.Username)
 	if u.Roles == "" {
 		u.Roles = "guest"
 	}
@@ -68,11 +83,21 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput) (*User, er
 	return u, nil
 }
 
-func (s *UserService) UpdateRoles(ctx context.Context, id uint, roles string) (*User, error) {
-	if err := ValidateRoles(roles); err != nil {
+func (s *UserService) UpdateRoles(ctx context.Context, id uint, roles string, actorSuper bool) (*User, error) {
+	if err := validateAssign(roles, actorSuper); err != nil {
 		return nil, err
 	}
 	u, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	// 超管账号只有超管能改
+	if u.IsLocalAdmin && !actorSuper {
+		return nil, errors.New("超管账号仅超管可修改")
+	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
@@ -95,12 +120,12 @@ func (s *UserService) EnsureLocalAdmin(ctx context.Context, username, displayNam
 		return existing, nil
 	}
 	u := &User{
-		Username:     username,
 		DisplayName:  displayName,
 		PasswordHash: passwordHash,
 		IsLocalAdmin: true,
-		Roles:        "admin",
+		Roles:        "superadmin",
 	}
+	u.SetUsername(username)
 	if err := s.repo.Create(ctx, u); err != nil {
 		return nil, err
 	}

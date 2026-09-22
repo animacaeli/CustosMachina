@@ -31,9 +31,10 @@ const showDot = computed(() =>
   notifications.value.some((item) => !item.isRead),
 );
 
-const isAdmin = computed(() =>
-  (userStore.userInfo?.roles ?? []).includes('admin'),
-);
+const isAdmin = computed(() => {
+  const roles = userStore.userInfo?.roles ?? [];
+  return roles.includes('superadmin') || roles.includes('admin');
+});
 
 const menus = computed(() => {
   const list: Array<{

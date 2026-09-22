@@ -19,7 +19,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/user.vue'),
         meta: {
           icon: 'lucide:user-cog',
-          authority: ['admin'],
+          authority: ['superadmin', 'admin'],
           title: '用户管理',
         },
       },
@@ -29,7 +29,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('#/views/system/role.vue'),
         meta: {
           icon: 'lucide:shield-check',
-          authority: ['admin'],
+          authority: ['superadmin', 'admin'],
           title: '角色权限',
         },
       },
@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
   {
     component: BasicLayout,
     meta: {
-      authority: ['admin'],
+      authority: ['superadmin', 'admin'],
       hideInMenu: true,
       title: '管理后台',
     },
@@ -51,7 +51,7 @@ const routes: RouteRecordRaw[] = [
         path: '',
         component: () => import('#/views/admin/index.vue'),
         meta: {
-          authority: ['admin'],
+          authority: ['superadmin', 'admin'],
           hideInMenu: true,
           icon: 'lucide:wrench',
           title: '管理后台',

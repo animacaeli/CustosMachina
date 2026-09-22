@@ -9,9 +9,10 @@ defineOptions({ name: 'Home' });
 const router = useRouter();
 const userStore = useUserStore();
 const displayName = computed(() => userStore.userInfo?.realName ?? '');
-const isAdmin = computed(() =>
-  (userStore.userInfo?.roles ?? []).includes('admin'),
-);
+const isAdmin = computed(() => {
+  const roles = userStore.userInfo?.roles ?? [];
+  return roles.includes('superadmin') || roles.includes('admin');
+});
 
 const FEATURES = [
   {
@@ -69,7 +70,8 @@ const STEPS = [
 ];
 
 onMounted(() => {
-  if (isAdmin.value && !localStorage.getItem(ONBOARD_KEY)) {
+  const isSuper = (userStore.userInfo?.roles ?? []).includes('superadmin');
+  if (isSuper && !localStorage.getItem(ONBOARD_KEY)) {
     showOnboard.value = true;
     localStorage.setItem(ONBOARD_KEY, '1');
   }

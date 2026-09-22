@@ -2,11 +2,13 @@ package identity
 
 import (
 	"errors"
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
 )
 
@@ -42,9 +44,17 @@ func (h *Handler) create(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	u, err := h.svc.Create(c.Request.Context(), in)
+	actorSuper := false
+	if claims := jwtpkg.ClaimsFromContext(c); claims != nil {
+		actorSuper = claims.IsAdmin
+	}
+	u, err := h.svc.Create(c.Request.Context(), in, actorSuper)
 	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
+		if errors.Is(err, ErrAdminAssignForbidden) {
+			httpx.Fail(c, http.StatusForbidden, 403, err.Error())
+		} else {
+			httpx.FailBadRequest(c, err.Error())
+		}
 		return
 	}
 	httpx.OK(c, u)
@@ -65,13 +75,19 @@ func (h *Handler) updateRoles(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	u, err := h.svc.UpdateRoles(c.Request.Context(), uint(id), in.Roles)
+	actorSuper := false
+	if claims := jwtpkg.ClaimsFromContext(c); claims != nil {
+		actorSuper = claims.IsAdmin
+	}
+	u, err := h.svc.UpdateRoles(c.Request.Context(), uint(id), in.Roles, actorSuper)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			httpx.Fail(c, 404, 404, err.Error())
-			return
+			httpx.Fail(c, http.StatusNotFound, 404, err.Error())
+		} else if errors.Is(err, ErrAdminAssignForbidden) {
+			httpx.Fail(c, http.StatusForbidden, 403, err.Error())
+		} else {
+			httpx.FailBadRequest(c, err.Error())
 		}
-		httpx.FailServer(c, err)
 		return
 	}
 	httpx.OK(c, u)

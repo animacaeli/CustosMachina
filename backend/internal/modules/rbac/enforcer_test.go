@@ -14,6 +14,9 @@ func newTestEnforcer(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
+	if err := db.AutoMigrate(&identity.PlatformSetting{}); err != nil {
+		t.Fatalf("迁移 settings 表失败: %v", err)
+	}
 	e, _, err := NewEnforcer(db)
 	if err != nil {
 		t.Fatalf("初始化 enforcer 失败: %v", err)
@@ -64,8 +67,11 @@ func TestReplaceRolePolicies(t *testing.T) {
 		t.Error("替换后 /services GET 应放行")
 	}
 
-	if err := svc.ReplaceRolePolicies("admin", nil); err == nil {
-		t.Error("admin 角色策略不可编辑，应报错")
+	if err := svc.ReplaceRolePolicies("superadmin", nil); err == nil {
+		t.Error("superadmin 角色策略不可编辑，应报错")
+	}
+	if err := svc.ReplaceRolePolicies("admin", nil); err != nil {
+		t.Errorf("admin 角色策略应可编辑: %v", err)
 	}
 }
 

@@ -10,7 +10,8 @@ import (
 	"github.com/custos-machina/backend/internal/server"
 )
 
-const CtxClaims = "auth.claims"
+// CtxClaims 兼容旧引用；实际存取统一走 jwt 包。
+const CtxClaims = jwtpkg.CtxClaimsKey
 
 // Middleware 返回 JWT 认证中间件；通过 server.AuthMiddleware 注入引擎。
 func (s *AuthService) Middleware() gin.HandlerFunc {
@@ -37,11 +38,4 @@ func (s *AuthService) Middleware() gin.HandlerFunc {
 func ProvideAuthMiddleware(s *AuthService) server.AuthMiddleware { return s.Middleware }
 
 // ClaimsFromContext 供其他模块读取当前登录人。
-func ClaimsFromContext(c *gin.Context) *jwtpkg.Claims {
-	v, ok := c.Get(CtxClaims)
-	if !ok {
-		return nil
-	}
-	claims, _ := v.(*jwtpkg.Claims)
-	return claims
-}
+var ClaimsFromContext = jwtpkg.ClaimsFromContext
