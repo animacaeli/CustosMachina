@@ -16,13 +16,25 @@ custos-machina/
 
 ## 部署（docker-compose 一键拉起）
 
+### 方式一：拉取公共镜像（推荐）
+
 ```bash
 cd deploy
-cp .env.example .env   # 修改 JWT 密钥、主密钥、公网地址（IM 扫码回调需公网 HTTPS）
-docker compose up -d --build
+cp .env.example .env   # 修改 JWT 密钥、主密钥、公网地址、按需开 MySQL/Redis
+docker compose pull && docker compose up -d
+```
+
+镜像随版本 tag 发布在 ghcr.io（`custos-machina-backend` / `custos-machina-frontend`），
+支持 amd64 / arm64。锁版本可将 compose 中 `:latest` 改为具体 tag。
+
+### 方式二：本地构建
+
+```bash
+cd deploy && docker compose up -d --build
 ```
 
 访问 `http://<主机>`，首次启动自动进入初始化向导（IM 提供商三选一 → Redis（可跳过）→ 本地超管）。
+环境变量（MySQL/PostgreSQL 切库、Redis、JWT 密钥等）见 `deploy/.env.example`。
 
 ## 快速开始（开发）
 

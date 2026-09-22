@@ -58,6 +58,10 @@ func (s *AuthService) refreshStore(ctx context.Context) (RefreshStore, error) {
 			cfg = c
 		}
 	}
+	// env 兜底（部署时未走向导/设置的场景）
+	if cfg == nil && s.cfg.Redis.Addr != "" {
+		cfg = &RedisConfig{Addr: s.cfg.Redis.Addr, Password: s.cfg.Redis.Password, DB: s.cfg.Redis.DB}
+	}
 	return s.refreshHolder.Get(ctx, cfg)
 }
 

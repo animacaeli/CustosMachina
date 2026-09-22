@@ -1,24 +1,31 @@
-# CustosMachina 平台自身部署栈（MVP：单机 docker-compose 一键拉起）。
-# 使用：cp .env.example .env（改密钥与公网地址）&& docker compose up -d --build
-# 访问：http://<主机>:80（前端），/api 由 nginx 反代到 backend。
+# CustosMachina 部署栈。
+# 两种用法：
+#   1) 拉公共镜像（推荐）：docker compose pull && docker compose up -d
+#      （镜像在 ghcr.io，随版本 tag 发布；image 不存在时可退回本地构建）
+#   2) 本地构建：docker compose up -d --build
+# 配置：cp .env.example .env 后按需修改
 services:
   backend:
+    image: ghcr.io/animacaeli/custos-machina-backend:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
     environment:
       CUSTOS_HTTP_ADDR: ":8080"
+      # --- 平台自库：默认 SQLite；可切 MySQL / PostgreSQL ---
       CUSTOS_DATABASE_DRIVER: ${CUSTOS_DATABASE_DRIVER:-sqlite}
       CUSTOS_DATABASE_DSN: ${CUSTOS_DATABASE_DSN:-/data/custos.db}
+      # --- 会话 ---
       CUSTOS_AUTH_JWT_SECRET: ${CUSTOS_AUTH_JWT_SECRET:?请在 .env 中设置}
       # 组件/IM 凭证加密主密钥（32 字节 hex）；不设则无法保存 IM 凭证
       CUSTOS_SECRETS_MASTER_KEY: ${CUSTOS_SECRETS_MASTER_KEY:-}
-      # IM 扫码登录：wecom / dingtalk / feishu（凭证在 setup 向导里配置）；
-      # 本地无公网回调联调可用 mock，生产严禁
+      # --- Redis（refresh token 存储 / 登出踢下线；留空则内存模式） ---
+      CUSTOS_REDIS_ADDR: ${CUSTOS_REDIS_ADDR:-}
+      CUSTOS_REDIS_PASSWORD: ${CUSTOS_REDIS_PASSWORD:-}
+      CUSTOS_REDIS_DB: ${CUSTOS_REDIS_DB:-0}
+      # --- IM 扫码登录（凭证在 setup 向导里配置） ---
       CUSTOS_IM_PROVIDER: ${CUSTOS_IM_PROVIDER:-wecom}
-      # 平台对外可达地址（IM 扫码回调需公网 HTTPS，如 https://custos.example.com）
       CUSTOS_IM_PUBLIC_URL: ${CUSTOS_IM_PUBLIC_URL:-}
-      # 扫码成功后重定向回的前端地址（默认与访问地址一致即可）
       CUSTOS_IM_FRONTEND_URL: ${CUSTOS_IM_FRONTEND_URL:-http://localhost}
     volumes:
       - backend-data:/data
@@ -28,6 +35,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: ghcr.io/animacaeli/custos-machina-frontend:latest
     build:
       context: ../frontend
       dockerfile: Dockerfile

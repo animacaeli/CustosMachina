@@ -15,6 +15,7 @@ type Config struct {
 	Auth     Auth
 	Secrets  Secrets
 	IM       IM
+	Redis    Redis
 }
 
 type HTTP struct {
@@ -37,6 +38,13 @@ type Auth struct {
 // Secrets 用于组件凭证 / SSH 私钥的 AES-256-GCM 加密主密钥。
 type Secrets struct {
 	MasterKey string // 32 字节 hex；生产环境必须显式注入
+}
+
+// Redis：refresh token 存储等；env 兜底（setup 向导/系统设置里的配置优先）。
+type Redis struct {
+	Addr     string
+	Password string
+	DB       int
 }
 
 // IM 扫码登录相关（FR2）。Provider: wecom / mock（本地联调）。
@@ -64,6 +72,9 @@ func Load() (*Config, error) {
 	v.SetDefault("im.provider", "wecom")
 	v.SetDefault("im.public_url", "")
 	v.SetDefault("im.frontend_url", "http://localhost:5666")
+	v.SetDefault("redis.addr", "")
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
 
 	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
 	// 这里显式逐项读取，保证 env 覆盖一定生效。
@@ -89,6 +100,11 @@ func Load() (*Config, error) {
 			Provider:    v.GetString("im.provider"),
 			PublicURL:   v.GetString("im.public_url"),
 			FrontendURL: v.GetString("im.frontend_url"),
+		},
+		Redis: Redis{
+			Addr:     v.GetString("redis.addr"),
+			Password: v.GetString("redis.password"),
+			DB:       v.GetInt("redis.db"),
 		},
 	}
 	return cfg, nil
