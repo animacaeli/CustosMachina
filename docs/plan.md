@@ -170,7 +170,7 @@
 | 部署形态 | 平台自身 docker-compose 一键拉起;目标机 4C8G 可承载平台 + 全部被管组件 |
 | 网络前提 | 公网 HTTPS 域名(IM 扫码回调 + 应用消息必需);内网部署需自备反代,文档写明 |
 | 平台自库 | 默认 SQLite(零依赖、备份即拷文件);docker-compose 环境变量(`DATABASE_DRIVER` / `DATABASE_DSN`)切换 MySQL / PostgreSQL;迁移与查询需三方言兼容 |
-| 开源工程 | license 待定;UI 单语言中文(决策 D15:保留 i18n 机制、不维护第二语言);README / 部署文档从 MVP 当功能做 |
+| 开源工程 | license 已定 Apache-2.0(T2 关闭);UI 单语言中文(决策 D15:保留 i18n 机制、不维护第二语言);README / 部署文档从 MVP 当功能做 |
 | 安全 | 见 4.5 安全要点 |
 
 ---
@@ -348,7 +348,7 @@ MVP(M0~M5)交付 compose 运行时。**后续版本(不占 MVP 工期)**:v1.1 sw
 | # | 事项 | 建议决策时点 |
 |---|---|---|
 | T1 | 项目域名 | 开源发布前(M5);项目名已定 CustosMachina(2026-09-20) |
-| T2 | 开源 license | M5(建议 Apache-2.0;若深度捆绑 AGPL 组件需复审) |
+| T2 | 开源 license | 已定:Apache-2.0(2026-09-22 关闭);vben(MIT)为前端模板,其 LICENSE 保留于 frontend/LICENSE 并在 NOTICE 中声明;OpenObserve(AGPL)仅经 API 集成外部服务,不分发其代码,无传染 |
 | T3 | 首家实现的 IM | 已定:企业微信(自建应用扫码 + 应用消息,2026-09-21 关闭;接口按三家插件化设计,本地联调用 mock provider) |
 | T4 | 前端模板 | 已定:vue-vben-admin(Ant Design Vue,主应用 apps/web-antd;2026-09-20 搭建时由 vue-pure-admin 改定,理由:模板工程化更完整、turbo monorepo 便于裁剪多形态应用) |
 | T6 | 跨环境调用的定位(user-dev1 → order-dev2 是常态还是例外) | M2 前确认;当前按"例外"设计(FR10.4 覆盖项);若为常态需增加槽位依赖拓扑编辑与可视化 |
