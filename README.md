@@ -24,8 +24,21 @@ cp .env.example .env   # 修改 JWT 密钥、主密钥、公网地址、按需�
 docker compose pull && docker compose up -d
 ```
 
-镜像随版本 tag 发布在 ghcr.io（`custos-machina-backend` / `custos-machina-frontend`），
-支持 amd64 / arm64。锁版本可将 compose 中 `:latest` 改为具体 tag。
+镜像随版本 tag 发布在 ghcr.io，支持 amd64 / arm64。锁版本可将 compose 中 `:latest` 改为具体 tag。
+
+**单镜像模式**（nginx 基座，前后端同一容器，适合最小部署）：
+
+```bash
+docker run -d -p 80:80 --name custos \
+  -v custos-data:/data \
+  -e CUSTOS_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
+  -e CUSTOS_SECRETS_MASTER_KEY=$(openssl rand -hex 32) \
+  -e CUSTOS_IM_PUBLIC_URL=https://你的域名 \
+  -e CUSTOS_IM_FRONTEND_URL=https://你的域名 \
+  ghcr.io/animacaeli/custos-machina:v0.2.0
+```
+
+环境变量与 compose 方式一致（见 `deploy/.env.example`）。
 
 ### 方式二：本地构建
 

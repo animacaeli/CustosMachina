@@ -25,6 +25,8 @@ jobs:
             image: ${{ github.repository }}-backend
           - context: ./frontend
             image: ${{ github.repository }}-frontend
+          - context: ./
+            image: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +71,7 @@ jobs:
       - name: 设置 ghcr 包公开
         run: |
           set -e
-          for pkg in custos-machina-backend custos-machina-frontend; do
+          for pkg in custos-machina-backend custos-machina-frontend custos-machina; do
             echo "::group::${pkg}"
             curl -sS -X PATCH \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
