@@ -6,7 +6,7 @@ const routes: RouteRecordRaw[] = [
   {
     component: BasicLayout,
     meta: {
-      icon: 'lucide:settings',
+      icon: 'lucide:users',
       order: 10,
       title: '系统管理',
     },
@@ -18,29 +18,9 @@ const routes: RouteRecordRaw[] = [
         path: 'user',
         component: () => import('#/views/system/user.vue'),
         meta: {
-          icon: 'lucide:users',
+          icon: 'lucide:user-cog',
           authority: ['admin'],
           title: '用户管理',
-        },
-      },
-      {
-        name: 'SystemSetting',
-        path: 'setting',
-        component: () => import('#/views/system/setting.vue'),
-        meta: {
-          icon: 'lucide:sliders-horizontal',
-          authority: ['admin'],
-          title: '系统设置',
-        },
-      },
-      {
-        name: 'SystemIM',
-        path: 'im',
-        component: () => import('#/views/system/im.vue'),
-        meta: {
-          icon: 'lucide:scan-line',
-          authority: ['admin'],
-          title: '登录配置',
         },
       },
       {
@@ -51,6 +31,30 @@ const routes: RouteRecordRaw[] = [
           icon: 'lucide:shield-check',
           authority: ['admin'],
           title: '角色权限',
+        },
+      },
+    ],
+  },
+  // 管理后台：仅 admin，不进菜单，从头像下拉进入；平台级配置都在这里
+  {
+    component: BasicLayout,
+    meta: {
+      authority: ['admin'],
+      hideInMenu: true,
+      title: '管理后台',
+    },
+    name: 'Admin',
+    path: '/admin',
+    children: [
+      {
+        name: 'AdminConsole',
+        path: '',
+        component: () => import('#/views/admin/index.vue'),
+        meta: {
+          authority: ['admin'],
+          hideInMenu: true,
+          icon: 'lucide:wrench',
+          title: '管理后台',
         },
       },
     ],

@@ -2,25 +2,14 @@ import type { RouteRecordRaw } from 'vue-router';
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/home',
+    name: 'Home',
+    component: () => import('#/views/home/index.vue'),
     meta: {
-      icon: 'lucide:layout-dashboard',
+      icon: 'lucide:home',
       order: -1,
-      title: '工作台',
+      title: '首页',
     },
-    name: 'Dashboard',
-    path: '/dashboard',
-    children: [
-      {
-        name: 'DashboardHome',
-        path: 'home',
-        component: () => import('#/views/dashboard/index.vue'),
-        meta: {
-          affixTab: true,
-          icon: 'lucide:home',
-          title: '概览',
-        },
-      },
-    ],
   },
 ];
 

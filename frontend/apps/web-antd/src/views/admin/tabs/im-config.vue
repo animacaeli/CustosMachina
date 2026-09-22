@@ -115,8 +115,8 @@ async function save() {
 </script>
 
 <template>
-  <div class="p-4">
-    <a-card :loading="loading" title="登录配置 · IM 扫码登录">
+  <div>
+    <a-card :loading="loading" title="IM 扫码登录">
       <a-alert class="mb-4" show-icon type="info">
         <template #message>
           同时只启用一家；扫码回调地址需公网 HTTPS（详见部署文档）。当前：

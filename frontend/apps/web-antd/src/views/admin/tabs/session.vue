@@ -70,7 +70,7 @@ async function saveRedis() {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4">
+  <div class="flex flex-col gap-4">
     <a-card title="会话 token 有效期">
       <a-form class="max-w-[520px]" layout="inline">
         <a-form-item label="access（秒）">

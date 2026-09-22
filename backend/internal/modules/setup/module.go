@@ -1,7 +1,6 @@
 // Package setup 首次启动向导（FR1）。向导窗口 = 用户表为空；
-// 步骤：① IM 提供商三选一（企微/钉钉/飞书）+ 凭证 ② Redis（可跳过）
-// ③ 创建本地超管（break-glass，完成即关闭向导）。后续（组件纳管 / AI 配置 /
-// 通知路由）随批次 2~3 补齐。
+// 仅创建本地超管（break-glass），完成即关闭。其余全部配置（IM 提供商、
+// Redis、token 有效期等）登录后在「管理后台」设置。
 package setup
 
 import (
@@ -31,9 +30,7 @@ func (h *Handler) Name() string { return "setup" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
 	r.Public.GET("/setup/status", h.status)
-	// 向导窗口（用户表为空）内开放的步骤；完成后永久关闭（FR1.1）
-	r.Public.POST("/setup/im", h.setupIM)
-	r.Public.POST("/setup/redis", h.setupRedis)
+	// 完成后向导永久关闭（FR1.1）；其余配置（IM / Redis）在管理后台设置
 	r.Public.POST("/setup/admin", h.createAdmin)
 }
 
@@ -58,50 +55,6 @@ func (h *Handler) gate(c *gin.Context) bool {
 		return false
 	}
 	return true
-}
-
-type setupIMInput struct {
-	Provider string            `json:"provider" binding:"required,oneof=wecom dingtalk feishu"`
-	Config   map[string]string `json:"config" binding:"required"`
-	Enabled  bool              `json:"enabled"`
-}
-
-func (h *Handler) setupIM(c *gin.Context) {
-	var in setupIMInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	if !h.gate(c) {
-		return
-	}
-	if err := h.auth.SaveIMProviderConfigMap(c.Request.Context(), in.Provider, in.Config, in.Enabled); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	httpx.OK(c, gin.H{"saved": true})
-}
-
-type setupRedisInput struct {
-	Addr     string `json:"addr" binding:"required"`
-	Password string `json:"password"`
-	DB       int    `json:"db"`
-}
-
-func (h *Handler) setupRedis(c *gin.Context) {
-	var in setupRedisInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	if !h.gate(c) {
-		return
-	}
-	if err := h.auth.SaveRedis(c.Request.Context(), in.Addr, in.Password, in.DB); err != nil {
-		httpx.Fail(c, 502, 502, err.Error())
-		return
-	}
-	httpx.OK(c, gin.H{"ok": true})
 }
 
 type createAdminInput struct {

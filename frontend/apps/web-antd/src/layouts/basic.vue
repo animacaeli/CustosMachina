@@ -31,15 +31,36 @@ const showDot = computed(() =>
   notifications.value.some((item) => !item.isRead),
 );
 
-const menus = computed(() => [
-  {
-    handler: () => {
-      router.push({ name: 'Profile' });
+const isAdmin = computed(() =>
+  (userStore.userInfo?.roles ?? []).includes('admin'),
+);
+
+const menus = computed(() => {
+  const list: Array<{
+    handler: () => void;
+    icon: any;
+    text: string;
+  }> = [
+    {
+      handler: () => {
+        router.push({ name: 'Profile' });
+      },
+      icon: 'lucide:user',
+      text: $t('page.auth.profile'),
     },
-    icon: 'lucide:user',
-    text: $t('page.auth.profile'),
-  },
-]);
+  ];
+  // 平台级配置入口仅对超管显示
+  if (isAdmin.value) {
+    list.push({
+      handler: () => {
+        router.push({ path: '/admin' });
+      },
+      icon: 'lucide:wrench',
+      text: '管理后台',
+    });
+  }
+  return list;
+});
 
 const avatar = computed(() => {
   return userStore.userInfo?.avatar ?? preferences.app.defaultAvatar;
