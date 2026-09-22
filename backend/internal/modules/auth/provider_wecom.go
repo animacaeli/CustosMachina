@@ -14,8 +14,8 @@ import (
 )
 
 // 企业微信自建应用扫码登录（https://developer.work.weixin.qq.com/document/path/98152）。
-// 授权页：https://login.work.weixin.qq.com/wwlogin/sso/login（Corp 自建应用模式；
-// ServiceApp 是服务商应用模式，自建应用用它扫码会报「appid 错误」）
+// 授权页：https://login.work.weixin.qq.com/wwlogin/sso/login
+// login_type 合法值：CorpApp（企业自建/代开发应用，即我们）/ ServiceApp（服务商应用）
 // code 换身份：getuserinfo（需应用 access_token，由 corpid+secret 换取，2h 有效缓存）。
 func init() { registerProvider(func() IdentityProvider { return &WeComProvider{} }) }
 
@@ -44,7 +44,7 @@ func (w *WeComProvider) AuthorizeURL(redirectURI, state string) (string, error) 
 		return "", errors.New("企微配置不完整（缺少 corpid / agentid）")
 	}
 	q := url.Values{}
-	q.Set("login_type", "Corp")
+	q.Set("login_type", "CorpApp")
 	q.Set("appid", w.cfg.CorpID)
 	q.Set("agentid", w.cfg.AgentID)
 	q.Set("redirect_uri", redirectURI)
