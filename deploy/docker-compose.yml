@@ -6,7 +6,7 @@
 # 配置：cp .env.example .env 后按需修改
 services:
   backend:
-    image: ghcr.io/animacaeli/custos-machina-backend:latest
+    image: ghcr.io/animacaeli/custosmachina-backend:latest
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/animacaeli/custos-machina-frontend:latest
+    image: ghcr.io/animacaeli/custosmachina-frontend:latest
     build:
       context: ../frontend
       dockerfile: Dockerfile

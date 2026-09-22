@@ -96,8 +96,11 @@ jobs:
           body: |
             ## 镜像
 
-            - `${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ github.ref_name }}`
-            - `${{ env.REGISTRY }}/${{ github.repository }}-frontend:${{ github.ref_name }}`
+            GHCR 包名强制小写，实际地址为：
+
+            - `${{ env.REGISTRY }}/animacaeli/custosmachina:${{ github.ref_name }}`（单镜像，nginx + 前后端）
+            - `${{ env.REGISTRY }}/animacaeli/custosmachina-backend:${{ github.ref_name }}`
+            - `${{ env.REGISTRY }}/animacaeli/custosmachina-frontend:${{ github.ref_name }}`
 
             ## 一键拉起
 

@@ -35,7 +35,7 @@ docker run -d -p 80:80 --name custos \
   -e CUSTOS_SECRETS_MASTER_KEY=$(openssl rand -hex 32) \
   -e CUSTOS_IM_PUBLIC_URL=https://你的域名 \
   -e CUSTOS_IM_FRONTEND_URL=https://你的域名 \
-  ghcr.io/animacaeli/custos-machina:v0.2.0
+  ghcr.io/animacaeli/custosmachina:v0.2.0
 ```
 
 环境变量与 compose 方式一致（见 `deploy/.env.example`）。
