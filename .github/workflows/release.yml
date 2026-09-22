@@ -5,6 +5,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -59,9 +60,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  publish:
+    name: 镜像设为公开
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      # GHCR 包可见性与仓库独立（新包默认 private），显式设为 public
+      - name: 设置 ghcr 包公开
+        run: |
+          set -e
+          for pkg in custos-machina-backend custos-machina-frontend; do
+            echo "::group::${pkg}"
+            curl -sS -X PATCH \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/user/packages/container/${pkg} \
+              -d '{"visibility":"public"}' -o /dev/null -w "%{http_code}\n"
+            echo "::endgroup::"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
     name: 创建 GitHub Release
-    needs: images
+    needs: [images, publish]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
