@@ -107,24 +107,31 @@ function goAdmin() {
       </a-card>
     </div>
 
-    <a-card class="mt-4" title="快捷入口">
-      <a-space wrap>
-        <template v-if="isAdmin">
-          <a-button v-for="t in TODO" :key="t.key" @click="router.push(t.key)">
-            {{ t.title }}
-          </a-button>
-          <a-button type="primary" @click="router.push('/admin')">
-            管理后台
-          </a-button>
-        </template>
-        <span v-else class="text-muted-foreground text-sm">
-          联系管理员开通更多权限
-        </span>
-      </a-space>
-      <p class="text-muted-foreground mt-3 text-xs">
-        服务管理 / CI / 日志 / 配置 / 告警中心等功能随第二阶段开发逐步开放。
-      </p>
-    </a-card>
+    <!-- 间距放外层 div：a-card 上的工具类会被 antd 样式层覆盖 -->
+    <div class="mt-6">
+      <a-card title="快捷入口">
+        <a-space wrap>
+          <template v-if="isAdmin">
+            <a-button
+              v-for="t in TODO"
+              :key="t.key"
+              @click="router.push(t.key)"
+            >
+              {{ t.title }}
+            </a-button>
+            <a-button type="primary" @click="router.push('/admin')">
+              管理后台
+            </a-button>
+          </template>
+          <span v-else class="text-muted-foreground text-sm">
+            联系管理员开通更多权限
+          </span>
+        </a-space>
+        <p class="text-muted-foreground mt-3 text-xs">
+          服务管理 / CI / 日志 / 配置 / 告警中心等功能随第二阶段开发逐步开放。
+        </p>
+      </a-card>
+    </div>
 
     <!-- 超管首登引导 -->
     <a-modal
