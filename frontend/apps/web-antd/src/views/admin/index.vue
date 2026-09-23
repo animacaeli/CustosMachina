@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref } from 'vue';
 
+import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
 import Session from './tabs/session.vue';
@@ -28,6 +29,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="notify" tab="通知群聊">
           <NotifyGroups />
+        </a-tab-pane>
+        <a-tab-pane key="ci" tab="CI / 镜像仓库">
+          <CiConfig />
         </a-tab-pane>
       </a-tabs>
     </a-card>

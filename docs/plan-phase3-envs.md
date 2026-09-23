@@ -187,7 +187,10 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - 前端：`/projects` 一级入口、项目列表 / 详情（概览 + 配置 tab）、`/envs` 三 tab 骨架。
 - 验收：登记 `【P】`/`【dev】` 群后，项目配置里各环境下拉只出现对应前缀的群；不可达事件能推到群里。
 
-### M2：gitea CI 集成 + 构建（正式环境打通）
+### M2：gitea CI 集成 + 构建（正式环境打通）✅ 2026-09-23 完成（待真实实例联调）
+- 已交付：`internal/modules/ci`——全局 CI 配置（gitea 地址 + 全局 token 加密 + webhook 密钥，单行表 ci_global_config）、`registries` 表与 CRUD（aliyun/tencent/gitea 三类型、凭据加密）、gitea 极薄客户端（commit status / branches / Actions 外链）、标签 webhook 接收（X-Gitea-Signature HMAC-SHA256 校验、项目按 repo_path 大小写不敏感匹配、v*→正式 / canary-yyyymmdd-缩写→灰度格式校验、未登记项目与非标签事件忽略）、`builds` 分页查询、状态轮询 jobs（30s，pending/running → commit status 映射，终态按项目配置推通知）、casbin v5 并入 CI/registries/builds 资源点、前端：管理后台"CI / 镜像仓库" tab、/envs 构建抽屉（分页 + 30s 轮询 + 日志外链）
+- **关键假设（待实测自托管 gitea）**：构建状态来自 act_runner 写入的 commit status（`/repos/{path}/commits/{sha}/status` 聚合接口）；日志为 gitea Actions 页面外链、未内嵌。gitea MCP 未登录无法提前实测，用户实例联调时验证，若 act_runner 不写 status 则改轮询 Actions 任务接口
+- 已知偏差：webhook 无时间戳防重放（gitea 原生签名不含时间戳，靠密钥保密性；公网部署建议平台侧限制来源）；测试环境 push 自动链路留 M5
 - **第一件事：实测自托管 gitea 的 workflow API 能力**（act_runner 状态 / 日志 / 触发），按实际版本适配；
 - 平台全局 CI 配置（gitea 地址 + 全局凭据，管理后台）+ `registries` 表与登记页（阿里云 / 腾讯云 / gitea 三类型）；
 - gitea API 客户端（`CiProvider` 接口 + gitea 实现：触发 / 状态 / 日志 / 分支列表）、tag + push webhook 接收；

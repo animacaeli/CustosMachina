@@ -129,8 +129,8 @@ async function saveOpsGroup() {
         style="width: 260px"
       />
       <a-button :disabled="!opsGroupId" size="small" @click="saveOpsGroup">
-保存
-</a-button>
+        保存
+      </a-button>
       <a-tag v-if="opsConfigured" color="green">已配置</a-tag>
     </div>
 
@@ -159,8 +159,8 @@ async function saveOpsGroup() {
         </template>
         <template v-else-if="column.key === 'action'">
           <a-button size="small" type="link" @click="openEdit(record)">
-编辑
-</a-button>
+            编辑
+          </a-button>
           <a-button
             :loading="testingId === record.id"
             :disabled="!record.hasWebhook"

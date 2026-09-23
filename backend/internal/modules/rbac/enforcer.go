@@ -103,6 +103,17 @@ var defaultPolicies = [][]string{
 	{"admin", "/notify-groups/*", "GET|PUT|DELETE|POST"},
 	{"admin", "/notify-settings", "GET|PUT"},
 	{"admin", "/notify-settings/*", "GET|PUT"},
+	{"admin", "/ci", "GET|PUT"},
+	{"admin", "/ci/*", "GET|PUT"},
+	{"admin", "/registries", "GET|POST|PUT|DELETE"},
+	{"admin", "/registries/*", "GET|PUT|DELETE"},
+	{"admin", "/builds", "GET"},
+	{"ops", "/builds", "GET"},
+	{"dev", "/builds", "GET"},
+	{"ops", "/project-branches", "GET"},
+	{"ops", "/project-branches/*", "GET"},
+	{"dev", "/project-branches", "GET"},
+	{"dev", "/project-branches/*", "GET"},
 	{"ops", "/services/*", "GET|POST|PUT"},
 	{"ops", "/services", "GET|POST|PUT"},
 	{"ops", "/alerts/*", "GET|PUT"},
@@ -118,7 +129,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "5" // v5：新增项目/通知群资源点（projects + notify 模块，第三阶段 M1）
+const policySeedVersion = "5" // v5：新增项目/通知群/CI/镜像仓库/构建资源点（projects + notify + ci 模块，第三阶段 M1~M2）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，

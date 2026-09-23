@@ -5,17 +5,21 @@ import { onMounted, ref } from 'vue';
 
 import { getProjectsApi } from '#/api/projects';
 
+import BuildDrawer from './build-drawer.vue';
+
 defineOptions({ name: 'EnvsIndex' });
 
 const projects = ref<Project[]>([]);
 const projectId = ref<number | undefined>();
-const activeEnv = ref('prod');
+const activeEnv = ref<'canary' | 'prod' | 'test'>('prod');
 
 const envTabs = [
   { key: 'prod', tab: '正式环境' },
   { key: 'canary', tab: '灰度环境' },
   { key: 'test', tab: '测试环境' },
-];
+] as const;
+
+const buildOpen = ref(false);
 
 onMounted(async () => {
   projects.value = await getProjectsApi();
@@ -45,12 +49,27 @@ onMounted(async () => {
       <a-tabs v-model:active-key="activeEnv">
         <a-tab-pane v-for="t in envTabs" :key="t.key" :tab="t.tab">
           <a-empty v-if="!projectId" description="请选择项目" />
-          <a-empty
-            v-else
-            description="构建 / 发布 / 策略 / 槽位功能随后续里程碑（M2~M5）交付"
-          />
+          <template v-else>
+            <div class="mb-4 flex gap-2">
+              <a-button type="primary" @click="buildOpen = true">构建</a-button>
+              <a-button disabled>发布</a-button>
+              <a-button v-if="t.key !== 'prod'" disabled>
+                {{ t.key === 'canary' ? '策略' : '槽位' }}
+              </a-button>
+            </div>
+            <a-empty
+              description="发布 / 策略 / 槽位随后续里程碑（M3~M5）交付；构建记录见「构建」抽屉"
+            />
+          </template>
         </a-tab-pane>
       </a-tabs>
     </a-card>
+
+    <BuildDrawer
+      :env="activeEnv"
+      :open="buildOpen"
+      :project-id="projectId"
+      @close="buildOpen = false"
+    />
   </div>
 </template>
