@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 
 import ImConfig from './tabs/im-config.vue';
+import NotifyGroups from './tabs/notify-groups.vue';
 import Session from './tabs/session.vue';
 
 defineOptions({ name: 'AdminConsole' });
@@ -24,6 +25,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="session" tab="会话设置">
           <Session />
+        </a-tab-pane>
+        <a-tab-pane key="notify" tab="通知群聊">
+          <NotifyGroups />
         </a-tab-pane>
       </a-tabs>
     </a-card>

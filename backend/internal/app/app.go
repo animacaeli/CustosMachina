@@ -11,6 +11,8 @@ import (
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
@@ -23,6 +25,8 @@ import (
 func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models := identity.Models()
 	models = append(models, resources.Models()...)
+	models = append(models, notify.Models()...)
+	models = append(models, projects.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -44,8 +48,13 @@ func ProvideModules(
 	identity *identity.Handler,
 	rbac *rbac.Handler,
 	resources *resources.Handler,
+	notify *notify.Handler,
+	projects *projects.Handler,
+	notifySvc *notify.Service,
 ) server.Modules {
-	return server.Modules{health, auth, setup, identity, rbac, resources}
+	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
+	resources.AttachNotifier(notifySvc)
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -64,6 +73,8 @@ var moduleSet = wire.NewSet(
 	identity.Set,
 	rbac.Set,
 	resources.Set,
+	notify.Set,
+	projects.Set,
 	ProvideModules,
 )
 

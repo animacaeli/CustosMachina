@@ -92,6 +92,17 @@ var defaultPolicies = [][]string{
 	{"dev", "/server-env", "GET"},
 	{"dev", "/server-env/*", "GET"},
 	{"dev", "/auth/tickets", "POST"},
+	// v5：项目与通知群资源点（projects / notify 模块，第三阶段 M1）
+	{"admin", "/projects", "GET|POST|PUT|DELETE"},
+	{"admin", "/projects/*", "GET|PUT|DELETE"},
+	{"ops", "/projects", "GET"},
+	{"ops", "/projects/*", "GET"},
+	{"dev", "/projects", "GET"},
+	{"dev", "/projects/*", "GET"},
+	{"admin", "/notify-groups", "GET|POST|PUT|DELETE"},
+	{"admin", "/notify-groups/*", "GET|PUT|DELETE|POST"},
+	{"admin", "/notify-settings", "GET|PUT"},
+	{"admin", "/notify-settings/*", "GET|PUT"},
 	{"ops", "/services/*", "GET|POST|PUT"},
 	{"ops", "/services", "GET|POST|PUT"},
 	{"ops", "/alerts/*", "GET|PUT"},
@@ -107,7 +118,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "4" // v4：新增服务器/分组资源点（resources 模块 M1）
+const policySeedVersion = "5" // v5：新增项目/通知群资源点（projects + notify 模块，第三阶段 M1）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -203,6 +214,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		// v3→v4：servers/server-groups 是新资源点，admin/ops 已有其他策略，
 		// 需逐条补齐（HasPolicy 去重，不覆盖人为调整过的旧条目）
 		if len(ps) > 0 && (p[0] == "admin" || p[0] == "ops") && oldVersion == "3" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v4→v5：projects/notify-groups 对 admin（新增）与 ops/dev（只读）都是新资源点
+		if len(ps) > 0 && oldVersion == "4" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

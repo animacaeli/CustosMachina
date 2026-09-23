@@ -177,7 +177,10 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - 前端菜单**取消手风琴模式**（可同时展开多个一级目录）。
 - 验收：docker-compose up 后宿主机能直接看日志文件；菜单多目录同时展开。
 
-### M1：notify 模块 + 项目模块（后端为主）
+### M1：notify 模块 + 项目模块（后端为主）✅ 2026-09-23 完成
+- 已交付：`internal/modules/notify`（企微群机器人 Sender、`notify_groups`/`notify_records` 表、群 CRUD + 测试消息 + 运维群设置 API、按群 3s 限频闸门、发送留痕）、`internal/modules/projects`（项目 CRUD + 部署目标整体替换 + 通知群 scope 匹配校验：prod/canary→【P】、test→【dev】）、collector 桥接 NotifyOps（unreachable/recovered 推运维群，未配置群时只落库+日志）、casbin 种子 v5（admin 管项目/群，ops/dev 项目只读）、前端 /projects（列表+详情配置/部署目标/容器占位 tab）、/envs 三 tab 骨架、管理后台"通知群聊" tab（含运维群选择）、cmd/jwtgen 本地冒烟辅助
+- 已知偏差：终端审计事件仍只落库不推群（审计类不适合刷群消息，维持现状）；webhook 限频是简单 3s 闸门非队列
+- 待真实联调：企微群机器人 webhook 推送（需用户登记真实群）
 - notify：`Notifier` 接口 + 企微群机器人实现、`notify_groups` 表 + 管理页（admin 登记群 webhook + 前缀校验）、消息模板；
 - 顺带桥接二阶段空壳：服务器不可达通知、终端审计事件接 notify；
 - projects 模块：表 + CRUD + 环境部署目标映射 + 通知群配置（按前缀过滤的下拉数据源）+ 槽位个数；

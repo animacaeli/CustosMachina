@@ -149,6 +149,8 @@ type Collector struct {
 
 	group *jobs.Group
 
+	notifier OpsNotifier // 可选：运维群推送（notify 模块注入）
+
 	mu        sync.Mutex
 	rings     map[uint]*ring
 	prevCPU   map[uint][]float64 // 上一次累计 CPU 时间（差值计算用）
@@ -156,6 +158,11 @@ type Collector struct {
 	failCount map[uint]int
 	lastState map[uint]ServerStatus
 	pending   []MetricSample
+}
+
+// OpsNotifier 平台级运维告警出口（notify.Service 实现；空实现 = 只落库不推送）。
+type OpsNotifier interface {
+	NotifyOps(ctx context.Context, title, detail string)
 }
 
 // NewCollector 构造并启动采集任务；wire 聚合返回的 cleanup 会在停机时调用 Stop。
@@ -301,13 +308,21 @@ func (c *Collector) recordFailure(ctx context.Context, srv *Server, cause error)
 	}
 }
 
-// emitEvent 落 server_events 并打日志；IM 推送等 notify 模块实现后在此桥接。
+// SetNotifier 注入运维告警出口（app 组装时调用；不注入则只落库不推送）。
+func (c *Collector) SetNotifier(n OpsNotifier) { c.notifier = n }
+
+// emitEvent 落 server_events、打日志并推运维群（第三阶段 M1 起 notify 已实现）。
 func (c *Collector) emitEvent(ctx context.Context, serverID uint, typ, msg string) {
 	ev := ServerEvent{ServerID: serverID, Type: typ, Message: truncate(msg, 255)}
 	if err := c.db.WithContext(ctx).Create(&ev).Error; err != nil {
 		fmt.Printf("[resources] 落事件失败 server=%d type=%s: %v\n", serverID, typ, err)
 	}
 	fmt.Printf("[resources] server=%d %s: %s\n", serverID, typ, msg)
+	if c.notifier != nil && (typ == "unreachable" || typ == "recovered") {
+		go c.notifier.NotifyOps(context.WithoutCancel(ctx),
+			"服务器"+map[string]string{"unreachable": "不可达", "recovered": "已恢复"}[typ],
+			fmt.Sprintf("服务器 ID=%d\n事件：%s", serverID, msg))
+	}
 }
 
 func truncate(s string, n int) string {
