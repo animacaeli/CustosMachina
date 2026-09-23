@@ -30,6 +30,10 @@ export const overridesPreferences = defineOverridesPreferences({
     languageToggle: false,
     timezone: false,
   },
+  // 第三阶段 M0：取消侧边菜单手风琴模式，可同时展开多个一级目录
+  navigation: {
+    accordion: false,
+  },
   copyright: appCopyrightPreferences,
   // 品牌 logo：盾牌+齿轮+脉冲为渐变色，浅深主题通用；
   // 横版 wordmark（logo-wordmark / logo-wordmark-dark）保留在 public/ 供文档与物料使用

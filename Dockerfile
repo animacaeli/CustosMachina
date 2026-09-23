@@ -37,6 +37,6 @@ COPY deploy/start-backend.sh /docker-entrypoint.d/90-start-backend.sh
 RUN chmod +x /docker-entrypoint.d/90-start-backend.sh /usr/local/bin/custos-server \
     && mkdir -p /data && chown nginx /data
 
-ENV CUSTOS_HTTP_ADDR=:8080 CUSTOS_DATABASE_DSN=/data/custos.db
+ENV CUSTOS_HTTP_ADDR=:8080 CUSTOS_DATABASE_DSN=/data/custos.db CUSTOS_LOG_DIR=/data/logs
 VOLUME /data
 EXPOSE 80

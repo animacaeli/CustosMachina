@@ -29,6 +29,9 @@ services:
       CUSTOS_IM_FRONTEND_URL: ${CUSTOS_IM_FRONTEND_URL:-http://localhost}
     volumes:
       - backend-data:/data
+      # 日志文件滚动目录（zap + lumberjack）；想直接在宿主机看日志，
+      # 在 .env 里把 CUSTOS_LOG_DIR 设为宿主机路径（bind mount）
+      - ${CUSTOS_LOG_DIR:-backend-logs}:/data/logs
     # 不直接对外暴露，仅经 frontend 的 nginx 反代访问
     expose:
       - "8080"
@@ -47,3 +50,4 @@ services:
 
 volumes:
   backend-data:
+  backend-logs:

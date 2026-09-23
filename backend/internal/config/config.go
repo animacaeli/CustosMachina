@@ -16,6 +16,16 @@ type Config struct {
 	Secrets  Secrets
 	IM       IM
 	Redis    Redis
+	Log      Log
+}
+
+// Log 日志配置（第三阶段 M0：zap + 文件滚动）。
+type Log struct {
+	Level      string // debug / info / warn / error
+	Dir        string // 日志目录；空 = 只输出 stderr；容器部署映射为宿主机卷
+	MaxSizeMB  int
+	MaxBackups int
+	MaxAgeDays int
 }
 
 type HTTP struct {
@@ -75,6 +85,11 @@ func Load() (*Config, error) {
 	v.SetDefault("redis.addr", "")
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
+	v.SetDefault("log.level", "info")
+	v.SetDefault("log.dir", "data/logs")
+	v.SetDefault("log.max_size_mb", 50)
+	v.SetDefault("log.max_backups", 5)
+	v.SetDefault("log.max_age_days", 14)
 
 	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
 	// 这里显式逐项读取，保证 env 覆盖一定生效。
@@ -105,6 +120,13 @@ func Load() (*Config, error) {
 			Addr:     v.GetString("redis.addr"),
 			Password: v.GetString("redis.password"),
 			DB:       v.GetInt("redis.db"),
+		},
+		Log: Log{
+			Level:      v.GetString("log.level"),
+			Dir:        v.GetString("log.dir"),
+			MaxSizeMB:  v.GetInt("log.max_size_mb"),
+			MaxBackups: v.GetInt("log.max_backups"),
+			MaxAgeDays: v.GetInt("log.max_age_days"),
 		},
 	}
 	return cfg, nil

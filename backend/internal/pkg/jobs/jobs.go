@@ -5,9 +5,10 @@ package jobs
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
 // Job 一个周期任务。Fn 应快速返回或自行监听 ctx 取消；报错只记日志不打断调度。
@@ -68,7 +69,7 @@ func (g *Group) loop(j Job) {
 			return
 		case <-t.C:
 			if err := j.Fn(g.ctx); err != nil {
-				log.Printf("[jobs:%s] %v", j.Name, err)
+				logger.Warnf("[jobs:%s] %v", j.Name, err)
 			}
 		}
 	}
