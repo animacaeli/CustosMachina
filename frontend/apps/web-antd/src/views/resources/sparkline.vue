@@ -22,7 +22,9 @@ const path = computed(() => {
   const max = Math.max(100, ...pts); // 百分比指标固定 0~100 基准
   const step = W / (pts.length - 1);
   const y = (v: number) =>
-    (H - 2 - ((Math.min(v, max) - min) / (max - min || 1)) * (H - 6)).toFixed(1);
+    (H - 2 - ((Math.min(v, max) - min) / (max - min || 1)) * (H - 6)).toFixed(
+      1,
+    );
   let line = '';
   for (let i = 0; i < pts.length; i++) {
     line += `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y(pts[i] ?? 0)}`;

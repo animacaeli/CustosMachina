@@ -90,7 +90,11 @@ async function onDelete(g: ServerGroup) {
         <a-table-column title="备注" data-index="remark">
           <template #default="{ text }">{{ text || '—' }}</template>
         </a-table-column>
-        <a-table-column title="服务器数" data-index="serverCount" :width="100" />
+        <a-table-column
+          title="服务器数"
+          data-index="serverCount"
+          :width="100"
+        />
         <a-table-column title="操作" :width="150">
           <template #default="{ record }">
             <a-button size="small" type="link" @click="openEdit(record)">

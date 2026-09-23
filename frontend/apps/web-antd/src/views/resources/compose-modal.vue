@@ -124,7 +124,11 @@ async function deploy() {
     title="部署 Compose 应用"
     destroy-on-close
   >
-    <a-steps :current="step" class="pb-4" :items="[{ title: '环境检测' }, { title: '编辑部署' }, { title: '完成' }]" />
+    <a-steps
+      :current="step"
+      class="pb-4"
+      :items="[{ title: '环境检测' }, { title: '编辑部署' }, { title: '完成' }]"
+    />
 
     <!-- 步骤 1：环境检测 -->
     <div v-if="step === 0">
@@ -141,13 +145,17 @@ async function deploy() {
           <template v-else>
             <a-alert
               message="目标机 Docker 环境不完整"
-              :description="`发行版：${probe.distro || '未识别'}；Docker：${probe.dockerVersion || `不可用 ${ probe.dockerErr}`}；Compose 插件：${probe.composeVer || '不可用'}`"
+              :description="`发行版：${probe.distro || '未识别'}；Docker：${probe.dockerVersion || `不可用 ${probe.dockerErr}`}；Compose 插件：${probe.composeVer || '不可用'}`"
               type="warning"
               show-icon
               class="mb-3"
             />
-            <div class="pb-2 font-medium">按以下步骤安装（完成后再点重新检测）：</div>
-            <pre class="max-h-64 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200">{{ guide }}</pre>
+            <div class="pb-2 font-medium">
+              按以下步骤安装（完成后再点重新检测）：
+            </div>
+            <pre
+              class="max-h-64 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200"
+              >{{ guide }}</pre>
           </template>
         </template>
         <div v-else class="py-6 text-center text-gray-400">探测中…</div>
@@ -171,7 +179,9 @@ async function deploy() {
           size="small"
         />
         <input type="file" accept=".yml,.yaml" @change="onImportFile" />
-        <span v-if="yamlError" class="text-xs text-red-500">{{ yamlError }}</span>
+        <span v-if="yamlError" class="text-xs text-red-500">{{
+          yamlError
+        }}</span>
       </div>
       <div class="pb-2 text-xs text-gray-400">
         部署到目标机：/opt/custos-machina/compose/&lt;项目名&gt;/compose.yaml（同名重新部署为覆盖更新）
@@ -199,7 +209,9 @@ async function deploy() {
         show-icon
         class="mb-3"
       />
-      <pre class="max-h-96 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200">{{ deployOutput }}</pre>
+      <pre
+        class="max-h-96 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200"
+        >{{ deployOutput }}</pre>
       <div class="flex justify-end pt-3">
         <a-button type="primary" @click="open = false">完成</a-button>
       </div>

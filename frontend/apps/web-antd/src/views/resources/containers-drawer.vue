@@ -381,12 +381,7 @@ function stopFollowOnClose() {
             <span class="ml-2 text-xs text-gray-400">{{ p.file }}</span>
           </template>
           <template #extra>
-            <a-button
-              size="small"
-              type="primary"
-              ghost
-              @click="openFile(p)"
-            >
+            <a-button size="small" type="primary" ghost @click="openFile(p)">
               {{ canManage ? '部署文件' : '查看文件' }}
             </a-button>
           </template>
@@ -435,11 +430,7 @@ function stopFollowOnClose() {
             </a-button>
             <template v-else>
               <a-button @click="fileEditing = false">取消</a-button>
-              <a-button
-                type="primary"
-                :loading="fileSaving"
-                @click="saveFile"
-              >
+              <a-button type="primary" :loading="fileSaving" @click="saveFile">
                 保存（远端自动备份）
               </a-button>
             </template>
@@ -458,7 +449,7 @@ function stopFollowOnClose() {
         <pre
           v-if="recreateOutput"
           class="mt-3 max-h-60 overflow-auto rounded bg-[#1e1e1e] p-2 text-xs text-gray-200"
-        >{{ recreateOutput }}</pre>
+          >{{ recreateOutput }}</pre>
       </a-spin>
     </a-modal>
 
@@ -488,7 +479,7 @@ function stopFollowOnClose() {
           ref="logsPreRef"
           class="max-h-[72vh] overflow-auto rounded bg-[#1e1e1e] p-2 text-xs leading-5 text-gray-200"
           @scroll="onLogsScroll"
-        >{{ logsText || '（暂无日志）' }}</pre>
+          >{{ logsText || '（暂无日志）' }}</pre>
       </a-spin>
     </a-drawer>
   </a-drawer>

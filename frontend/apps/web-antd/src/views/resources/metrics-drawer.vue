@@ -55,7 +55,10 @@ async function load() {
           areaStyle: { opacity: 0.08 },
           data: ts.map((t, i) => {
             const p = points[i];
-            return [t, p && p.memTotal > 0 ? round1((p.memUsed / p.memTotal) * 100) : 0];
+            return [
+              t,
+              p && p.memTotal > 0 ? round1((p.memUsed / p.memTotal) * 100) : 0,
+            ];
           }),
         },
       ],

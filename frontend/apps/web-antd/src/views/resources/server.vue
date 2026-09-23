@@ -303,9 +303,7 @@ async function onDelete(id: number, name: string) {
             allow-clear
             placeholder="按分组筛选"
             style="width: 160px"
-            :options="
-              groups.map((g) => ({ label: g.name, value: g.id }))
-            "
+            :options="groups.map((g) => ({ label: g.name, value: g.id }))"
           />
           <a-button type="primary" @click="openCreate">新增服务器</a-button>
         </div>
@@ -371,9 +369,7 @@ async function onDelete(id: number, name: string) {
           </template>
         </a-table-column>
         <a-table-column title="采集间隔" :width="90">
-          <template #default="{ record }">
-            {{ record.metricSecs }}s
-          </template>
+          <template #default="{ record }"> {{ record.metricSecs }}s </template>
         </a-table-column>
         <a-table-column title="最近在线" :width="170">
           <template #default="{ record }">
@@ -460,9 +456,7 @@ async function onDelete(id: number, name: string) {
           </a-radio-group>
         </a-form-item>
         <a-form-item
-          :label="
-            editingId ? '用户名（留空保留原值）' : '用户名'
-          "
+          :label="editingId ? '用户名（留空保留原值）' : '用户名'"
           :required="!editingId"
         >
           <a-input
@@ -482,7 +476,9 @@ async function onDelete(id: number, name: string) {
         </template>
         <template v-else>
           <a-form-item
-            :label="editingId ? '私钥（留空保留原私钥）' : '私钥（OpenSSH PEM）'"
+            :label="
+              editingId ? '私钥（留空保留原私钥）' : '私钥（OpenSSH PEM）'
+            "
             :required="!editingId"
           >
             <div class="flex w-full flex-col gap-2">

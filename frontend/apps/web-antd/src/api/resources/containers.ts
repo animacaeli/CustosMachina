@@ -31,10 +31,13 @@ export async function saveComposeFileApi(
   path: string,
   content: string,
 ) {
-  return requestClient.put<{ message: string }>(`/server-compose/${serverId}/file`, {
-    content,
-    path,
-  });
+  return requestClient.put<{ message: string }>(
+    `/server-compose/${serverId}/file`,
+    {
+      content,
+      path,
+    },
+  );
 }
 
 /** 按部署文件强制重建项目容器 */
@@ -91,8 +94,14 @@ export async function containerActionApi(
   return requestClient.post(`/server-containers/${serverId}/${cid}/${action}`);
 }
 
-export async function containerLogsApi(serverId: number, cid: string, tail = 200) {
-  return requestClient.get<string[]>(`/server-containers/${serverId}/${cid}/logs?tail=${tail}`);
+export async function containerLogsApi(
+  serverId: number,
+  cid: string,
+  tail = 200,
+) {
+  return requestClient.get<string[]>(
+    `/server-containers/${serverId}/${cid}/logs?tail=${tail}`,
+  );
 }
 
 export async function containerStatsApi(serverId: number, cid: string) {

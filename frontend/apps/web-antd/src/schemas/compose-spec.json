@@ -135,10 +135,7 @@
               }
             },
             "weight": {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "Block IO weight (relative weight) for the service, between 10 and 1000."
             },
             "weight_device": {
@@ -169,10 +166,7 @@
         },
         "cgroup": {
           "type": "string",
-          "enum": [
-            "host",
-            "private"
-          ],
+          "enum": ["host", "private"],
           "description": "Specify the cgroup namespace to join. Use 'host' to use the host's cgroup namespace, or 'private' to use a private cgroup namespace."
         },
         "cgroup_parent": {
@@ -213,45 +207,27 @@
           "description": "Percentage of CPU resources to use."
         },
         "cpu_shares": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "CPU shares (relative weight) for the container."
         },
         "cpu_quota": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Limit the CPU CFS (Completely Fair Scheduler) quota."
         },
         "cpu_period": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Limit the CPU CFS (Completely Fair Scheduler) period."
         },
         "cpu_rt_period": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Limit the CPU real-time period in microseconds or a duration."
         },
         "cpu_rt_runtime": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Limit the CPU real-time runtime in microseconds or a duration."
         },
         "cpus": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Number of CPUs to use. A floating-point value is supported to request partial CPUs."
         },
         "cpuset": {
@@ -294,9 +270,7 @@
               },
               {
                 "type": "object",
-                "required": [
-                  "source"
-                ],
+                "required": ["source"],
                 "properties": {
                   "source": {
                     "type": "string",
@@ -366,10 +340,7 @@
         "group_add": {
           "type": "array",
           "items": {
-            "type": [
-              "string",
-              "number"
-            ]
+            "type": ["string", "number"]
           },
           "uniqueItems": true,
           "description": "Add additional groups which user inside the container should be member of."
@@ -383,10 +354,7 @@
           "description": "Specify the image to start the container from. Can be a repository/tag, a digest, or a local image ID."
         },
         "init": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Run as an init process inside the container that forwards signals and reaps processes."
         },
         "ipc": {
@@ -414,11 +382,7 @@
               "description": "Options for the logging driver.",
               "patternProperties": {
                 "^.+$": {
-                  "type": [
-                    "string",
-                    "number",
-                    "null"
-                  ]
+                  "type": ["string", "number", "null"]
                 }
               }
             }
@@ -433,31 +397,19 @@
           "description": "Container MAC address to set."
         },
         "mem_limit": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Memory limit for the container. A string value can use suffix like '2g' for 2 gigabytes."
         },
         "mem_reservation": {
-          "type": [
-            "string",
-            "integer"
-          ],
+          "type": ["string", "integer"],
           "description": "Memory reservation for the container."
         },
         "mem_swappiness": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Container memory swappiness as percentage (0 to 100)."
         },
         "memswap_limit": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Amount of memory the container is allowed to swap to disk. Set to -1 to enable unlimited swap."
         },
         "network_mode": {
@@ -543,10 +495,7 @@
                           "description": "Driver options for this network.",
                           "patternProperties": {
                             "^.+$": {
-                              "type": [
-                                "string",
-                                "number"
-                              ]
+                              "type": ["string", "number"]
                             }
                           }
                         },
@@ -576,10 +525,7 @@
           "description": "Networks to join, referencing entries under the top-level networks key. Can be a list of network names or a mapping of network name to network configuration."
         },
         "oom_kill_disable": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Disable OOM Killer for the container."
         },
         "oom_score_adj": {
@@ -596,17 +542,11 @@
           "description": "Tune host's OOM preferences for the container (accepts -1000 to 1000)."
         },
         "pid": {
-          "type": [
-            "string",
-            "null"
-          ],
+          "type": ["string", "null"],
           "description": "PID mode for container."
         },
         "pids_limit": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Tune a container's PIDs limit. Set to -1 for unlimited PIDs."
         },
         "platform": {
@@ -614,10 +554,7 @@
           "description": "Target platform to run on, e.g., 'linux/amd64', 'linux/arm64', or 'windows/amd64'."
         },
         "privileged": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Give extended privileges to the service container."
         },
         "pull_policy": {
@@ -630,10 +567,7 @@
           "description": "Time after which to refresh the image. Used with pull_policy=refresh."
         },
         "read_only": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Mount the container's filesystem as read only."
         },
         "runtime": {
@@ -649,10 +583,7 @@
           "description": "Override the default labeling scheme for each container."
         },
         "shm_size": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Size of /dev/shm. A string value can use suffix like '2g' for 2 gigabytes."
         },
         "secrets": {
@@ -709,9 +640,7 @@
               },
               {
                 "type": "object",
-                "required": [
-                  "type"
-                ],
+                "required": ["type"],
                 "properties": {
                   "type": {
                     "type": "string",
@@ -734,10 +663,7 @@
                     "description": "The path in the container where the volume is mounted."
                   },
                   "read_only": {
-                    "type": [
-                      "boolean",
-                      "string"
-                    ],
+                    "type": ["boolean", "string"],
                     "description": "Flag to set the volume as read-only."
                   },
                   "consistency": {
@@ -753,28 +679,17 @@
                         "description": "The propagation mode for the bind mount: 'shared', 'slave', 'private', 'rshared', 'rslave', or 'rprivate'."
                       },
                       "create_host_path": {
-                        "type": [
-                          "boolean",
-                          "string"
-                        ],
+                        "type": ["boolean", "string"],
                         "description": "Create the host path if it doesn't exist."
                       },
                       "recursive": {
                         "type": "string",
-                        "enum": [
-                          "enabled",
-                          "disabled",
-                          "writable",
-                          "readonly"
-                        ],
+                        "enum": ["enabled", "disabled", "writable", "readonly"],
                         "description": "Recursively mount the source directory."
                       },
                       "selinux": {
                         "type": "string",
-                        "enum": [
-                          "z",
-                          "Z"
-                        ],
+                        "enum": ["z", "Z"],
                         "description": "SELinux relabeling options: 'z' for shared content, 'Z' for private unshared content."
                       }
                     },
@@ -792,10 +707,7 @@
                         "description": "Labels to apply to the volume."
                       },
                       "nocopy": {
-                        "type": [
-                          "boolean",
-                          "string"
-                        ],
+                        "type": ["boolean", "string"],
                         "description": "Flag to disable copying of data from a container when a volume is created."
                       },
                       "subpath": {
@@ -825,10 +737,7 @@
                         "description": "Size of the tmpfs mount in bytes."
                       },
                       "mode": {
-                        "type": [
-                          "number",
-                          "string"
-                        ],
+                        "type": ["number", "string"],
                         "description": "File mode of the tmpfs in octal."
                       }
                     },
@@ -904,17 +813,11 @@
           "description": "Restart policy for the service container. Options include: 'no', 'always', 'on-failure', and 'unless-stopped'."
         },
         "scale": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Number of containers to deploy for this service."
         },
         "attach": {
-          "type": [
-            "boolean",
-            "string"
-          ]
+          "type": ["boolean", "string"]
         },
         "container_name": {
           "type": "string",
@@ -924,9 +827,7 @@
         "provider": {
           "type": "object",
           "description": "Specify a service which will not be manage by Compose directly, and delegate its management to an external provider.",
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "properties": {
             "type": {
               "type": "string",
@@ -939,20 +840,12 @@
                 "^.+$": {
                   "oneOf": [
                     {
-                      "type": [
-                        "string",
-                        "number",
-                        "boolean"
-                      ]
+                      "type": ["string", "number", "boolean"]
                     },
                     {
                       "type": "array",
                       "items": {
-                        "type": [
-                          "string",
-                          "number",
-                          "boolean"
-                        ]
+                        "type": ["string", "number", "boolean"]
                       }
                     }
                   ]
@@ -982,9 +875,7 @@
                   "description": "The file path where the service to extend is defined."
                 }
               },
-              "required": [
-                "service"
-              ],
+              "required": ["service"],
               "additionalProperties": false
             }
           ],
@@ -1040,9 +931,7 @@
           "$ref": "#/$defs/workload_spec"
         }
       ],
-      "required": [
-        "triggers"
-      ],
+      "required": ["triggers"],
       "properties": {
         "profiles": {
           "$ref": "#/$defs/list_of_strings",
@@ -1053,10 +942,7 @@
           "description": "Trigger conditions for the job. At least one trigger attribute must be declared. Setting manual to false forbids manual execution by an explicit run command.",
           "properties": {
             "manual": {
-              "type": [
-                "boolean",
-                "string"
-              ],
+              "type": ["boolean", "string"],
               "description": "Whether the job can be triggered manually by an explicit run command. Defaults to true; an explicit false forbids manual execution."
             },
             "schedule": {
@@ -1077,14 +963,10 @@
           },
           "anyOf": [
             {
-              "required": [
-                "manual"
-              ]
+              "required": ["manual"]
             },
             {
-              "required": [
-                "schedule"
-              ]
+              "required": ["schedule"]
             }
           ],
           "additionalProperties": false,
@@ -1098,9 +980,7 @@
     "schedule": {
       "type": "object",
       "description": "Schedule configuration for a job trigger.",
-      "required": [
-        "cron"
-      ],
+      "required": ["cron"],
       "properties": {
         "cron": {
           "type": "string",
@@ -1112,18 +992,12 @@
         },
         "concurrency": {
           "type": "string",
-          "enum": [
-            "forbid",
-            "queue"
-          ],
+          "enum": ["forbid", "queue"],
           "description": "Policy applied when the schedule fires while a previous run is still in progress: prevent the new run ('forbid', the default) or queue it ('queue')."
         },
         "missed_fires": {
           "type": "string",
-          "enum": [
-            "one",
-            "skip"
-          ],
+          "enum": ["one", "skip"],
           "description": "Policy applied to fires missed while the platform was unavailable: run a single catch-up ('one', the default) or skip them ('skip')."
         }
       },
@@ -1137,10 +1011,7 @@
       "description": "Configuration options to determine whether the container is healthy.",
       "properties": {
         "disable": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Disable any container-specified healthcheck. Set to true to disable."
         },
         "interval": {
@@ -1148,10 +1019,7 @@
           "description": "Time between running the check (e.g., '1s', '1m30s'). Default: 30s."
         },
         "retries": {
-          "type": [
-            "number",
-            "string"
-          ],
+          "type": ["number", "string"],
           "description": "Number of consecutive failures needed to consider the container as unhealthy. Default: 3."
         },
         "test": {
@@ -1187,10 +1055,7 @@
       }
     },
     "development": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "description": "Development configuration for the service, used for development workflows.",
       "properties": {
         "watch": {
@@ -1198,10 +1063,7 @@
           "description": "Configure watch mode for the service, which monitors file changes and performs actions in response.",
           "items": {
             "type": "object",
-            "required": [
-              "path",
-              "action"
-            ],
+            "required": ["path", "action"],
             "properties": {
               "ignore": {
                 "$ref": "#/$defs/string_or_list",
@@ -1252,10 +1114,7 @@
       }
     },
     "deployment": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "description": "Deployment configuration for the service.",
       "properties": {
         "mode": {
@@ -1267,10 +1126,7 @@
           "description": "Endpoint mode for the service: 'vip' (default) or 'dnsrr'."
         },
         "replicas": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Number of replicas of the service container to run."
         },
         "labels": {
@@ -1282,10 +1138,7 @@
           "description": "Configuration for rolling back a service update.",
           "properties": {
             "parallelism": {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "The number of containers to rollback at a time. If set to 0, all containers rollback simultaneously."
             },
             "delay": {
@@ -1301,18 +1154,12 @@
               "description": "Duration to monitor each task for failures after it is created (e.g., '1s', '1m30s')."
             },
             "max_failure_ratio": {
-              "type": [
-                "number",
-                "string"
-              ],
+              "type": ["number", "string"],
               "description": "Failure rate to tolerate during a rollback."
             },
             "order": {
               "type": "string",
-              "enum": [
-                "start-first",
-                "stop-first"
-              ],
+              "enum": ["start-first", "stop-first"],
               "description": "Order of operations during rollbacks: 'stop-first' (default) or 'start-first'."
             }
           },
@@ -1326,10 +1173,7 @@
           "description": "Configuration for updating a service.",
           "properties": {
             "parallelism": {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "The number of containers to update at a time."
             },
             "delay": {
@@ -1345,18 +1189,12 @@
               "description": "Duration to monitor each updated task for failures after it is created (e.g., '1s', '1m30s')."
             },
             "max_failure_ratio": {
-              "type": [
-                "number",
-                "string"
-              ],
+              "type": ["number", "string"],
               "description": "Failure rate to tolerate during an update (0 to 1)."
             },
             "order": {
               "type": "string",
-              "enum": [
-                "start-first",
-                "stop-first"
-              ],
+              "enum": ["start-first", "stop-first"],
               "description": "Order of operations during updates: 'stop-first' (default) or 'start-first'."
             }
           },
@@ -1374,10 +1212,7 @@
               "description": "Resource limits for the service containers.",
               "properties": {
                 "cpus": {
-                  "type": [
-                    "number",
-                    "string"
-                  ],
+                  "type": ["number", "string"],
                   "description": "Limit for how much of the available CPU resources, as number of cores, a container can use."
                 },
                 "memory": {
@@ -1385,10 +1220,7 @@
                   "description": "Limit on the amount of memory a container can allocate (e.g., '1g', '1024m')."
                 },
                 "pids": {
-                  "type": [
-                    "integer",
-                    "string"
-                  ],
+                  "type": ["integer", "string"],
                   "description": "Maximum number of PIDs available to the container."
                 }
               },
@@ -1402,10 +1234,7 @@
               "description": "Resource reservations for the service containers.",
               "properties": {
                 "cpus": {
-                  "type": [
-                    "number",
-                    "string"
-                  ],
+                  "type": ["number", "string"],
                   "description": "Reservation for how much of the available CPU resources, as number of cores, a container can use."
                 },
                 "memory": {
@@ -1445,10 +1274,7 @@
               "description": "Delay between restart attempts (e.g., '1s', '1m30s')."
             },
             "max_attempts": {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "Maximum number of restart attempts before giving up."
             },
             "window": {
@@ -1490,10 +1316,7 @@
               }
             },
             "max_replicas_per_node": {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "Maximum number of replicas of the service."
             }
           },
@@ -1523,10 +1346,7 @@
                 "description": "Type of resource (e.g., 'GPU', 'FPGA', 'SSD')."
               },
               "value": {
-                "type": [
-                  "number",
-                  "string"
-                ],
+                "type": ["number", "string"],
                 "description": "Number of resources of this kind to reserve."
               }
             },
@@ -1553,10 +1373,7 @@
             "description": "List of capabilities the device needs to have (e.g., 'gpu', 'compute', 'utility')."
           },
           "count": {
-            "type": [
-              "string",
-              "integer"
-            ],
+            "type": ["string", "integer"],
             "description": "Number of devices of this type to reserve."
           },
           "device_ids": {
@@ -1576,18 +1393,14 @@
         "patternProperties": {
           "^x-": {}
         },
-        "required": [
-          "capabilities"
-        ]
+        "required": ["capabilities"]
       }
     },
     "gpus": {
       "oneOf": [
         {
           "type": "string",
-          "enum": [
-            "all"
-          ],
+          "enum": ["all"],
           "description": "Use all available GPUs."
         },
         {
@@ -1601,10 +1414,7 @@
                 "description": "List of capabilities the GPU needs to have (e.g., 'compute', 'utility')."
               },
               "count": {
-                "type": [
-                  "string",
-                  "integer"
-                ],
+                "type": ["string", "integer"],
                 "description": "Number of GPUs to use."
               },
               "device_ids": {
@@ -1655,10 +1465,7 @@
       ]
     },
     "network": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "description": "Network configuration for the Compose application.",
       "properties": {
         "name": {
@@ -1674,10 +1481,7 @@
           "description": "Specify driver-specific options defined as key/value pairs.",
           "patternProperties": {
             "^.+$": {
-              "type": [
-                "string",
-                "number"
-              ]
+              "type": ["string", "number"]
             }
           }
         },
@@ -1741,11 +1545,7 @@
           }
         },
         "external": {
-          "type": [
-            "boolean",
-            "string",
-            "object"
-          ],
+          "type": ["boolean", "string", "object"],
           "description": "Specifies that this network already exists and was created outside of Compose.",
           "properties": {
             "name": {
@@ -1760,31 +1560,19 @@
           }
         },
         "internal": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Create an externally isolated network."
         },
         "enable_ipv4": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Enable IPv4 networking."
         },
         "enable_ipv6": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Enable IPv6 networking."
         },
         "attachable": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "If true, standalone containers can attach to this network."
         },
         "labels": {
@@ -1798,10 +1586,7 @@
       }
     },
     "volume": {
-      "type": [
-        "object",
-        "null"
-      ],
+      "type": ["object", "null"],
       "description": "Volume configuration for the Compose application.",
       "properties": {
         "name": {
@@ -1817,19 +1602,12 @@
           "description": "Specify driver-specific options.",
           "patternProperties": {
             "^.+$": {
-              "type": [
-                "string",
-                "number"
-              ]
+              "type": ["string", "number"]
             }
           }
         },
         "external": {
-          "type": [
-            "boolean",
-            "string",
-            "object"
-          ],
+          "type": ["boolean", "string", "object"],
           "description": "Specifies that this volume already exists and was created outside of Compose.",
           "properties": {
             "name": {
@@ -1870,11 +1648,7 @@
           "description": "Path to a file containing the secret value."
         },
         "external": {
-          "type": [
-            "boolean",
-            "string",
-            "object"
-          ],
+          "type": ["boolean", "string", "object"],
           "description": "Specifies that this secret already exists and was created outside of Compose.",
           "properties": {
             "name": {
@@ -1896,10 +1670,7 @@
           "description": "Specify driver-specific options.",
           "patternProperties": {
             "^.+$": {
-              "type": [
-                "string",
-                "number"
-              ]
+              "type": ["string", "number"]
             }
           }
         },
@@ -1934,11 +1705,7 @@
           "description": "Path to a file containing the config value."
         },
         "external": {
-          "type": [
-            "boolean",
-            "string",
-            "object"
-          ],
+          "type": ["boolean", "string", "object"],
           "description": "Specifies that this config already exists and was created outside of Compose.",
           "properties": {
             "name": {
@@ -1985,9 +1752,7 @@
           "description": "Raw runtime flags to pass to the inference engine."
         }
       },
-      "required": [
-        "model"
-      ],
+      "required": ["model"],
       "additionalProperties": false,
       "patternProperties": {
         "^x-": {}
@@ -2027,10 +1792,7 @@
           "description": "User to run the command as."
         },
         "privileged": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Whether to run the command with extended privileges."
         },
         "working_dir": {
@@ -2046,9 +1808,7 @@
       "patternProperties": {
         "^x-": {}
       },
-      "required": [
-        "command"
-      ]
+      "required": ["command"]
     },
     "pre_start_hook": {
       "type": "object",
@@ -2061,10 +1821,7 @@
       "unevaluatedProperties": false,
       "properties": {
         "per_replica": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "When true, the hook runs once per service replica instead of once per service."
         }
       }
@@ -2098,17 +1855,12 @@
                     "description": "Format attribute lets you to use an alternative file formats for env_file. When not set, env_file is parsed according to Compose rules."
                   },
                   "required": {
-                    "type": [
-                      "boolean",
-                      "string"
-                    ],
+                    "type": ["boolean", "string"],
                     "default": true,
                     "description": "Whether the file is required. If true and the file doesn't exist, an error will be raised."
                   }
                 },
-                "required": [
-                  "path"
-                ]
+                "required": ["path"]
               }
             ]
           }
@@ -2160,12 +1912,7 @@
           "description": "A dictionary mapping keys to values.",
           "patternProperties": {
             ".+": {
-              "type": [
-                "string",
-                "number",
-                "boolean",
-                "null"
-              ],
+              "type": ["string", "number", "boolean", "null"],
               "description": "Value for the key, which can be a string, number, boolean, or null."
             }
           },
@@ -2230,10 +1977,7 @@
           "description": "Path to the device (e.g., '/dev/sda')."
         },
         "rate": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Rate limit in bytes per second or IO operations per second."
         }
       },
@@ -2248,10 +1992,7 @@
           "description": "Path to the device (e.g., '/dev/sda')."
         },
         "weight": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Relative weight for the device, between 10 and 1000."
         }
       },
@@ -2287,10 +2028,7 @@
                 "description": "GID of the file in the container. Default is 0 (root)."
               },
               "mode": {
-                "type": [
-                  "number",
-                  "string"
-                ],
+                "type": ["number", "string"],
                 "description": "File permission mode inside the container, in octal. Default is 0444 for configs and 0400 for secrets."
               }
             },
@@ -2309,10 +2047,7 @@
         "^[a-z]+$": {
           "oneOf": [
             {
-              "type": [
-                "integer",
-                "string"
-              ],
+              "type": ["integer", "string"],
               "description": "Single value for both soft and hard limits."
             },
             {
@@ -2320,24 +2055,15 @@
               "description": "Separate soft and hard limits.",
               "properties": {
                 "hard": {
-                  "type": [
-                    "integer",
-                    "string"
-                  ],
+                  "type": ["integer", "string"],
                   "description": "Hard limit for the ulimit type. This is the maximum allowed value."
                 },
                 "soft": {
-                  "type": [
-                    "integer",
-                    "string"
-                  ],
+                  "type": ["integer", "string"],
                   "description": "Soft limit for the ulimit type. This is the value that's actually enforced."
                 }
               },
-              "required": [
-                "soft",
-                "hard"
-              ],
+              "required": ["soft", "hard"],
               "additionalProperties": false,
               "patternProperties": {
                 "^x-": {}
@@ -2407,10 +2133,7 @@
                   "description": "Cache destinations for the build cache."
                 },
                 "no_cache": {
-                  "type": [
-                    "boolean",
-                    "string"
-                  ],
+                  "type": ["boolean", "string"],
                   "description": "Do not use cache when building the image."
                 },
                 "no_cache_filter": {
@@ -2426,24 +2149,15 @@
                   "description": "Network mode to use for the build. Options include 'default', 'none', 'host', or a network name."
                 },
                 "provenance": {
-                  "type": [
-                    "string",
-                    "boolean"
-                  ],
+                  "type": ["string", "boolean"],
                   "description": "Add a provenance attestation"
                 },
                 "sbom": {
-                  "type": [
-                    "string",
-                    "boolean"
-                  ],
+                  "type": ["string", "boolean"],
                   "description": "Add a SBOM attestation"
                 },
                 "pull": {
-                  "type": [
-                    "boolean",
-                    "string"
-                  ],
+                  "type": ["boolean", "string"],
                   "description": "Always attempt to pull a newer version of the image."
                 },
                 "target": {
@@ -2451,10 +2165,7 @@
                   "description": "Build stage to target in a multi-stage Dockerfile."
                 },
                 "shm_size": {
-                  "type": [
-                    "integer",
-                    "string"
-                  ],
+                  "type": ["integer", "string"],
                   "description": "Size of /dev/shm for the build container. A string value can use suffix like '2g' for 2 gigabytes."
                 },
                 "extra_hosts": {
@@ -2466,10 +2177,7 @@
                   "description": "Container isolation technology to use for the build process."
                 },
                 "privileged": {
-                  "type": [
-                    "boolean",
-                    "string"
-                  ],
+                  "type": ["boolean", "string"],
                   "description": "Give extended privileges to the build container."
                 },
                 "secrets": {
@@ -2519,10 +2227,7 @@
                   },
                   "properties": {
                     "restart": {
-                      "type": [
-                        "boolean",
-                        "string"
-                      ],
+                      "type": ["boolean", "string"],
                       "description": "Whether to restart dependent services when this service is restarted."
                     },
                     "required": {
@@ -2540,9 +2245,7 @@
                       "description": "Condition to wait for. 'service_started' waits until the service has started, 'service_healthy' waits until the service is healthy (as defined by its healthcheck), 'service_completed_successfully' waits until the service has completed successfully."
                     }
                   },
-                  "required": [
-                    "condition"
-                  ]
+                  "required": ["condition"]
                 }
               }
             }
@@ -2580,17 +2283,11 @@
                     "description": "The host IP to bind to."
                   },
                   "target": {
-                    "type": [
-                      "integer",
-                      "string"
-                    ],
+                    "type": ["integer", "string"],
                     "description": "The port inside the container."
                   },
                   "published": {
-                    "type": [
-                      "string",
-                      "integer"
-                    ],
+                    "type": ["string", "integer"],
                     "description": "The publicly exposed port."
                   },
                   "protocol": {
@@ -2614,26 +2311,17 @@
         "expose": {
           "type": "array",
           "items": {
-            "type": [
-              "string",
-              "number"
-            ]
+            "type": ["string", "number"]
           },
           "uniqueItems": true,
           "description": "Expose ports without publishing them to the host machine - they'll only be accessible to linked services."
         },
         "stdin_open": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Keep STDIN open even if not attached."
         },
         "tty": {
-          "type": [
-            "boolean",
-            "string"
-          ],
+          "type": ["boolean", "string"],
           "description": "Allocate a pseudo-TTY to service container."
         }
       },
