@@ -82,13 +82,10 @@ async function loadMetrics() {
 
 function sparkSeries(id: number, kind: 'cpu' | 'mem') {
   const pts = latestMetrics.value[String(id)] ?? [];
-  return pts.slice(-40).map((p) =>
-    kind === 'cpu'
-      ? p.cpuPct
-      : p.memTotal > 0
-        ? (p.memUsed / p.memTotal) * 100
-        : 0,
-  );
+  return pts.slice(-40).map((p) => {
+    if (kind === 'cpu') return p.cpuPct;
+    return p.memTotal > 0 ? (p.memUsed / p.memTotal) * 100 : 0;
+  });
 }
 
 // --- 曲线抽屉 ---

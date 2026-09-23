@@ -9,8 +9,10 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { usePreferences } from '@vben/preferences';
 
 import * as monaco from 'monaco-editor';
+// oxlint-disable-next-line import/default
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import { configureMonacoYaml } from 'monaco-yaml';
+// oxlint-disable-next-line import/default
 import yamlWorker from 'monaco-yaml/yaml.worker?worker';
 
 import composeSchema from '#/schemas/compose-spec.json';
@@ -31,10 +33,13 @@ const containerRef = ref<HTMLDivElement>();
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 
 // vite worker 直连打包（不走 CDN，离线单镜像可用）
-self.MonacoEnvironment = {
+const YamlWorkerCtor = yamlWorker as unknown as new () => Worker;
+const EditorWorkerCtor = editorWorker as unknown as new () => Worker;
+
+globalThis.MonacoEnvironment = {
   getWorker(_, label) {
-    if (label === 'yaml') return new yamlWorker();
-    return new editorWorker();
+    if (label === 'yaml') return new YamlWorkerCtor();
+    return new EditorWorkerCtor();
   },
 };
 
@@ -72,7 +77,7 @@ onMounted(() => {
     renderWhitespace: 'boundary',
   });
   editor.onDidChangeModelContent(() => {
-    emit('update:modelValue', editor!.getValue());
+    if (editor) emit('update:modelValue', editor.getValue());
   });
 });
 

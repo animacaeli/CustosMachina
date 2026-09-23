@@ -67,13 +67,15 @@ async function start() {
       );
     }
   };
-  ws.onopen = sendResize;
-  ws.onmessage = (ev) => {
+  ws.addEventListener('open', sendResize);
+  ws.addEventListener('message', (ev) => {
     term?.write(
       typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data),
     );
-  };
-  ws.onclose = () => term?.write('\r\n\x1b[31m[连接已关闭]\x1b[0m\r\n');
+  });
+  ws.addEventListener('close', () =>
+    term?.write('\r\n\u001B[31m[连接已关闭]\u001B[0m\r\n'),
+  );
   // 输入统一走二进制帧（后端区分二进制=输入、文本=控制）
   const encoder = new TextEncoder();
   term.onData((data) => {

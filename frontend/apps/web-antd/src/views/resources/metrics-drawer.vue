@@ -46,7 +46,7 @@ async function load() {
           name: 'CPU %',
           type: 'line',
           showSymbol: false,
-          data: ts.map((t, i) => [t, round1(points[i]!.cpuPct)]),
+          data: ts.map((t, i) => [t, round1(points[i]?.cpuPct ?? 0)]),
         },
         {
           name: '内存 %',
@@ -54,8 +54,8 @@ async function load() {
           showSymbol: false,
           areaStyle: { opacity: 0.08 },
           data: ts.map((t, i) => {
-            const p = points[i]!;
-            return [t, p.memTotal > 0 ? round1((p.memUsed / p.memTotal) * 100) : 0];
+            const p = points[i];
+            return [t, p && p.memTotal > 0 ? round1((p.memUsed / p.memTotal) * 100) : 0];
           }),
         },
       ],

@@ -76,7 +76,7 @@ const projects = computed<ComposeProject[]>(() => {
     }
     p.containers.push(ct);
   }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...map.values()].toSorted((a, b) => a.name.localeCompare(b.name));
 });
 
 let statsTimer = 0;
@@ -230,7 +230,7 @@ async function openLogs(c: DockerContainer) {
   logsLoading.value = true;
   logsText.value = '';
   try {
-    const lines = await containerLogsApi(props.serverId!, c.id, 200);
+    const lines = await containerLogsApi(props.serverId ?? 0, c.id, 200);
     logsText.value = (lines ?? []).join('\n');
   } catch {
     // 拉取失败也继续尝试跟随
@@ -257,10 +257,10 @@ async function startFollow() {
       }
       if (autoscroll.value) scrollLogsBottom();
     });
-    es.onerror = () => {
+    es.addEventListener('error', () => {
       stopFollow();
       message.info('日志流已结束');
-    };
+    });
   } catch {
     // 领 ticket 失败静默
   }

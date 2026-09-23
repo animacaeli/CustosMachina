@@ -25,7 +25,7 @@ const path = computed(() => {
     (H - 2 - ((Math.min(v, max) - min) / (max - min || 1)) * (H - 6)).toFixed(1);
   let line = '';
   for (let i = 0; i < pts.length; i++) {
-    line += `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y(pts[i]!)}`;
+    line += `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y(pts[i] ?? 0)}`;
   }
   const area = `${line}L${W},${H}L0,${H}Z`;
   return { line, area };
@@ -36,11 +36,13 @@ const current = computed(() => {
   return pts.length > 0 ? pts[pts.length - 1] : undefined;
 });
 
-const gid = computed(() =>
-  `sg-${Math.abs(
-    [...color.value].reduce((a, c) => a * 31 + c.charCodeAt(0) | 0, 7),
-  )}`,
-);
+const gid = computed(() => {
+  let hash = 7;
+  for (const ch of color.value) {
+    hash = Math.trunc(hash * 31 + (ch.codePointAt(0) ?? 0));
+  }
+  return `sg-${Math.abs(hash)}`;
+});
 </script>
 
 <template>

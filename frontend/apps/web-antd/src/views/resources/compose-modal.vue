@@ -74,8 +74,8 @@ function validateYaml(): boolean {
       projectName.value = doc.name.toLowerCase();
     }
     return true;
-  } catch (e) {
-    yamlError.value = `YAML 语法错误：${(e as Error).message}`;
+  } catch (error) {
+    yamlError.value = `YAML 语法错误：${(error as Error).message}`;
     return false;
   }
 }
