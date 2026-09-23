@@ -38,7 +38,7 @@ const canTerminal = computed(() => {
 });
 
 const loading = ref(false);
-const list = ref<awaited<ReturnType<typeof getServerListApi>>>([]);
+const list = ref<ManagedServer[]>([]);
 const groups = ref<ServerGroup[]>([]);
 const groupFilter = ref<number | undefined>();
 

@@ -23,7 +23,7 @@ const rangeHours = ref(1);
 const loading = ref(false);
 const events = ref<ServerEvent[]>([]);
 
-const chartRef = ref<InstanceType<typeof EchartsUI>>();
+const chartRef = ref<typeof EchartsUI>();
 const { renderEcharts } = useEcharts(chartRef);
 
 async function load() {
