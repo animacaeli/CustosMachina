@@ -389,3 +389,25 @@ func (h *Handler) scaleCompose(c *gin.Context) {
 }
 
 var serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// WriteFileAndReload 写文本文件到目标机并重载 nginx（canary 模块 SSHRunner 实现；
+// compose 期灰度承载层。路径需在 /opt/custos-machina/ 下的白名单目录内）。
+func (s *Service) WriteFileAndReload(ctx context.Context, serverID uint, path, content string) (string, error) {
+	if !strings.HasPrefix(path, "/opt/custos-machina/") {
+		return "", fmt.Errorf("仅允许写 /opt/custos-machina/ 下的配置文件")
+	}
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(path)
+	cmd := fmt.Sprintf("mkdir -p %s && cat > %s && nginx -t 2>&1 && nginx -s reload 2>&1",
+		shellQuote(dir), shellQuote(path))
+	out, err := sshRunOutputWithStdin(srv, cred, cmd, content, time.Minute)
+	if err != nil {
+		return out, fmt.Errorf("写入/nginx reload 失败（宿主机需装 nginx；若为容器承载请参考文档调整）：%w", err)
+	}
+	s.recordSimpleEvent(ctx, serverID, "canary_reload",
+		fmt.Sprintf("写入灰度配置 %s 并 reload nginx：%s", path, map[bool]string{true: "成功", false: "失败"}[err == nil]))
+	return out, nil
+}

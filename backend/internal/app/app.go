@@ -9,6 +9,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/auth"
+	"github.com/custos-machina/backend/internal/modules/canary"
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
@@ -31,6 +32,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
+	models = append(models, canary.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -56,11 +58,12 @@ func ProvideModules(
 	projects *projects.Handler,
 	ciMod *ci.Handler,
 	releaseMod *release.Handler,
+	canaryMod *canary.Handler,
 	notifySvc *notify.Service,
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
 	resources.AttachNotifier(notifySvc)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -83,6 +86,9 @@ var moduleSet = wire.NewSet(
 	projects.Set,
 	ci.Set,
 	release.Set,
+	canary.Set,
+	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
+	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
 	ProvideModules,
 )
 

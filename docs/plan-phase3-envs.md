@@ -207,7 +207,10 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - 项目详情"容器 / pod"tab：实例列表（服务 / 状态 / stats）+ 日志查看 + 实例数伸缩（`--scale`，最少 1，确认 + 审计）。
 - 验收：构建 → 发布 → 容器查看 / 伸缩全程 UI 完成；发布失败能看到原因；能回滚。
 
-### M4：灰度环境（策略 + 分流）
+### M4：灰度环境（策略 + 分流）✅ 2026-09-23 完成（nginx 落点待实测）
+- 已交付：`internal/modules/canary`——策略 CRUD（header/traffic、流量总和 ≤ 项目 traffic_cap 前后端校验、绑定标签须为本项目已过 CI 的 canary 标签）、聚合发布（版本化整体替换：渲染 nginx 配置 → SSH 写目标机 /opt/custos-machina/canary/<proj>.conf → `nginx -t && nginx -s reload`；发布校验全部策略绑定同一标签）；resources 新增 WriteFileAndReload（SSHRunner 接口，路径白名单 /opt/custos-machina/ 下）；前端策略抽屉（策略表格 + 新增表单类型联动 + 流量总和实时显示 + 聚合发布确认）
+- **语义修正（实现期决策）**：部署模型只有一个 `<proj>-canary` 实例，多条 traffic 策略不渲染多个 upstream——按总和切灰度，发布时强制全部策略绑定同一灰度标签（一个实例同一时间只跑一个版本）；原"多流量策略加权随机"作废
+- 待实测：目标机宿主 nginx（当前 reload 命令假设宿主机 nginx；前置容器承载需调整）；map/split_clients 片段需 include 进真实 server 块（conf 写到白名单目录，server 块引用方式在实测时定）
 - `canary_policies` 表 + 策略 CRUD + 流量总和校验（≤ 项目 traffic_cap）；
 - **前置实测（0.5 天）**：nginx 承载方案已定案（见架构决策 2），仅实测"平台生成 nginx split_clients/map 配置片段 → SSH 写入 + reload"链路的权限与生效性；结论写回本文档；
 - 聚合发布：版本化整体替换 + 灰度构建标签格式校验（`canary-yyyymmdd-缩写`）+ 发布通知；

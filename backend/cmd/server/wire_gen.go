@@ -10,6 +10,7 @@ import (
 	"github.com/custos-machina/backend/internal/app"
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/auth"
+	"github.com/custos-machina/backend/internal/modules/canary"
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
@@ -71,7 +72,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	ciHandler := ci.NewHandler(ciService)
 	releaseService := release.NewService(db, ciService, resourcesService, notifyService)
 	releaseHandler := release.NewHandler(releaseService)
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, notifyService)
+	canaryService := canary.NewService(db, resourcesService, notifyService)
+	canaryHandler := canary.NewHandler(canaryService)
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, notifyService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

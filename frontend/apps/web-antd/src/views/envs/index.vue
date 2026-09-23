@@ -1,11 +1,12 @@
 <script lang="ts" setup>
 import type { Project } from '#/api/projects';
 
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { getProjectsApi } from '#/api/projects';
 
 import BuildDrawer from './build-drawer.vue';
+import PolicyDrawer from './policy-drawer.vue';
 import ReleaseDrawer from './release-drawer.vue';
 
 defineOptions({ name: 'EnvsIndex' });
@@ -29,6 +30,11 @@ const releaseEnabled: Record<string, boolean> = {
 
 const buildOpen = ref(false);
 const releaseOpen = ref(false);
+const policyOpen = ref(false);
+
+const currentProject = computed(() =>
+  projects.value.find((p) => p.id === projectId.value),
+);
 
 onMounted(async () => {
   projects.value = await getProjectsApi();
@@ -67,9 +73,10 @@ onMounted(async () => {
               >
                 发布
               </a-button>
-              <a-button v-if="t.key !== 'prod'" disabled>
-                {{ t.key === 'canary' ? '策略' : '槽位' }}
+              <a-button v-if="t.key === 'canary'" @click="policyOpen = true">
+                策略
               </a-button>
+              <a-button v-if="t.key === 'test'" disabled>槽位</a-button>
             </div>
             <a-empty
               description="测试环境为全自动 CI/CD（M5 槽位）；策略 / 槽位随后续里程碑交付"
@@ -90,6 +97,11 @@ onMounted(async () => {
       :open="releaseOpen"
       :project-id="projectId"
       @close="releaseOpen = false"
+    />
+    <PolicyDrawer
+      :open="policyOpen"
+      :project="currentProject"
+      @close="policyOpen = false"
     />
   </div>
 </template>

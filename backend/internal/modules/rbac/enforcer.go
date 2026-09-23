@@ -117,6 +117,11 @@ var defaultPolicies = [][]string{
 	{"admin", "/releases/*", "POST"},
 	{"ops", "/releases", "GET"},
 	{"dev", "/releases", "GET"},
+	// v5（M4）：灰度策略。管理 admin+ops（灰度发布允许 ops），dev 只读
+	{"admin", "/canary-policies", "GET|POST|PUT|DELETE"},
+	{"admin", "/canary-policies/*", "GET|POST|PUT|DELETE"},
+	{"ops", "/canary-policies", "GET|POST|PUT|DELETE"},
+	{"ops", "/canary-policies/*", "GET|POST|PUT|DELETE"},
 	{"dev", "/project-branches", "GET"},
 	{"dev", "/project-branches/*", "GET"},
 	{"ops", "/services/*", "GET|POST|PUT"},
