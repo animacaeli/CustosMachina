@@ -12,6 +12,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/rbac"
+	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
 	"github.com/custos-machina/backend/internal/pkg/database"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
@@ -21,7 +22,7 @@ import (
 // ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。
 func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models := identity.Models()
-	// models = append(models, runtime.Models(), alerting.Models(), ...)
+	models = append(models, resources.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -42,11 +43,13 @@ func ProvideModules(
 	setup *setup.Handler,
 	identity *identity.Handler,
 	rbac *rbac.Handler,
+	resources *resources.Handler,
 ) server.Modules {
-	return server.Modules{health, auth, setup, identity, rbac}
+	return server.Modules{health, auth, setup, identity, rbac, resources}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
+// 凭据加密器 *crypto.Cipher 由 auth.Set 提供（缺主密钥时为 nil，使用处报明确错误）。
 var infraSet = wire.NewSet(
 	config.Load,
 	jwtpkg.NewManager,
@@ -60,6 +63,7 @@ var moduleSet = wire.NewSet(
 	setup.Set,
 	identity.Set,
 	rbac.Set,
+	resources.Set,
 	ProvideModules,
 )
 

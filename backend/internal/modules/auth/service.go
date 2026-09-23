@@ -29,6 +29,7 @@ type AuthService struct {
 	cipher        *cryptopkg.Cipher
 	qrStates      sync.Map            // state -> 过期时间，5 分钟有效
 	refreshHolder *refreshStoreHolder // refresh token 存储（Redis/内存）
+	tickets       *ticketStore        // WS/SSE 一次性短时 ticket
 }
 
 func NewAuthService(
@@ -47,6 +48,7 @@ func NewAuthService(
 		cfg:           cfg,
 		cipher:        cipher,
 		refreshHolder: newRefreshStoreHolder(),
+		tickets:       newTicketStore(),
 	}
 }
 

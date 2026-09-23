@@ -13,6 +13,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/rbac"
+	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -48,7 +49,17 @@ func InitializeServer() (*server.Server, func(), error) {
 	}
 	service := rbac.NewService(syncedEnforcer)
 	rbacHandler := rbac.NewHandler(service, userRepository)
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler)
+	serverRepository := resources.NewServerRepository(db)
+	groupRepository := resources.NewGroupRepository(db)
+	resourcesService := resources.NewService(serverRepository, groupRepository, db, cipher)
+	collector, cleanup3, err := resources.NewCollector(db, serverRepository, resourcesService)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	resourcesHandler := resources.NewHandler(resourcesService, collector)
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
@@ -58,6 +69,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	engine := server.NewEngine(configConfig, modules, authMiddleware, handlerFunc)
 	serverServer := server.New(configConfig, engine)
 	return serverServer, func() {
+		cleanup3()
 		cleanup2()
 		cleanup()
 	}, nil

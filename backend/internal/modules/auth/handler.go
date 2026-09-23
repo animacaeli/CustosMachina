@@ -19,7 +19,23 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	r.Public.POST("/auth/login", h.login)
 	r.Authed.GET("/auth/me", h.me)
 	r.Authed.GET("/user/info", h.userInfo)
+	r.Authed.POST("/auth/tickets", h.issueTicket)
 	h.registerQRLoginRoutes(r)
+}
+
+// issueTicket 签发一次性短时 ticket（WS/SSE 握手用，见 ticket.go）。
+func (h *Handler) issueTicket(c *gin.Context) {
+	claims := ClaimsFromContext(c)
+	if claims == nil {
+		httpx.FailUnauthorized(c, "未认证")
+		return
+	}
+	t, err := h.svc.tickets.Issue(claims)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, gin.H{"ticket": t, "ttlSeconds": int(ticketTTL.Seconds())})
 }
 
 type loginInput struct {

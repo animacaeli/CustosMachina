@@ -10,6 +10,8 @@ BACKEND_DIR  := backend
 # 端口可覆盖：make dev HTTP_ADDR=:18080（本机 8080 被其他服务占用时）
 HTTP_ADDR        ?= :8080
 CUSTOS_API_TARGET ?= http://localhost$(HTTP_ADDR)
+# 开发专用凭据主密钥（固定值便于本地复现；生产用 deploy/.env 里的随机密钥）
+DEV_MASTER_KEY   ?= 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 ## 一键本地开发：并行启动后端(默认 :8080) + 前端(:5666，代理 /api)
 ## 本机 8080 被占用时：make dev HTTP_ADDR=:18080
@@ -18,7 +20,7 @@ dev:
 	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-backend:
-	@cd $(BACKEND_DIR) && CUSTOS_HTTP_ADDR=$(HTTP_ADDR) go run ./cmd/server
+	@cd $(BACKEND_DIR) && CUSTOS_HTTP_ADDR=$(HTTP_ADDR) CUSTOS_SECRETS_MASTER_KEY=$(DEV_MASTER_KEY) go run ./cmd/server
 
 dev-frontend:
 	@cd $(FRONTEND_DIR) && CUSTOS_API_TARGET=$(CUSTOS_API_TARGET) pnpm dev:antd

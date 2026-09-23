@@ -14,11 +14,27 @@ import (
 const CtxClaims = jwtpkg.CtxClaimsKey
 
 // Middleware 返回 JWT 认证中间件；通过 server.AuthMiddleware 注入引擎。
+// token 优先取 Authorization: Bearer；缺失时按序回退：
+//   - query 参数 `ticket`：一次性短时 ticket（WS/SSE 用，见 ticket.go，用完即焚）
+//   - query 参数 `token`：直传 JWT（兼容旧路径，不推荐，会暴露给访问日志）
 func (s *AuthService) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
-		token, ok := strings.CutPrefix(header, "Bearer ")
-		if !ok || token == "" {
+		token, _ := strings.CutPrefix(header, "Bearer ")
+		if token == "" {
+			if t := c.Query("ticket"); t != "" {
+				if claims := s.tickets.Consume(t); claims != nil {
+					c.Set(CtxClaims, claims)
+					c.Next()
+					return
+				}
+				httpx.FailUnauthorized(c, "ticket 无效或已使用")
+				c.Abort()
+				return
+			}
+			token = c.Query("token")
+		}
+		if token == "" {
 			httpx.FailUnauthorized(c, "缺少 Bearer token")
 			c.Abort()
 			return

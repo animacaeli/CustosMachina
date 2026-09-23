@@ -29,6 +29,15 @@ func FailUnauthorized(c *gin.Context, message string) {
 	Fail(c, http.StatusUnauthorized, 401, message)
 }
 
+func FailNotFound(c *gin.Context, message string) {
+	Fail(c, http.StatusNotFound, 404, message)
+}
+
+// FailUpstream 依赖外部系统（如 SSH 到目标服务器）失败：客户端可重试。
+func FailUpstream(c *gin.Context, message string) {
+	Fail(c, http.StatusBadGateway, 502, message)
+}
+
 func FailServer(c *gin.Context, err error) {
 	Fail(c, http.StatusInternalServerError, 500, err.Error())
 }

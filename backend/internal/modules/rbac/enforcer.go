@@ -34,12 +34,64 @@ m = r.sub == p.sub && keyMatch(r.obj, p.obj) && (r.act == p.act || regexMatch(r.
 var defaultPolicies = [][]string{
 	// 普通管理员：用户与角色管理、管理后台（任命 admin 由 identity 层拦住，仅超管）
 	{"admin", "/users", "GET|POST"},
+	{"ops", "/server-container-stats", "GET"},
+	{"ops", "/server-container-stats/*", "GET"},
+	{"admin", "/server-container-stats", "GET"},
+	{"admin", "/server-container-stats/*", "GET"},
 	{"admin", "/users/*", "GET|PUT"},
 	{"admin", "/roles", "GET"},
 	{"admin", "/roles/*", "GET|PUT"},
 	{"admin", "/im-configs", "GET"},
 	{"admin", "/im-configs/*", "GET|PUT|POST"},
 	{"admin", "/settings/*", "GET|PUT"},
+	{"admin", "/servers", "GET|POST|PUT|DELETE"},
+	{"admin", "/servers/*", "GET|PUT|DELETE|POST"},
+	{"admin", "/server-groups", "GET|POST|PUT|DELETE"},
+	{"admin", "/server-groups/*", "GET|PUT|DELETE"},
+	{"admin", "/server-metrics", "GET"},
+	{"admin", "/server-metrics/*", "GET"},
+	{"admin", "/server-events/*", "GET"},
+	{"admin", "/servers/*/terminal", "GET"}, // Web 终端：仅 admin（超管中间件直接放行）
+	{"admin", "/server-containers", "GET|POST"},
+	{"admin", "/server-containers/*", "GET|POST"},
+	{"admin", "/server-env", "GET"},
+	{"admin", "/server-env/*", "GET"},
+	{"admin", "/server-env-guide", "GET"},
+	{"admin", "/server-env-guide/*", "GET"},
+	{"admin", "/auth/tickets", "POST"},
+	{"admin", "/server-compose", "POST"},
+	{"admin", "/server-compose/*", "POST"},
+	{"admin", "/server-compose/*", "GET|PUT"},
+	{"ops", "/servers", "GET|POST|PUT|DELETE"},
+	{"ops", "/servers/*", "GET|PUT|DELETE|POST"},
+	{"ops", "/server-groups", "GET|POST|PUT|DELETE"},
+	{"ops", "/server-groups/*", "GET|PUT|DELETE"},
+	{"ops", "/server-metrics", "GET"},
+	{"ops", "/server-metrics/*", "GET"},
+	{"ops", "/server-events/*", "GET"},
+	{"ops", "/server-containers", "GET|POST"},
+	{"ops", "/server-containers/*", "GET|POST"},
+	{"ops", "/server-env", "GET"},
+	{"ops", "/server-env/*", "GET"},
+	{"ops", "/server-env-guide", "GET"},
+	{"ops", "/server-env-guide/*", "GET"},
+	{"ops", "/auth/tickets", "POST"},
+	{"ops", "/server-compose", "POST"},
+	{"ops", "/server-compose/*", "POST"},
+	{"ops", "/server-compose/*", "GET|PUT"},
+	{"dev", "/servers", "GET"},
+	{"dev", "/servers/*", "GET"},
+	{"dev", "/server-groups", "GET"},
+	{"dev", "/server-metrics", "GET"},
+	{"dev", "/server-metrics/*", "GET"},
+	{"dev", "/server-events/*", "GET"},
+	{"dev", "/server-containers", "GET"},
+	{"dev", "/server-containers/*", "GET"},
+	{"dev", "/server-container-stats", "GET"},
+	{"dev", "/server-container-stats/*", "GET"},
+	{"dev", "/server-env", "GET"},
+	{"dev", "/server-env/*", "GET"},
+	{"dev", "/auth/tickets", "POST"},
 	{"ops", "/services/*", "GET|POST|PUT"},
 	{"ops", "/services", "GET|POST|PUT"},
 	{"ops", "/alerts/*", "GET|PUT"},
@@ -55,7 +107,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "3" // v2：新增 admin 角色；v3：修复 v2 迁移只种首条的 bug
+const policySeedVersion = "4" // v4：新增服务器/分组资源点（resources 模块 M1）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -145,8 +197,13 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		ps, _ := e.GetFilteredPolicy(0, p[0])
 		roleNeedsSeed[p[0]] = len(ps) == 0
-		if len(ps) > 0 && oldVersion == "2" && p[0] == "admin" {
+		if len(ps) > 0 && p[0] == "admin" && oldVersion == "2" {
 			entryLevelSeed[p[0]] = true // v2 bug 残留，按条目补齐
+		}
+		// v3→v4：servers/server-groups 是新资源点，admin/ops 已有其他策略，
+		// 需逐条补齐（HasPolicy 去重，不覆盖人为调整过的旧条目）
+		if len(ps) > 0 && (p[0] == "admin" || p[0] == "ops") && oldVersion == "3" {
+			entryLevelSeed[p[0]] = true
 		}
 	}
 	for _, p := range defaultPolicies {
