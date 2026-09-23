@@ -90,6 +90,17 @@ func (g *giteaClient) actionsURL(repoPath string) string {
 	return g.base + "/" + repoPath + "/actions"
 }
 
+// HTTPDo 带鉴权执行外部请求（release 模块取 raw 文件等复用鉴权）。
+func (g *giteaClient) HTTPDo(req *http.Request) (*http.Response, error) {
+	if g.token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.token)
+	}
+	return g.http.Do(req)
+}
+
+// BaseURL 只读暴露 base（拼 raw 地址用）。
+func (g *giteaClient) BaseURL() string { return g.base }
+
 // mapStatus commit status → 平台构建状态。
 func mapStatus(state string) string {
 	switch state {

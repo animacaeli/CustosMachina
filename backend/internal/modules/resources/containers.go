@@ -49,6 +49,7 @@ type containerView struct {
 	// compose 部署的容器自带项目标签，用于按项目聚合（M4.5）
 	ComposeProject string `json:"composeProject,omitempty"`
 	ComposeFile    string `json:"composeFile,omitempty"`
+	ComposeService string `json:"composeService,omitempty"`
 }
 
 func (h *Handler) listContainers(c *gin.Context) {
@@ -84,6 +85,7 @@ func (h *Handler) listContainers(c *gin.Context) {
 			State: string(ct.State), Status: ct.Status,
 			ComposeProject: ct.Labels["com.docker.compose.project"],
 			ComposeFile:    ct.Labels["com.docker.compose.project.config_files"],
+			ComposeService: ct.Labels["com.docker.compose.service"],
 		})
 	}
 	httpx.OK(c, out)

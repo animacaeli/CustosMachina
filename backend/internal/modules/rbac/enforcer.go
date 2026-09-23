@@ -112,6 +112,11 @@ var defaultPolicies = [][]string{
 	{"dev", "/builds", "GET"},
 	{"ops", "/project-branches", "GET"},
 	{"ops", "/project-branches/*", "GET"},
+	// v5（M3）：发布与伸缩。正式发布高危仅 admin；灰度发布 admin+ops；伸缩 admin+ops
+	{"admin", "/releases", "GET|POST"},
+	{"admin", "/releases/*", "POST"},
+	{"ops", "/releases", "GET"},
+	{"dev", "/releases", "GET"},
 	{"dev", "/project-branches", "GET"},
 	{"dev", "/project-branches/*", "GET"},
 	{"ops", "/services/*", "GET|POST|PUT"},

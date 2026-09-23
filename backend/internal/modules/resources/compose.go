@@ -1,6 +1,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -162,23 +163,16 @@ func (h *Handler) deployCompose(c *gin.Context) {
 		httpx.FailBadRequest(c, "项目名须为小写字母/数字开头，可含 _.-（用于生成部署目录）")
 		return
 	}
-	srv, cred, err := h.svc.serverWithCredential(c.Request.Context(), id)
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	// 固定目录：同名重新部署 = 覆盖更新（旧文件自动备份）；目录名有白名单，直接拼接安全
-	dir := deployRoot + "/" + name
-	const deployCmd = `mkdir -p %q && [ -f %q/compose.yaml ] && cp %q/compose.yaml %q/compose.yaml.bak.$(date +%%Y%%m%%d%%H%%M%%S) || true; ` +
-		`cat > %q/compose.yaml && ` +
-		`cd %q && docker compose -p %q -f compose.yaml up -d --remove-orphans 2>&1; ` +
-		`rc=$?; docker compose -p %q -f compose.yaml ps 2>&1; exit $rc`
-	cmd := fmt.Sprintf(deployCmd, dir, dir, dir, dir, dir, dir, name, name)
-	out, err := sshRunOutputWithStdin(srv, cred, cmd, in.YAML, 3*time.Minute)
+	out, dir, err := h.svc.DeployComposeTo(c.Request.Context(), id, name, in.YAML)
 	success := err == nil
-	h.svc.recordSimpleEvent(c.Request.Context(), srv.ID, "compose_deploy",
-		fmt.Sprintf("%s 部署 compose 项目 %s 到 %s：%s", h.operator(c), name, srv.Host,
-			map[bool]string{true: "成功", false: "失败"}[success]))
+	srv, _, _ := h.svc.serverWithCredential(c.Request.Context(), id)
+	var host string
+	if srv != nil {
+		host = srv.Host
+		h.svc.recordSimpleEvent(c.Request.Context(), srv.ID, "compose_deploy",
+			fmt.Sprintf("%s 部署 compose 项目 %s 到 %s：%s", h.operator(c), name, host,
+				map[bool]string{true: "成功", false: "失败"}[success]))
+	}
 	if !success {
 		httpx.FailUpstream(c, fmt.Sprintf("部署失败：\n%s\n%v", out, err))
 		return
@@ -324,3 +318,74 @@ func (h *Handler) recreateCompose(c *gin.Context) {
 	}
 	httpx.OK(c, gin.H{"output": out})
 }
+
+// DeployComposeTo 部署 compose 到指定服务器（第三阶段 M3 起供 release 模块复用）。
+// name 需已过白名单校验；返回部署输出与远端目录。
+func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error) {
+	if !deployNameRe.MatchString(name) {
+		return "", "", fmt.Errorf("项目名须为小写字母/数字开头，可含 _.-")
+	}
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return "", "", err
+	}
+	// 固定目录：同名重新部署 = 覆盖更新（旧文件自动备份）；目录名有白名单，直接拼接安全
+	dir := deployRoot + "/" + name
+	const deployCmd = `mkdir -p %q && [ -f %q/compose.yaml ] && cp %q/compose.yaml %q/compose.yaml.bak.$(date +%%Y%%m%%d%%H%%M%%S) || true; ` +
+		`cat > %q/compose.yaml && ` +
+		`cd %q && docker compose -p %q -f compose.yaml up -d --remove-orphans 2>&1; ` +
+		`rc=$?; docker compose -p %q -f compose.yaml ps 2>&1; exit $rc`
+	cmd := fmt.Sprintf(deployCmd, dir, dir, dir, dir, dir, dir, name, name)
+	out, err := sshRunOutputWithStdin(srv, cred, cmd, yamlContent, 3*time.Minute)
+	return out, dir, err
+}
+
+// scaleInput POST /server-compose/:id/scale
+type scaleInput struct {
+	Project  string `json:"project" binding:"required"`
+	Path     string `json:"path" binding:"required"` // compose 文件路径（来自容器标签 config_files）
+	Service  string `json:"service" binding:"required"`
+	Replicas int    `json:"replicas" binding:"required,min=1,max=32"`
+}
+
+// scaleCompose 调整 compose 服务实例数（第三阶段 M3：项目容器视图伸缩）。
+// 最少 1 个；要求服务无固定容器名/端口绑定（compose 限制），失败时把 compose 输出透传给前端。
+func (h *Handler) scaleCompose(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var in scaleInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if !projectNameRe.MatchString(in.Project) || !serviceNameRe.MatchString(in.Service) {
+		httpx.FailBadRequest(c, "非法的 compose 项目名/服务名")
+		return
+	}
+	if err := validateComposePath(in.Path); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	srv, cred, err := h.svc.serverWithCredential(c.Request.Context(), id)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	cmd := fmt.Sprintf("cd %s && docker compose -p %s -f %s up -d --scale %s=%d --remove-orphans 2>&1",
+		shellQuote(filepath.Dir(in.Path)), shellQuote(in.Project), shellQuote(in.Path),
+		shellQuote(in.Service), in.Replicas)
+	out, err := sshRunOutput(srv, cred, cmd, 3*time.Minute)
+	success := err == nil
+	h.svc.recordSimpleEvent(c.Request.Context(), srv.ID, "compose_scale",
+		fmt.Sprintf("%s 将 %s/%s 实例数调整为 %d：%s", h.operator(c), in.Project, in.Service, in.Replicas,
+			map[bool]string{true: "成功", false: "失败"}[success]))
+	if !success {
+		httpx.FailUpstream(c, fmt.Sprintf("伸缩失败（服务须无固定容器名/端口绑定）：\n%s\n%v", out, err))
+		return
+	}
+	httpx.OK(c, gin.H{"output": out})
+}
+
+var serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)

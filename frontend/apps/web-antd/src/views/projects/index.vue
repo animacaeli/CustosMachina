@@ -117,8 +117,8 @@ async function onDelete(p: Project) {
               详情
             </a-button>
             <a-button size="small" type="link" @click="openEdit(record)">
-编辑
-</a-button>
+              编辑
+            </a-button>
             <a-popconfirm
               title="删除项目会同时删除其部署目标配置，确认？"
               @confirm="onDelete(record)"

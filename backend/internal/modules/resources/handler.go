@@ -76,6 +76,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		compose.GET("/:id/file", h.composeFile)
 		compose.PUT("/:id/file", h.saveComposeFile)
 		compose.POST("/:id/recreate", h.recreateCompose)
+		compose.POST("/:id/scale", h.scaleCompose)
 	}
 	groups := r.Authed.Group("/server-groups")
 	{

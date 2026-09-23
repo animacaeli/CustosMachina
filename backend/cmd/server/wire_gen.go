@@ -16,6 +16,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/rbac"
+	"github.com/custos-machina/backend/internal/modules/release"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
@@ -68,7 +69,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	projectsHandler := projects.NewHandler(projectsService)
 	ciService := ci.NewService(db, cipher, notifyService)
 	ciHandler := ci.NewHandler(ciService)
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, notifyService)
+	releaseService := release.NewService(db, ciService, resourcesService, notifyService)
+	releaseHandler := release.NewHandler(releaseService)
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, notifyService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

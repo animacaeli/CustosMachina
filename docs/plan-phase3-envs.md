@@ -198,7 +198,10 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - 前端：构建抽屉（分页表格 + 状态轮询 + 日志内嵌查看），三环境共用。
 - 验收：gitea 打标签后平台自动出现构建记录，状态轮询到 success/failed，失败推送到项目配置的群，日志可看。
 
-### M3：发布 + 项目容器视图（正式环境完整闭环）
+### M3：发布 + 项目容器视图（正式环境完整闭环）✅ 2026-09-23 完成
+- 已交付：`internal/modules/release`——发布 = 校验"已通过 CI"→ 按标签从 gitea raw 接口取部署描述 → `resources.Service.DeployComposeTo`（从 handler 抽出的复用方法，部署名 `<项目名规范化的>-<env>`）→ 落 releases 历史 + 结果通知；回滚 = 重新发布历史记录的标签（rollback_of 链）；passed-tags API 供发布下拉；正式发布 handler 内强制 admin（灰度允许 ops）；资源点 /releases 进 casbin v5
+- 容器视图：`POST /server-compose/:id/scale`（`--scale` 最少 1、路径/项目名/服务名白名单校验、审计 compose_scale）、containerView 增 composeService 标签；前端项目详情"容器 / Pod" tab（环境切换→部署目标、按 `<norm>-` 前缀过滤、按服务聚合实例、tail 200 日志抽屉、实例伸缩 modal）；/envs 正式/灰度"发布"抽屉（标签下拉 + 发布历史 + 回滚）
+- 已知偏差：项目容器日志暂为 tail 模式无 SSE 跟随（资源管理页容器抽屉已有跟随，复用后置）；发布执行同步阻塞（最长 3 分钟，与 M4 compose 部署同款约定）
 - `releases` 表 + 发布 API：校验"已通过 CI"→ M4 compose 通道部署 → 落发布历史 + 发布结果通知；
 - 前端发布抽屉：已通过 CI 的标签分页表格 + 发布（二次确认）+ 发布历史 / 回滚；
 - 项目详情"容器 / pod"tab：实例列表（服务 / 状态 / stats）+ 日志查看 + 实例数伸缩（`--scale`，最少 1，确认 + 审计）。

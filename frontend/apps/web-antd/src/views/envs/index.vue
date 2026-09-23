@@ -6,6 +6,7 @@ import { onMounted, ref } from 'vue';
 import { getProjectsApi } from '#/api/projects';
 
 import BuildDrawer from './build-drawer.vue';
+import ReleaseDrawer from './release-drawer.vue';
 
 defineOptions({ name: 'EnvsIndex' });
 
@@ -19,7 +20,15 @@ const envTabs = [
   { key: 'test', tab: '测试环境' },
 ] as const;
 
+// M3 起：正式/灰度发布开放（正式发布仅管理员，后端强制）；策略/槽位 M4/M5
+const releaseEnabled: Record<string, boolean> = {
+  canary: true,
+  prod: true,
+  test: false,
+};
+
 const buildOpen = ref(false);
+const releaseOpen = ref(false);
 
 onMounted(async () => {
   projects.value = await getProjectsApi();
@@ -52,13 +61,18 @@ onMounted(async () => {
           <template v-else>
             <div class="mb-4 flex gap-2">
               <a-button type="primary" @click="buildOpen = true">构建</a-button>
-              <a-button disabled>发布</a-button>
+              <a-button
+                :disabled="!releaseEnabled[t.key]"
+                @click="releaseOpen = true"
+              >
+                发布
+              </a-button>
               <a-button v-if="t.key !== 'prod'" disabled>
                 {{ t.key === 'canary' ? '策略' : '槽位' }}
               </a-button>
             </div>
             <a-empty
-              description="发布 / 策略 / 槽位随后续里程碑（M3~M5）交付；构建记录见「构建」抽屉"
+              description="测试环境为全自动 CI/CD（M5 槽位）；策略 / 槽位随后续里程碑交付"
             />
           </template>
         </a-tab-pane>
@@ -70,6 +84,12 @@ onMounted(async () => {
       :open="buildOpen"
       :project-id="projectId"
       @close="buildOpen = false"
+    />
+    <ReleaseDrawer
+      :env="activeEnv"
+      :open="releaseOpen"
+      :project-id="projectId"
+      @close="releaseOpen = false"
     />
   </div>
 </template>

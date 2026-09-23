@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"gorm.io/gorm"
@@ -427,6 +428,26 @@ func envLabel(env string) string {
 		return "测试"
 	}
 	return env
+}
+
+// RawGitea 暴露带鉴权的 HTTP 客户端与 base 地址（release 模块取 raw 文件用）。
+type RawGitea struct {
+	Client *giteaClient
+}
+
+func (r *RawGitea) HTTPDo(req *http.Request) (*http.Response, error) {
+	return r.Client.HTTPDo(req)
+}
+
+func (r *RawGitea) BaseURL() string { return r.Client.BaseURL() }
+
+// RawClient 项目级 token 优先、全局兜底。
+func (s *Service) RawClient(ctx context.Context, repoPath string) (*RawGitea, string, error) {
+	c, err := s.clientFor(ctx, repoPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return &RawGitea{Client: c}, c.BaseURL(), nil
 }
 
 // Branches 供前端表单（M5 槽位占用选分支）。
