@@ -216,8 +216,8 @@ async function doPublish() {
         </template>
         <template v-else-if="column.key === 'action'">
           <a-button size="small" type="link" @click="openEdit(record)">
-编辑
-</a-button>
+            编辑
+          </a-button>
           <a-popconfirm
             title="删除该策略？重新发布后生效。"
             @confirm="onDelete(record)"

@@ -20,6 +20,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/release"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
+	"github.com/custos-machina/backend/internal/modules/slots"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
 )
@@ -74,7 +75,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	releaseHandler := release.NewHandler(releaseService)
 	canaryService := canary.NewService(db, resourcesService, notifyService)
 	canaryHandler := canary.NewHandler(canaryService)
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, notifyService)
+	slotsService := slots.NewService(db, ciService, resourcesService, notifyService)
+	slotsHandler := slots.NewHandler(slotsService)
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, slotsService, ciService, notifyService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

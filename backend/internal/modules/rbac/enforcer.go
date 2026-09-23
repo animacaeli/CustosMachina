@@ -122,6 +122,16 @@ var defaultPolicies = [][]string{
 	{"admin", "/canary-policies/*", "GET|POST|PUT|DELETE"},
 	{"ops", "/canary-policies", "GET|POST|PUT|DELETE"},
 	{"ops", "/canary-policies/*", "GET|POST|PUT|DELETE"},
+	// v5（M5）：测试槽位。占用任何登录用户可用（exemptAnyRole 不动，种到各角色）；
+	// 释放/续期的"本人或 admin"校验在 slots 模块内强制
+	{"admin", "/slots", "GET|POST"},
+	{"admin", "/slots/*", "GET|POST"},
+	{"ops", "/slots", "GET|POST"},
+	{"ops", "/slots/*", "GET|POST"},
+	{"dev", "/slots", "GET|POST"},
+	{"dev", "/slots/*", "GET|POST"},
+	{"guest", "/slots", "GET|POST"},
+	{"guest", "/slots/*", "GET|POST"},
 	{"dev", "/project-branches", "GET"},
 	{"dev", "/project-branches/*", "GET"},
 	{"ops", "/services/*", "GET|POST|PUT"},

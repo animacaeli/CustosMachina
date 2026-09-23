@@ -217,7 +217,12 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - 前端策略抽屉：策略表格（分页）+ 新增表单（标签下拉筛选、策略类型、流量比例联动输入框）+ 聚合发布 / 回滚。
 - 验收：请求头命中进灰度实例；未命中按比例加权分流；改策略后旧版本仍在生效直至重新发布。
 
-### M5：测试环境槽位（重点）
+### M5：测试环境槽位（重点）✅ 2026-09-23 完成
+- 已交付：`internal/modules/slots`——占用（槽位名 devN 边界校验、时长 小时/天/周、独占）、占用即异步拉起（按分支取 compose 描述 → DeployComposeTo `<proj>-test-<slot>` 隔离域）、释放（resources.DestroyCompose 销毁容器、slot_overrides 保留、本人/admin 校验）、续期、槽位视图（TestSlotCount 生成名字集合）、分支 push 自动链路（ci.BranchPushHook 注入 slots.OnBranchPush → 匹配占用该分支的槽位异步重建 + 落 test 构建记录 + 通知测试群）、到期扫描 jobs（5 分钟：到期标记 expired + 通知、宽限期满自动回收）
+- casbin v5：/slots 全角色可 GET/POST（写操作的对象级权限在模块内强制）
+- 前端槽位抽屉：占用情况表格（过期标记、释放/续期按钮按"本人或管理员"显隐）、占用表单（空闲槽位 + 时长 + 分支筛选下拉）
+- 已知偏差：槽位差异化配置（slot_overrides）表已建但尚未在部署时注入环境变量（部署模板需求未明确，M5.1 待用户反馈后补）；分支重建的构建记录 log_url 为空（测试环境日志走容器视图看）
+- **全阶段完成。待用户实例联调清单**：① gitea API 实测（commit status / raw / branches）；② 企微群机器人真实推送；③ nginx 灰度承载落点（宿主机 nginx include 方式）；④ 真实服务器上占用→push→重建→释放全链路
 - `env_slots` / `slot_overrides` 表 + 占用 / 释放 / 续期 API（本人 / admin 权限双层校验）+ 占用变更通知；
 - 自动链路：push webhook → 匹配占用该分支的槽位 → 触发构建（镜像 tag 带槽位标识）→ compose 部署到槽位隔离域 → 部署结果通知占用者；
 - 释放 / 到期销毁：Docker API over SSH 销毁隔离域容器；到期标记 + 宽限期自动回收任务（回收前通知）；

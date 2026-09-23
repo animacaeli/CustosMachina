@@ -43,6 +43,9 @@ type Service struct {
 	db     *gorm.DB
 	cipher *crypto.Cipher
 	notify *notify.Service
+
+	// BranchPushHook 分支推送钩子（slots 模块经 app 注入：push → 匹配槽位自动重建）。
+	BranchPushHook func(ctx context.Context, repoPath, branch, pusher string)
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher, ntfy *notify.Service) *Service {
@@ -231,7 +234,12 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 		return nil, fmt.Errorf("webhook payload 解析失败: %w", err)
 	}
 	if !strings.HasPrefix(p.Ref, "refs/tags/") {
-		return nil, nil // 非标签推送（push 分支事件 M5 槽位链路处理）
+		// 分支推送：交给槽位自动链路（未注入 hook 则忽略）
+		if s.BranchPushHook != nil {
+			s.BranchPushHook(context.WithoutCancel(ctx), p.Repo.FullName,
+				strings.TrimPrefix(p.Ref, "refs/heads/"), p.Sender.Login)
+		}
+		return nil, nil
 	}
 	tag := strings.TrimPrefix(p.Ref, "refs/tags/")
 

@@ -411,3 +411,21 @@ func (s *Service) WriteFileAndReload(ctx context.Context, serverID uint, path, c
 		fmt.Sprintf("写入灰度配置 %s 并 reload nginx：%s", path, map[bool]string{true: "成功", false: "失败"}[err == nil]))
 	return out, nil
 }
+
+// DestroyCompose 销毁目标机上的 compose 项目（槽位释放用；部署文件与覆盖配置保留）。
+func (s *Service) DestroyCompose(ctx context.Context, serverID uint, name string) (string, error) {
+	if !deployNameRe.MatchString(name) {
+		return "", fmt.Errorf("非法的 compose 项目名")
+	}
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return "", err
+	}
+	dir := deployRoot + "/" + name
+	cmd := fmt.Sprintf("cd %s 2>/dev/null && docker compose -p %s -f compose.yaml down --remove-orphans 2>&1 || docker compose -p %s down --remove-orphans 2>&1",
+		shellQuote(dir), shellQuote(name), shellQuote(name))
+	out, err := sshRunOutput(srv, cred, cmd, 2*time.Minute)
+	s.recordSimpleEvent(ctx, serverID, "compose_destroy",
+		fmt.Sprintf("销毁 compose 项目 %s：%s", name, map[bool]string{true: "成功", false: "失败"}[err == nil]))
+	return out, err
+}

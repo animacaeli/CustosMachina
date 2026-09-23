@@ -19,6 +19,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/release"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
+	"github.com/custos-machina/backend/internal/modules/slots"
 	"github.com/custos-machina/backend/internal/pkg/database"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -33,6 +34,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
 	models = append(models, canary.Models()...)
+	models = append(models, slots.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -59,11 +61,16 @@ func ProvideModules(
 	ciMod *ci.Handler,
 	releaseMod *release.Handler,
 	canaryMod *canary.Handler,
+	slotsMod *slots.Handler,
+	slotsSvc *slots.Service,
+	ciSvc *ci.Service,
 	notifySvc *notify.Service,
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
 	resources.AttachNotifier(notifySvc)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod}
+	// 桥接：分支 push → 匹配占用该分支的测试槽位自动重建
+	ciSvc.BranchPushHook = slotsSvc.OnBranchPush
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -87,6 +94,7 @@ var moduleSet = wire.NewSet(
 	ci.Set,
 	release.Set,
 	canary.Set,
+	slots.Set,
 	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
 	ProvideModules,
