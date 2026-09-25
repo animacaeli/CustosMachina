@@ -35,7 +35,7 @@ function fmtDuration(secs: number) {
   if (secs > 0) {
     return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
   }
-  return '-';
+  return '<1s'; // 镜像缓存命中时 up -d 亚秒完成
 }
 
 // ---- 部署日志（CD 输出）----
