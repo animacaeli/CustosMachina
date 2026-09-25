@@ -233,7 +233,9 @@ CI 客户端不建表（`ci_type` 枚举暂只有 `gitea`，凭据并入 project
 - casbin v5：/slots 全角色可 GET/POST（写操作的对象级权限在模块内强制）
 - 前端槽位抽屉：占用情况表格（过期标记、释放/续期按钮按"本人或管理员"显隐）、占用表单（空闲槽位 + 时长 + 分支筛选下拉）
 - 已知偏差：槽位差异化配置（slot_overrides）表已建但尚未在部署时注入环境变量（部署模板需求未明确，M5.1 待用户反馈后补）；分支重建的构建记录 log_url 为空（测试环境日志走容器视图看）
-- **全阶段完成。待用户实例联调清单**：① gitea API 实测（commit status / raw / branches）；② 企微群机器人真实推送；③ nginx 灰度承载落点（宿主机 nginx include 方式）；④ 真实服务器上占用→push→重建→释放全链路
+- **全阶段完成。真机 e2e 联调（2026-09-26 完成，含 7 个实测修复）**：环境=本机 Gitea 1.24 + act_runner（webhook 走 host.docker.internal 直达平台，gitea ROOT_URL 也用 host.docker.internal 供 job 容器访问）+ 测试仓库 tester/demo（gin server + busybox worker + 监听标签流水线，GOPROXY 需镜像）+ 云服务器部署目标。已验证：① 标签→webhook→构建→commit status 轮询→终态（M2 假设全部成立）；② 发布（raw 取 compose→部署）→历史→回滚；③ 容器视图/日志/伸缩；④ 灰度发布+策略聚合发布（**承载层实测结论：云服务器 nginx 是容器**，已实现宿主/nginx 容器双探测，conf.d 挂载写入+docker exec reload）；⑤ 槽位占用→push 自动重建→续期→释放销毁。
+  实测修复的 bug：webhook payload 用 repository 字段；wire 不调用仅返回 cleanup 的 provider（ci:poll/slots:sweep 从未启动，哨兵类型修复）；nginx 非交互 PATH 与容器承载；sh -s stdin 冲突；builds createdAt 零值；续期复用 OccupyInput 必 400；容器 tab 环境隔离前缀。
+  测试项目注意：compose 多环境同机共存时服务不占固定宿主端口；workflow 内 GOPROXY 配镜像。剩余未实测：企微群真实推送（未配真实群）。
 - `env_slots` / `slot_overrides` 表 + 占用 / 释放 / 续期 API（本人 / admin 权限双层校验）+ 占用变更通知；
 - 自动链路：push webhook → 匹配占用该分支的槽位 → 触发构建（镜像 tag 带槽位标识）→ compose 部署到槽位隔离域 → 部署结果通知占用者；
 - 释放 / 到期销毁：Docker API over SSH 销毁隔离域容器；到期标记 + 宽限期自动回收任务（回收前通知）；
