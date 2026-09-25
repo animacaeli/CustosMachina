@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -287,7 +288,7 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 
 	b := Build{
 		ProjectID: proj.ID, EnvType: env, Tag: tag, SHA: p.After,
-		Builder: p.Sender.Login, Source: SourceTag, Status: BuildPending,
+		Builder: s.mapBuilder(p.Sender.Login), Source: SourceTag, Status: BuildPending,
 	}
 	if err := s.db.WithContext(ctx).Create(&b).Error; err != nil {
 		return nil, err
@@ -381,15 +382,23 @@ func (s *Service) PollPending(ctx context.Context) error {
 			continue
 		}
 		newStatus := mapStatus(st.State)
-		if newStatus == BuildRunning && b.Status == BuildPending {
-			newStatus = BuildRunning
-		}
 		if newStatus == b.Status {
 			continue
 		}
 		updates := map[string]any{"status": newStatus}
 		if b.LogURL == "" {
 			updates["log_url"] = client.actionsURL(proj.RepoPath)
+		}
+		// 耗时：pending→running 记开始时间；终态按 started_at 差值计算
+		if b.Status == BuildPending && newStatus == BuildRunning {
+			updates["started_at"] = time.Now()
+		}
+		if newStatus == BuildSuccess || newStatus == BuildFailed {
+			start := b.StartedAt
+			if start.IsZero() {
+				start = b.CreatedAt
+			}
+			updates["duration_secs"] = int(time.Since(start).Seconds())
 		}
 		if err := s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).Updates(updates).Error; err != nil {
 			continue
@@ -440,6 +449,23 @@ func (s *Service) notifyBuild(ctx context.Context, b Build, proj struct {
 	}()
 }
 
+// mapBuilder gitea pusher 同名映射平台用户（找不到保留 gitea 名）——
+// webhook 自动触发时平台无法感知操作者，同名约定是唯一可行关联。
+func (s *Service) mapBuilder(giteaLogin string) string {
+	if giteaLogin == "" {
+		return "unknown"
+	}
+	var display string
+	if err := s.db.Table("users").Select("display_name").
+		Where("username = ?", giteaLogin).First(&display).Error; err != nil {
+		return giteaLogin
+	}
+	if display != "" {
+		return display
+	}
+	return giteaLogin
+}
+
 func envLabel(env string) string {
 	switch env {
 	case "prod":
@@ -470,6 +496,31 @@ func (s *Service) RawClient(ctx context.Context, repoPath string) (*RawGitea, st
 		return nil, "", err
 	}
 	return &RawGitea{Client: c}, c.BaseURL(), nil
+}
+
+// BuildLog 内嵌展示某次构建的 gitea 流水线日志（按 commit SHA 找 run 再拉 job 日志）。
+func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
+	var b Build
+	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
+		return "", errors.New("构建记录不存在")
+	}
+	if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
+		return "", errors.New("该记录无关联提交（手动重放的测试数据）")
+	}
+	var projRow struct{ RepoPath string }
+	if err := s.db.Table("projects").Select("repo_path").Where("id = ?", b.ProjectID).First(&projRow).Error; err != nil {
+		return "", errors.New("项目不存在")
+	}
+	repoPath := projRow.RepoPath
+	client, err := s.clientFor(ctx, repoPath)
+	if err != nil {
+		return "", err
+	}
+	task, err := client.actionTaskBySHA(ctx, repoPath, b.SHA)
+	if err != nil {
+		return "", err
+	}
+	return client.jobLogs(ctx, repoPath, task.ID)
 }
 
 // Branches 供前端表单（M5 槽位占用选分支）。

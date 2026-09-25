@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	builds := r.Authed.Group("/builds")
 	{
 		builds.GET("", h.listBuilds)
+		builds.GET("/:id/log", h.buildLog)
 	}
 	branches := r.Authed.Group("/project-branches")
 	{
@@ -168,6 +169,19 @@ func (h *Handler) listBuilds(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, gin.H{"items": list, "total": total})
+}
+
+func (h *Handler) buildLog(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	logs, err := h.svc.BuildLog(c.Request.Context(), id)
+	if err != nil {
+		httpx.FailUpstream(c, err.Error())
+		return
+	}
+	httpx.OK(c, logs)
 }
 
 func (h *Handler) branches(c *gin.Context) {

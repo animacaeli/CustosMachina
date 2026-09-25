@@ -65,6 +65,7 @@ export async function deleteRegistryApi(id: number) {
 export interface Build {
   builder: string;
   createdAt: string;
+  durationSecs: number;
   envType: 'canary' | 'prod' | 'test';
   id: number;
   logUrl: string;
@@ -84,6 +85,11 @@ export async function getBuildsApi(params: {
   return requestClient.get<{ items: Build[]; total: number }>('/builds', {
     params,
   });
+}
+
+/** 内嵌拉取某次构建的 gitea 流水线日志（纯文本） */
+export async function getBuildLogApi(buildId: number) {
+  return requestClient.get<string>(`/builds/${buildId}/log`);
 }
 
 /** 项目分支列表（M5 槽位表单用） */

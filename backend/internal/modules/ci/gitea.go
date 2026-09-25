@@ -73,6 +73,13 @@ type branch struct {
 	Name string `json:"name"`
 }
 
+type actionTask struct {
+	ID         uint   `json:"id"`
+	HeadSHA    string `json:"head_sha"`
+	HeadBranch string `json:"head_branch"`
+	Status     string `json:"status"`
+}
+
 func (g *giteaClient) branches(ctx context.Context, repoPath string) ([]string, error) {
 	var bs []branch
 	if err := g.do(ctx, http.MethodGet, "/repos/"+repoPath+"/branches?limit=100", &bs); err != nil {
@@ -85,7 +92,54 @@ func (g *giteaClient) branches(ctx context.Context, repoPath string) ([]string, 
 	return names, nil
 }
 
-// actionsURL gitea Web UI 的 Actions 页（日志外链；内嵌日志待实测 gitea 版本能力后补）。
+// actionTaskBySHA 按 commit SHA 找最新的 workflow run（tasks 列表，id 可直接用于 jobLogs）。
+func (g *giteaClient) actionTaskBySHA(ctx context.Context, repoPath, sha string) (*actionTask, error) {
+	var resp struct {
+		WorkflowRuns []actionTask `json:"workflow_runs"`
+	}
+	if err := g.do(ctx, http.MethodGet, "/repos/"+repoPath+"/actions/tasks?limit=50", &resp); err != nil {
+		return nil, err
+	}
+	tasks := resp.WorkflowRuns
+	for i := range tasks {
+		if tasks[i].HeadSHA == sha {
+			return &tasks[i], nil
+		}
+	}
+	return nil, fmt.Errorf("gitea 上未找到该提交的流水线记录")
+}
+
+// jobLogs 拉取某次 workflow job 的完整日志（纯文本）。
+func (g *giteaClient) jobLogs(ctx context.Context, repoPath string, taskID uint) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		g.base+"/api/v1/repos/"+repoPath+"/actions/jobs/"+fmt.Sprint(taskID)+"/logs", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+g.token)
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gitea 日志接口 %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+	}
+	return string(body), nil
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// actionsURL gitea Web UI 的 Actions 页（日志外链兜底）。
 func (g *giteaClient) actionsURL(repoPath string) string {
 	return g.base + "/" + repoPath + "/actions"
 }

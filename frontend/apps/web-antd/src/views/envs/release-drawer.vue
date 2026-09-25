@@ -9,7 +9,6 @@ import {
   createReleaseApi,
   getPassedTagsApi,
   getReleasesApi,
-  rollbackReleaseApi,
 } from '#/api/release';
 
 defineOptions({ name: 'ReleaseDrawer' });
@@ -31,7 +30,45 @@ const loading = ref(false);
 const passedTags = ref<string[]>([]);
 const selectedTag = ref<string | undefined>();
 const releasing = ref(false);
-const rollbackTarget = ref<null | number>(null);
+
+function fmtDuration(secs: number) {
+  if (secs > 0) {
+    return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+  }
+  return '-';
+}
+
+// ---- 部署日志（CD 输出）----
+const logOpen = ref(false);
+const logText = ref('');
+const logTitle = ref('');
+function openLog(record: ReleaseItem) {
+  logTitle.value = `${record.tag} 部署日志`;
+  logText.value = record.output || '（无输出）';
+  logOpen.value = true;
+}
+
+// 行内"部署"：对任意历史标签重新执行部署（含当前标签）——回滚即部署旧版本
+async function doDeploy(rel: ReleaseItem) {
+  if (!props.projectId) return;
+  releasing.value = true;
+  try {
+    const nr = await createReleaseApi({
+      envType: props.env,
+      projectId: props.projectId,
+      tag: rel.tag,
+    });
+    if (nr.status === 'success') {
+      message.success(`已部署 ${rel.tag}`);
+    } else {
+      message.error(`部署失败：${(nr.output ?? '').slice(0, 200)}`);
+    }
+    page.value = 1;
+    await load();
+  } finally {
+    releasing.value = false;
+  }
+}
 
 const envTitles: Record<string, string> = {
   canary: '灰度环境发布',
@@ -94,22 +131,6 @@ async function doRelease() {
   }
 }
 
-async function doRollback(rel: ReleaseItem) {
-  if (!props.projectId) return;
-  rollbackTarget.value = rel.id;
-  try {
-    const nr = await rollbackReleaseApi(rel.id);
-    if (nr.status === 'success') {
-      message.success(`已回滚到 ${rel.tag}`);
-    } else {
-      message.error(`回滚失败：${(nr.output ?? '').slice(0, 200)}`);
-    }
-    await load();
-  } finally {
-    rollbackTarget.value = null;
-  }
-}
-
 function fmtTime(v: string) {
   return v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '-';
 }
@@ -149,6 +170,7 @@ function fmtTime(v: string) {
         { title: '标签', dataIndex: 'tag' },
         { title: '发布人', dataIndex: 'releaseBy', width: 100 },
         { title: '时间', key: 'time', width: 170 },
+        { title: '耗时', key: 'duration', width: 80 },
         { title: '状态', key: 'status', width: 90 },
         { title: '操作', key: 'action', width: 120 },
       ]"
@@ -168,30 +190,35 @@ function fmtTime(v: string) {
         <template v-if="column.key === 'time'">
           {{ fmtTime(record.createdAt) }}
         </template>
+        <template v-else-if="column.key === 'duration'">
+          {{ fmtDuration(record.durationSecs) }}
+        </template>
         <template v-else-if="column.key === 'status'">
           <a-tag :color="record.status === 'success' ? 'green' : 'red'">
             {{ record.status === 'success' ? '成功' : '失败' }}
           </a-tag>
-          <a-tag v-if="record.rollbackOf" color="purple">回滚</a-tag>
         </template>
         <template v-else-if="column.key === 'action'">
           <a-popconfirm
-            :title="`回滚 = 重新发布 ${record.tag}，确认？`"
-            @confirm="doRollback(record)"
+            :title="`部署 ${record.tag} 到${envTitles[props.env] ?? ''}，确认？`"
+            @confirm="doDeploy(record)"
           >
-            <a-button
-              :loading="rollbackTarget === record.id"
-              size="small"
-              type="link"
-            >
-              回滚
-            </a-button>
+            <a-button :loading="releasing" size="small" type="link">
+部署
+</a-button>
           </a-popconfirm>
-          <a-tooltip v-if="record.output" :title="record.output.slice(0, 500)">
-            <a-button size="small" type="link">输出</a-button>
-          </a-tooltip>
+          <a-button size="small" type="link" @click="openLog(record)">
+日志
+</a-button>
         </template>
       </template>
     </a-table>
+
+    <a-modal v-model:open="logOpen" :title="logTitle" :width="820" footer="">
+      <pre
+        class="max-h-[65vh] overflow-auto rounded p-3 text-xs leading-5"
+        style="background: #0b0e14; color: #c9d1d9"
+        >{{ logText }}</pre>
+    </a-modal>
   </a-drawer>
 </template>

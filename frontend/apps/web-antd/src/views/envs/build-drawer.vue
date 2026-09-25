@@ -3,7 +3,7 @@ import type { Build } from '#/api/ci';
 
 import { onBeforeUnmount, ref, watch } from 'vue';
 
-import { getBuildsApi } from '#/api/ci';
+import { getBuildLogApi, getBuildsApi } from '#/api/ci';
 
 defineOptions({ name: 'BuildDrawer' });
 
@@ -87,6 +87,31 @@ function onPageChange(p: number, s: number) {
   size.value = s;
 }
 
+function fmtDuration(secs: number, status: string) {
+  if (secs > 0) {
+    return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
+  }
+  return status === 'running' ? '进行中' : '-';
+}
+
+// ---- 内嵌流水线日志 ----
+const logOpen = ref(false);
+const logText = ref('');
+const logTitle = ref('');
+const logLoading = ref(false);
+async function openLog(record: Build) {
+  logTitle.value = `${record.tag} 流水线日志`;
+  logOpen.value = true;
+  logLoading.value = true;
+  try {
+    logText.value = (await getBuildLogApi(record.id)) || '（无日志）';
+  } catch {
+    logText.value = '日志拉取失败（构建可能尚未产生流水线记录）';
+  } finally {
+    logLoading.value = false;
+  }
+}
+
 function fmtTime(v: string) {
   return v ? new Date(v).toLocaleString('zh-CN', { hour12: false }) : '-';
 }
@@ -110,6 +135,7 @@ function fmtTime(v: string) {
         { title: '标签', dataIndex: 'tag' },
         { title: '构建人', dataIndex: 'builder', width: 100 },
         { title: '时间', key: 'time', width: 170 },
+        { title: '耗时', key: 'duration', width: 90 },
         { title: '状态', key: 'status', width: 90 },
         { title: '操作', key: 'action', width: 90 },
       ]"
@@ -129,6 +155,9 @@ function fmtTime(v: string) {
         <template v-if="column.key === 'time'">
           {{ fmtTime(record.createdAt) }}
         </template>
+        <template v-else-if="column.key === 'duration'">
+          {{ fmtDuration(record.durationSecs, record.status) }}
+        </template>
         <template v-else-if="column.key === 'status'">
           <a-badge
             :color="statusColors[record.status]"
@@ -137,17 +166,25 @@ function fmtTime(v: string) {
           />
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-button
-            :disabled="!record.logUrl"
-            :href="record.logUrl"
-            size="small"
-            target="_blank"
-            type="link"
-          >
+          <a-button size="small" type="link" @click="openLog(record)">
             日志
           </a-button>
         </template>
       </template>
     </a-table>
+
+    <a-drawer
+      :open="logOpen"
+      :title="logTitle"
+      :width="820"
+      @close="logOpen = false"
+    >
+      <a-spin :spinning="logLoading">
+        <pre
+          class="max-h-[70vh] overflow-auto rounded p-3 text-xs leading-5"
+          style="background: #0b0e14; color: #c9d1d9"
+          >{{ logText }}</pre>
+      </a-spin>
+    </a-drawer>
   </a-drawer>
 </template>

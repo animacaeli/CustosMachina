@@ -2,7 +2,8 @@ import { requestClient } from '#/api/request';
 
 export interface ReleaseItem {
   createdAt: string;
-  envType: 'canary' | 'prod';
+  durationSecs: number;
+  envType: 'canary' | 'prod' | 'test';
   id: number;
   output: string;
   projectId: number;

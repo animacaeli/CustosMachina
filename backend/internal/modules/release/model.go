@@ -15,19 +15,20 @@ const (
 )
 
 type Release struct {
-	ID         uint           `gorm:"primarykey" json:"id"`
-	ProjectID  uint           `gorm:"index:idx_rel_proj_env;not null" json:"projectId"`
-	EnvType    string         `gorm:"index:idx_rel_proj_env;size:16;not null" json:"envType"` // prod | canary
-	Tag        string         `gorm:"size:128;not null" json:"tag"`
-	ServerID   uint           `json:"serverId"`
-	Runtime    string         `gorm:"size:16" json:"runtime"`
-	ReleaseBy  string         `gorm:"size:64" json:"releaseBy"`
-	Status     string         `gorm:"size:16;not null" json:"status"`
-	Output     string         `gorm:"type:text" json:"output"` // 部署输出（失败原因）
-	RollbackOf *uint          `json:"rollbackOf"`              // 回滚指向的原 release
-	CreatedAt  time.Time      `json:"createdAt"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           uint           `gorm:"primarykey" json:"id"`
+	ProjectID    uint           `gorm:"index:idx_rel_proj_env;not null" json:"projectId"`
+	EnvType      string         `gorm:"index:idx_rel_proj_env;size:16;not null" json:"envType"` // prod | canary
+	Tag          string         `gorm:"size:128;not null" json:"tag"`
+	ServerID     uint           `json:"serverId"`
+	Runtime      string         `gorm:"size:16" json:"runtime"`
+	ReleaseBy    string         `gorm:"size:64" json:"releaseBy"`
+	DurationSecs int            `json:"durationSecs"`
+	Status       string         `gorm:"size:16;not null" json:"status"`
+	Output       string         `gorm:"type:text" json:"output"` // 部署输出（失败原因）
+	RollbackOf   *uint          `json:"rollbackOf"`              // 回滚指向的原 release
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (Release) TableName() string { return "releases" }

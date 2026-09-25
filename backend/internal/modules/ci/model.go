@@ -25,20 +25,21 @@ const (
 
 // Build 构建记录（三环境统一承接；测试环境槽位构建 M5 复用）。
 type Build struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	ProjectID uint           `gorm:"index:idx_proj_env;not null" json:"projectId"`
-	EnvType   string         `gorm:"index:idx_proj_env;size:16;not null" json:"envType"` // prod | canary | test
-	Tag       string         `gorm:"size:128;not null" json:"tag"`
-	SHA       string         `gorm:"size:64" json:"sha"` // 标签指向的提交（轮询 commit status 用）
-	Builder   string         `gorm:"size:64" json:"builder"`
-	Source    string         `gorm:"size:16;not null" json:"source"`
-	Status    string         `gorm:"size:16;not null;default=pending" json:"status"`
-	LogURL    string         `gorm:"size:512" json:"logUrl"`          // gitea Actions 页面（日志外链）
-	Notified  bool           `gorm:"not null;default:false" json:"-"` // 终态是否已通知
-	StartedAt time.Time      `json:"startedAt"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           uint           `gorm:"primarykey" json:"id"`
+	ProjectID    uint           `gorm:"index:idx_proj_env;not null" json:"projectId"`
+	EnvType      string         `gorm:"index:idx_proj_env;size:16;not null" json:"envType"` // prod | canary | test
+	Tag          string         `gorm:"size:128;not null" json:"tag"`
+	SHA          string         `gorm:"size:64" json:"sha"` // 标签指向的提交（轮询 commit status 用）
+	Builder      string         `gorm:"size:64" json:"builder"`
+	Source       string         `gorm:"size:16;not null" json:"source"`
+	Status       string         `gorm:"size:16;not null;default=pending" json:"status"`
+	DurationSecs int            `json:"durationSecs"`                    // 终态时计算；running 期由前端用 started_at 差值显示
+	LogURL       string         `gorm:"size:512" json:"logUrl"`          // gitea Actions 页面（外链兜底）
+	Notified     bool           `gorm:"not null;default:false" json:"-"` // 终态是否已通知
+	StartedAt    time.Time      `json:"startedAt"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (Build) TableName() string { return "builds" }

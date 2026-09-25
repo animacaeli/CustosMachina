@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -112,7 +113,9 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		ReleaseBy: operator, Status: ReleaseFailed,
 	}
 	deployName := fmt.Sprintf("%s-%s", normalizeName(p.Name), in.EnvType)
+	startedAt := time.Now()
 	out, _, err := s.res.DeployComposeTo(ctx, target.ServerID, deployName, yamlContent)
+	rel.DurationSecs = int(time.Since(startedAt).Seconds())
 	rel.Output = truncate(out, 8000)
 	if err == nil {
 		rel.Status = ReleaseSuccess
