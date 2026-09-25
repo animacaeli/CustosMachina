@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/pkg/jobs"
+	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
 const (
@@ -178,6 +179,8 @@ func NewCollector(db *gorm.DB, servers *ServerRepository, svc *Service) (*Collec
 		jobs.Job{Name: "metrics:flush", Interval: flushInterval, Fn: c.flush},
 		jobs.Job{Name: "metrics:retention", Interval: retainInterval, Fn: c.retention},
 		jobs.Job{Name: "terminal-audit:retention", Interval: retainInterval, Fn: auditRetention},
+		// 主机配置低频刷新（CPU/内存不变，磁盘使用率缓变，30 分钟足够新）
+		jobs.Job{Name: "hostinfo:refresh", Interval: 30 * time.Minute, Fn: c.refreshHostInfo},
 	)
 	c.group.Start()
 	return c, c.group.Stop, nil
@@ -306,6 +309,20 @@ func (c *Collector) recordFailure(ctx context.Context, srv *Server, cause error)
 	if fails == failThreshold { // 只在判定瞬间落一次事件，持续失败不重复
 		c.emitEvent(ctx, srv.ID, "unreachable", cause.Error())
 	}
+}
+
+// refreshHostInfo 刷新全部主机的配置缓存（逐台探测，失败只记日志）。
+func (c *Collector) refreshHostInfo(ctx context.Context) error {
+	var servers []Server
+	if err := c.db.WithContext(ctx).Where("deleted_at IS NULL").Find(&servers).Error; err != nil {
+		return err
+	}
+	for _, srv := range servers {
+		if _, err := c.svc.ProbeHostInfo(ctx, srv.ID); err != nil {
+			logger.Warnf("[resources] 主机配置刷新失败 server=%d: %v", srv.ID, err)
+		}
+	}
+	return nil
 }
 
 // SetNotifier 注入运维告警出口（app 组装时调用；不注入则只落库不推送）。

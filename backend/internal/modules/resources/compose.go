@@ -66,14 +66,8 @@ func (h *Handler) probeEnv(c *gin.Context) {
 	}
 	p.Ready = p.DockerVersion != "" && p.ComposeVer != ""
 	// 顺带采集主机配置并缓存（失败不影响探测结果）
-	if hi, herr := probeHostInfo(srv, cred); herr == nil {
-		if b, jerr := json.Marshal(hi); jerr == nil {
-			if uerr := h.svc.eventsDB.WithContext(c.Request.Context()).Model(&Server{}).
-				Where("id = ?", srv.ID).Update("host_info", string(b)).Error; uerr != nil {
-				logger.Warnf("[resources] 主机配置落库失败 server=%d: %v", srv.ID, uerr)
-			}
-			p.Host = hi
-		}
+	if hi, herr := h.svc.ProbeHostInfo(c.Request.Context(), id); herr == nil {
+		p.Host = hi
 	}
 	httpx.OK(c, p)
 }
@@ -462,6 +456,25 @@ const hostProbeScript = `echo "cores=$(nproc)"; ` +
 	`echo "mem=$(free -b | awk 'NR==2{print $2}')"; ` +
 	`echo "disk=$(df -B1 / | awk 'NR==2{print $2" "$3}')"; ` +
 	`echo "net=$(for f in /sys/class/net/e*/speed; do cat "$f" 2>/dev/null; done | sort -n | tail -1)"`
+
+// ProbeHostInfo 对外暴露：采集主机配置并写库（collector 低频刷新任务复用）。
+func (s *Service) ProbeHostInfo(ctx context.Context, serverID uint) (*HostInfo, error) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	hi, err := probeHostInfo(srv, cred)
+	if err != nil {
+		return nil, err
+	}
+	if b, jerr := json.Marshal(hi); jerr == nil {
+		if uerr := s.eventsDB.WithContext(ctx).Model(&Server{}).
+			Where("id = ?", serverID).Update("host_info", string(b)).Error; uerr != nil {
+			logger.Warnf("[resources] 主机配置落库失败 server=%d: %v", serverID, uerr)
+		}
+	}
+	return hi, nil
+}
 
 // probeHostInfo 采集主机配置并缓存到 servers.host_info。
 func probeHostInfo(srv *Server, cred *credential) (*HostInfo, error) {

@@ -100,6 +100,24 @@ async function load() {
   } finally {
     loading.value = false;
   }
+  backfillHostInfo();
+}
+
+// 列表加载后自动补拉缺配置的主机（后台静默，完成后刷新列表）；
+// 后端另有 30 分钟低频刷新任务兜底，数据始终保持新鲜
+let backfilling = false;
+async function backfillHostInfo() {
+  const missing = list.value
+    .filter((s) => !parseHost(s.hostInfo))
+    .map((s) => s.id);
+  if (missing.length === 0 || backfilling) return;
+  backfilling = true;
+  try {
+    await Promise.allSettled(missing.map((id) => probeEnvApi(id)));
+    await load();
+  } finally {
+    backfilling = false;
+  }
 }
 
 onMounted(() => {
