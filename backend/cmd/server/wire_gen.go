@@ -77,7 +77,22 @@ func InitializeServer() (*server.Server, func(), error) {
 	canaryHandler := canary.NewHandler(canaryService)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService)
 	slotsHandler := slots.NewHandler(slotsService)
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, slotsService, ciService, notifyService)
+	poller, cleanup4, err := ci.NewPoller(ciService)
+	if err != nil {
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	sweeper, cleanup5, err := slots.NewSweeper(slotsService)
+	if err != nil {
+		cleanup4()
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, slotsService, ciService, poller, sweeper, notifyService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
@@ -87,6 +102,8 @@ func InitializeServer() (*server.Server, func(), error) {
 	engine := server.NewEngine(configConfig, modules, authMiddleware, handlerFunc)
 	serverServer := server.New(configConfig, engine)
 	return serverServer, func() {
+		cleanup5()
+		cleanup4()
 		cleanup3()
 		cleanup2()
 		cleanup()

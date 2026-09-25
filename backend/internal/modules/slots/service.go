@@ -73,9 +73,11 @@ type OccupyInput struct {
 	DurationUnit  string `json:"durationUnit" binding:"required,oneof=hours days weeks"`
 }
 
-func (d OccupyInput) duration() time.Duration {
-	base := time.Duration(d.DurationValue)
-	switch d.DurationUnit {
+type durationLike interface{ duration() time.Duration }
+
+func parseDuration(value int, unit string) time.Duration {
+	base := time.Duration(value)
+	switch unit {
 	case "days":
 		return base * 24 * time.Hour
 	case "weeks":
@@ -84,6 +86,13 @@ func (d OccupyInput) duration() time.Duration {
 		return base * time.Hour
 	}
 }
+
+func (d OccupyInput) duration() time.Duration { return parseDuration(d.DurationValue, d.DurationUnit) }
+func (d DurationInput) duration() time.Duration {
+	return parseDuration(d.DurationValue, d.DurationUnit)
+}
+
+var _ = []durationLike{OccupyInput{}, DurationInput{}}
 
 // Occupy 占用槽位并立即拉起该分支的测试环境。
 func (s *Service) Occupy(ctx context.Context, projectID uint, in OccupyInput, uid uint, display string) (*Slot, error) {
@@ -146,8 +155,15 @@ func (s *Service) Release(ctx context.Context, projectID uint, slotName string, 
 	return nil
 }
 
+// DurationInput 仅时长（续期用；不能复用 OccupyInput——slot/branch 的
+// required 校验会让只传时长的续期请求 400）。
+type DurationInput struct {
+	DurationValue int    `json:"durationValue" binding:"required,min=1"`
+	DurationUnit  string `json:"durationUnit" binding:"required,oneof=hours days weeks"`
+}
+
 // Renew 续期：从当前时间起重新计时一个时长。
-func (s *Service) Renew(ctx context.Context, projectID uint, slotName string, in OccupyInput, uid uint, isAdmin bool) (*Slot, error) {
+func (s *Service) Renew(ctx context.Context, projectID uint, slotName string, in DurationInput, uid uint, isAdmin bool) (*Slot, error) {
 	var slot Slot
 	if err := s.db.WithContext(ctx).
 		Where("project_id = ? AND slot_name = ?", projectID, slotName).
@@ -236,14 +252,13 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 		status = ci.BuildFailed
 		output = err.Error()
 	}
-	b := map[string]any{
-		"project_id": p.ID, "env_type": "test", "tag": tag, "builder": slot.OccupiedBy,
-		"source": "auto", "status": status, "log_url": "", "sha": "",
+	// 用 struct 落库：map 方式不会触发 GORM 的 CreatedAt 自动填充（曾出零值时间）
+	b := ci.Build{
+		ProjectID: p.ID, EnvType: "test", Tag: tag, Builder: slot.OccupiedBy,
+		Source: "auto", Status: status,
 	}
-	if res := s.db.WithContext(ctx).
-		Table("builds").Create(b); res.Error == nil {
-		slot.LastBuildID = nil
-		s.db.WithContext(ctx).Model(slot).Update("updated_at", time.Now())
+	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
+		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)
 	}
 	verb := "部署成功"
 	if status == ci.BuildFailed {

@@ -86,9 +86,7 @@ func (h *Handler) renew(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var in OccupyInput
-	in.DurationValue = 1
-	in.DurationUnit = "days"
+	var in DurationInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return

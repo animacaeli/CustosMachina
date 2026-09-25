@@ -196,17 +196,31 @@ func (s *Service) DeleteRegistry(ctx context.Context, id uint) error {
 
 // ---- webhook ----
 
-// giteaTagPayload gitea tag push webhook（POST body）的感兴趣字段。
+// giteaTagPayload gitea push webhook（POST body）的感兴趣字段。
+// 注意：gitea 实际 payload 用 repository（GitHub 风格），repo 字段不存在——
+// 两个都解析兼容（2026-09-26 真机联调发现）。
 type giteaTagPayload struct {
-	Ref   string `json:"ref"` // refs/tags/v1.0.0
+	Ref   string `json:"ref"` // refs/tags/v1.0.0 或 refs/heads/<branch>
 	After string `json:"after"`
 	Repo  struct {
 		FullName string `json:"full_name"`
 		HTMLURL  string `json:"html_url"`
 	} `json:"repo"`
+	Repository struct {
+		FullName string `json:"full_name"`
+		HTMLURL  string `json:"html_url"`
+	} `json:"repository"`
 	Sender struct {
 		Login string `json:"login"`
 	} `json:"sender"`
+}
+
+// repoPath 优先 repository（gitea 实际字段），repo 兜底。
+func (p *giteaTagPayload) repoPath() string {
+	if p.Repository.FullName != "" {
+		return p.Repository.FullName
+	}
+	return p.Repo.FullName
 }
 
 // VerifySignature X-Gitea-Signature = HMAC-SHA256(body, secret)。
@@ -235,8 +249,8 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 	}
 	if !strings.HasPrefix(p.Ref, "refs/tags/") {
 		// 分支推送：交给槽位自动链路（未注入 hook 则忽略）
-		if s.BranchPushHook != nil {
-			s.BranchPushHook(context.WithoutCancel(ctx), p.Repo.FullName,
+		if s.BranchPushHook != nil && strings.HasPrefix(p.Ref, "refs/heads/") {
+			s.BranchPushHook(context.WithoutCancel(ctx), p.repoPath(),
 				strings.TrimPrefix(p.Ref, "refs/heads/"), p.Sender.Login)
 		}
 		return nil, nil
@@ -252,7 +266,7 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 		NotifyTestGroupID   *uint
 	}
 	if err := s.db.Table("projects").
-		Where("lower(repo_path) = ?", strings.ToLower(p.Repo.FullName)).
+		Where("lower(repo_path) = ?", strings.ToLower(p.repoPath())).
 		First(&proj).Error; err != nil {
 		return nil, nil // 非平台登记的项目，忽略
 	}

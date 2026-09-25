@@ -15,13 +15,11 @@ import (
 
 var ErrNotFound = errors.New("策略不存在")
 
-// canaryConfDir 目标机上灰度配置的固定目录（同 compose 部署根的约定）。
-const canaryConfDir = "/opt/custos-machina/canary"
-
 // SSHRunner 灰度承载层需要的最小 SSH 能力（resources.Service 提供实现）。
 type SSHRunner interface {
-	// WriteFileAndReload 写配置片段到目标机并 reload nginx。
-	WriteFileAndReload(ctx context.Context, serverID uint, path, content string) (string, error)
+	// DeployNginxConf 写灰度配置片段到目标机并 reload nginx：
+	// 自动探测宿主 nginx 或 nginx 容器（conf.d 挂载 / docker exec）。
+	DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error)
 }
 
 type Service struct {
@@ -198,8 +196,7 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 	if err != nil {
 		return 0, "", err
 	}
-	path := fmt.Sprintf("%s/%s.conf", canaryConfDir, normName(proj.Name))
-	out, err := s.ssh.WriteFileAndReload(ctx, target.ServerID, path, conf)
+	out, err := s.ssh.DeployNginxConf(ctx, target.ServerID, normName(proj.Name), conf)
 	if err != nil {
 		return 0, out, err
 	}

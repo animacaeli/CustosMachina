@@ -64,6 +64,8 @@ func ProvideModules(
 	slotsMod *slots.Handler,
 	slotsSvc *slots.Service,
 	ciSvc *ci.Service,
+	ciPoller *ci.Poller, // 拉起 ci:poll 状态轮询任务（哨兵依赖）
+	slotsSweeper *slots.Sweeper, // 拉起 slots:sweep 到期扫描任务（哨兵依赖）
 	notifySvc *notify.Service,
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）

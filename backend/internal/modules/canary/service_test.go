@@ -50,9 +50,9 @@ type fakeSSH struct {
 	calls                 int
 }
 
-func (f *fakeSSH) WriteFileAndReload(_ context.Context, _ uint, path, content string) (string, error) {
+func (f *fakeSSH) DeployNginxConf(_ context.Context, _ uint, projName, content string) (string, error) {
 	f.calls++
-	f.lastPath, f.lastContent = path, content
+	f.lastPath, f.lastContent = projName, content
 	return "ok", nil
 }
 
@@ -110,8 +110,8 @@ func TestPublishVersioning(t *testing.T) {
 	if !strings.Contains(ssh.lastContent, "map $http_x_canary_mux") || !strings.Contains(ssh.lastContent, "split_clients") {
 		t.Fatalf("渲染缺分流配置:\n%s", ssh.lastContent)
 	}
-	if !strings.Contains(ssh.lastPath, "/opt/custos-machina/canary/") {
-		t.Fatalf("写入路径异常: %s", ssh.lastPath)
+	if !strings.Contains(ssh.lastPath, "demo") {
+		t.Fatalf("项目名异常: %s", ssh.lastPath)
 	}
 	// 两条策略都应是已发布 v1
 	var ps []Policy

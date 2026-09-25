@@ -398,27 +398,73 @@ func (h *Handler) scaleCompose(c *gin.Context) {
 
 var serviceNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-// WriteFileAndReload 写文本文件到目标机并重载 nginx（canary 模块 SSHRunner 实现；
-// compose 期灰度承载层。路径需在 /opt/custos-machina/ 下的白名单目录内）。
-func (s *Service) WriteFileAndReload(ctx context.Context, serverID uint, path, content string) (string, error) {
-	if !strings.HasPrefix(path, "/opt/custos-machina/") {
-		return "", fmt.Errorf("仅允许写 /opt/custos-machina/ 下的配置文件")
+// DeployNginxConf 写灰度分流配置到目标机并 reload nginx（canary 承载层）。
+// 承载探测顺序：宿主 nginx → 名为 nginx 的容器（conf.d 挂载优先，无挂载则
+// docker exec 写入容器）。map/split_clients 是 http 级指令，conf.d 片段天然合法。
+func (s *Service) DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error) {
+	if !deployNameRe.MatchString(projName) {
+		return "", fmt.Errorf("非法的项目名")
 	}
 	srv, cred, err := s.serverWithCredential(ctx, serverID)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Dir(path)
-	cmd := fmt.Sprintf("mkdir -p %s && cat > %s && nginx -t 2>&1 && nginx -s reload 2>&1",
-		shellQuote(dir), shellQuote(path))
+	const script = `set -e
+if command -v nginx >/dev/null 2>&1; then NG=$(command -v nginx)
+elif [ -x /usr/sbin/nginx ]; then NG=/usr/sbin/nginx
+else NG=""
+fi
+if [ -n "$NG" ]; then
+  DIR=/opt/custos-machina/canary
+  mkdir -p "$DIR"; cat > "$DIR/$PROJ.conf"
+  "$NG" -t 2>&1 && "$NG" -s reload 2>&1
+  exit 0
+fi
+CID=$(docker ps --format '{{.Names}}' | grep -x nginx | head -1)
+[ -n "$CID" ] || { echo "nginx not found (host or container)" >&2; exit 127; }
+HOSTDIR=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}')
+if [ -n "$HOSTDIR" ] && [ -d "$HOSTDIR" ]; then
+  cat > "$HOSTDIR/$PROJ.conf"
+else
+  docker exec -i "$CID" sh -c "cat > /etc/nginx/conf.d/$PROJ.conf"
+fi
+docker exec "$CID" nginx -t 2>&1 && docker exec "$CID" nginx -s reload 2>&1
+`
+	cmd := fmt.Sprintf("PROJ=%s sh -c %s", shellQuote(projName), shellQuote(script))
 	out, err := sshRunOutputWithStdin(srv, cred, cmd, content, time.Minute)
 	if err != nil {
-		return out, fmt.Errorf("写入/nginx reload 失败（宿主机需装 nginx；若为容器承载请参考文档调整）：%w", err)
+		return out, fmt.Errorf("写入/nginx reload 失败：%w", err)
 	}
 	s.recordSimpleEvent(ctx, serverID, "canary_reload",
-		fmt.Sprintf("写入灰度配置 %s 并 reload nginx：%s", path, map[bool]string{true: "成功", false: "失败"}[err == nil]))
+		fmt.Sprintf("灰度配置 %s 已写入并 reload nginx（自动探测宿主/容器承载）", projName))
 	return out, nil
 }
+
+// ProbeHostInfo 对外暴露：采集主机配置并写库（collector 低频刷新任务复用）。
+func (s *Service) ProbeHostInfo(ctx context.Context, serverID uint) (*HostInfo, error) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	hi, err := probeHostInfo(srv, cred)
+	if err != nil {
+		return nil, err
+	}
+	if b, jerr := json.Marshal(hi); jerr == nil {
+		if uerr := s.eventsDB.WithContext(ctx).Model(&Server{}).
+			Where("id = ?", serverID).Update("host_info", string(b)).Error; uerr != nil {
+			logger.Warnf("[resources] 主机配置落库失败 server=%d: %v", serverID, uerr)
+		}
+	}
+	return hi, nil
+}
+
+// hostProbeScript 一条 SSH 命令输出 KEY=VAL 行（兼容无 lscpu 的老系统，全用基础工具）。
+const hostProbeScript = `echo "cores=$(nproc)"; ` +
+	`echo "model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs echo)"; ` +
+	`echo "mem=$(free -b | awk 'NR==2{print $2}')"; ` +
+	`echo "disk=$(df -B1 / | awk 'NR==2{print $2" "$3}')"; ` +
+	`echo "net=$(for f in /sys/class/net/e*/speed; do cat "$f" 2>/dev/null; done | sort -n | tail -1)"`
 
 // DestroyCompose 销毁目标机上的 compose 项目（槽位释放用；部署文件与覆盖配置保留）。
 func (s *Service) DestroyCompose(ctx context.Context, serverID uint, name string) (string, error) {
@@ -448,32 +494,6 @@ type HostInfo struct {
 	DiskUsed  uint64 `json:"diskUsed"`
 	NetMbps   int    `json:"netMbps"`
 	ProbedAt  string `json:"probedAt"`
-}
-
-// hostProbeScript 一条 SSH 命令输出 KEY=VAL 行（兼容无 lscpu 的老系统，全用基础工具）。
-const hostProbeScript = `echo "cores=$(nproc)"; ` +
-	`echo "model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs echo)"; ` +
-	`echo "mem=$(free -b | awk 'NR==2{print $2}')"; ` +
-	`echo "disk=$(df -B1 / | awk 'NR==2{print $2" "$3}')"; ` +
-	`echo "net=$(for f in /sys/class/net/e*/speed; do cat "$f" 2>/dev/null; done | sort -n | tail -1)"`
-
-// ProbeHostInfo 对外暴露：采集主机配置并写库（collector 低频刷新任务复用）。
-func (s *Service) ProbeHostInfo(ctx context.Context, serverID uint) (*HostInfo, error) {
-	srv, cred, err := s.serverWithCredential(ctx, serverID)
-	if err != nil {
-		return nil, err
-	}
-	hi, err := probeHostInfo(srv, cred)
-	if err != nil {
-		return nil, err
-	}
-	if b, jerr := json.Marshal(hi); jerr == nil {
-		if uerr := s.eventsDB.WithContext(ctx).Model(&Server{}).
-			Where("id = ?", serverID).Update("host_info", string(b)).Error; uerr != nil {
-			logger.Warnf("[resources] 主机配置落库失败 server=%d: %v", serverID, uerr)
-		}
-	}
-	return hi, nil
 }
 
 // probeHostInfo 采集主机配置并缓存到 servers.host_info。
