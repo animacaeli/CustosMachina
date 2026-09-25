@@ -30,7 +30,8 @@ const env = computed(() => props.env);
 const loading = ref(false);
 const containers = ref<ProjectContainer[]>([]);
 
-// 部署名 = <normalizeName(project.name)>-<env>（与后端 release.DeployComposeTo 一致）
+// 部署名 = <normalizeName(project.name)>-<env>[-<slot>]（与后端一致）；
+// 必须带环境段过滤——只到项目前缀会把 prod/canary/test 三个隔离域混在一起
 const deployPrefix = computed(() => {
   const raw = (project.value?.name ?? '')
     .toLowerCase()
@@ -39,7 +40,7 @@ const deployPrefix = computed(() => {
   const norm = [...raw]
     .map((ch) => (/[a-z0-9_.-]/.test(ch) ? ch : '-'))
     .join('');
-  return `${norm || 'project'}-`;
+  return `${norm || 'project'}-${props.env}-`;
 });
 
 const targetServer = computed(() => {
@@ -72,9 +73,13 @@ async function load() {
   loading.value = true;
   try {
     const all = await getServerContainersApi(sid);
+    const prefix = deployPrefix.value; // 如 demo-canary-
     containers.value = all.filter((ct) => {
-      const key = ct.composeProject ?? ct.name;
-      return key.startsWith(deployPrefix.value);
+      // 容器名带实例后缀（demo-canary-server-1），composeProject 恰好等于
+      // 去掉尾横杠的前缀（demo-canary）——两种形态都认
+      return (
+        ct.name.startsWith(prefix) || ct.composeProject === prefix.slice(0, -1)
+      );
     });
   } catch {
     containers.value = [];
