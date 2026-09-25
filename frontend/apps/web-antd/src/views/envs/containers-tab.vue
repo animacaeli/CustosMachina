@@ -241,7 +241,7 @@ async function doScale() {
       :title="`调整 ${scaleForm.service} 实例数`"
       @ok="doScale"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item
           label="实例数（最少 1）"
           extra="compose 服务须无固定容器名 / 端口绑定"

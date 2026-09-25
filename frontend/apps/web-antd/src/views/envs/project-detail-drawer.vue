@@ -164,7 +164,7 @@ function close() {
       </div>
       <a-tabs v-model:active-key="activeTab">
         <a-tab-pane key="config" tab="配置">
-          <a-form layout="vertical" class="max-w-2xl">
+          <a-form layout="vertical" style="max-width: 42rem">
             <a-divider orientation="left" plain>CI / 部署</a-divider>
             <a-form-item
               label="部署主机"

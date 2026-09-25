@@ -72,7 +72,7 @@ async function saveRedis() {
 <template>
   <div class="flex flex-col gap-4">
     <a-card title="会话 token 有效期">
-      <a-form class="max-w-[520px]" layout="inline">
+      <a-form style="max-width: 520px" layout="inline">
         <a-form-item label="access（秒）">
           <a-input-number
             v-model:value="ttl.accessSeconds"
@@ -103,7 +103,7 @@ async function saveRedis() {
           {{ redisConfigured ? '已配置' : '内存模式' }}
         </a-tag>
       </template>
-      <a-form class="max-w-[480px]" layout="vertical">
+      <a-form style="max-width: 480px" layout="vertical">
         <a-form-item label="地址" required>
           <a-input v-model:value="redis.addr" placeholder="localhost:6379" />
         </a-form-item>

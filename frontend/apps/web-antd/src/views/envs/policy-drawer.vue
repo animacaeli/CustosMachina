@@ -158,7 +158,7 @@ async function doPublish() {
 
 <template>
   <a-drawer :open="open" title="灰度策略" :width="920" @close="emit('close')">
-    <a-alert show-icon type="info">
+    <a-alert show-icon type="info" style="margin-bottom: 0.75rem">
       <template #message>
         请求头命中优先进灰度；未命中按流量比例（当前启用总和
         <a-typography-text :type="sumExceeded ? 'danger' : 'success'">
@@ -233,7 +233,7 @@ async function doPublish() {
       :title="editingId ? '编辑策略' : '新增策略'"
       @ok="submitForm"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="灰度策略类型" required>
           <a-radio-group v-model:value="form.type" button-style="solid">
             <a-radio-button value="header">指定请求头</a-radio-button>

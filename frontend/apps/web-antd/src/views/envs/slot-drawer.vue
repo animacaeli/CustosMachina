@@ -154,7 +154,7 @@ function fmtTime(v: string) {
     :width="920"
     @close="emit('close')"
   >
-    <a-alert show-icon type="info">
+    <a-alert show-icon type="info" style="margin-bottom: 0.75rem">
       <template #message>
         占用后平台立即拉起该分支的测试环境；之后每次 push
         自动重建。到期限不强制销毁， 宽限期后自动回收。释放 /
@@ -241,7 +241,7 @@ function fmtTime(v: string) {
     </a-table>
 
     <a-modal v-model:open="formOpen" title="占用槽位" @ok="doOccupy">
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="槽位" required>
           <a-select
             v-model:value="form.slotName"

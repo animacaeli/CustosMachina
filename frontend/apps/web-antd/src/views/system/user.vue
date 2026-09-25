@@ -124,7 +124,7 @@ async function submitRoles() {
     </a-card>
 
     <a-modal v-model:open="createOpen" title="新建用户" @ok="submitCreate">
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="显示名" required>
           <a-input
             v-model:value="createForm.displayName"

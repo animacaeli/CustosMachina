@@ -263,7 +263,7 @@ async function onDelete(p: Project) {
       :title="editingId ? '编辑项目' : '新增项目'"
       @ok="submitForm"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="项目名" required>
           <a-input v-model:value="form.name" placeholder="如 custos-machina" />
         </a-form-item>

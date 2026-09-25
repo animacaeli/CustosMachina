@@ -99,7 +99,7 @@ function fmtTime(v: string) {
     :width="860"
     @close="emit('close')"
   >
-    <a-alert show-icon type="info">
+    <a-alert show-icon type="info" style="margin-bottom: 0.75rem">
       <template #message>
         标签推送到 gitea 后自动构建（正式 v*，灰度
         canary-yyyymmdd-缩写）；状态每 30 秒自动刷新。

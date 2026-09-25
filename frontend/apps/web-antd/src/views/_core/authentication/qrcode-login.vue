@@ -80,10 +80,15 @@ onMounted(async () => {
 
 <template>
   <div class="flex w-full flex-col items-center">
-    <a-spin v-if="loading" size="large" />
+    <a-spin v-if="loading" size="large" style="margin: 4rem 0" />
 
     <template v-else-if="error">
-      <a-result class="p-0" status="warning" :sub-title="error">
+      <a-result
+        class="p-0"
+        status="warning"
+        :sub-title="error"
+        style="padding: 0"
+      >
         <template #extra>
           <a-button type="primary" @click="loadQR">重试</a-button>
           <a-button @click="router.push({ path: '/auth/login' })">

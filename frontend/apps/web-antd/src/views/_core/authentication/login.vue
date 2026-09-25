@@ -100,9 +100,14 @@ async function adminLogin() {
 
     <!-- 扫码视图 -->
     <template v-if="!showAdmin">
-      <a-spin v-if="qrLoading" size="large" />
+      <a-spin v-if="qrLoading" size="large" style="margin: 3.5rem 0" />
       <template v-else-if="qrError">
-        <a-result class="p-0" status="warning" :sub-title="qrError">
+        <a-result
+          class="p-0"
+          status="warning"
+          :sub-title="qrError"
+          style="padding: 0"
+        >
           <template #extra>
             <a-button type="primary" @click="loadQR">重试</a-button>
             <a-button @click="showAdmin = true">超管登录</a-button>
@@ -132,7 +137,7 @@ async function adminLogin() {
 
     <!-- 超管账密视图 -->
     <template v-else>
-      <a-form layout="vertical" @submit.prevent>
+      <a-form layout="vertical" @submit.prevent style="margin-top: 1rem">
         <a-form-item label="登录账号" required>
           <a-input
             v-model:value="form.username"

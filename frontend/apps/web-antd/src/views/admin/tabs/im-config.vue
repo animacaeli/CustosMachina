@@ -117,7 +117,7 @@ async function save() {
 <template>
   <div>
     <a-card :loading="loading" title="IM 扫码登录">
-      <a-alert show-icon type="info">
+      <a-alert show-icon type="info" style="margin-bottom: 1rem">
         <template #message>
           同时只启用一家；扫码回调地址需公网 HTTPS（详见部署文档）。当前：
           <a-tag v-if="currentStatus?.enabled" color="green">已启用</a-tag>
@@ -134,7 +134,7 @@ async function save() {
         </a-radio-button>
       </a-radio-group>
 
-      <a-form class="max-w-[480px]" layout="vertical">
+      <a-form style="max-width: 480px" layout="vertical">
         <a-form-item v-for="f in fields" :key="f.key" :label="f.label" required>
           <a-input-password v-if="f.secret" v-model:value="form[f.key]" />
           <a-input v-else v-model:value="form[f.key]" />

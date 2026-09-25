@@ -119,7 +119,7 @@ async function saveOpsGroup() {
 
 <template>
   <div>
-    <a-alert show-icon type="info">
+    <a-alert show-icon type="info" style="margin-bottom: 1rem">
       <template #message>
         登记时显式选择用途：生产类（正式 /
         灰度环境可选）或测试类（测试环境可选）。 支持企微 / 钉钉 / 飞书群机器人

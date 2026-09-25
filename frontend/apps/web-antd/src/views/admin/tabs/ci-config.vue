@@ -136,7 +136,7 @@ onMounted(async () => {
 
 <template>
   <div>
-    <a-form layout="vertical" class="max-w-2xl">
+    <a-form layout="vertical" class="max-w-2xl" style="padding-top: 0.5rem">
       <a-divider orientation="left" plain>gitea 全局配置</a-divider>
       <a-form-item
         label="gitea 地址"
@@ -217,7 +217,7 @@ onMounted(async () => {
       :title="editingId ? '编辑仓库' : '登记仓库'"
       @ok="submitReg"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="名称" required>
           <a-input v-model:value="regForm.name" placeholder="aliyun-hz" />
         </a-form-item>
