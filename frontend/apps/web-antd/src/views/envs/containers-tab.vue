@@ -17,15 +17,16 @@ import { getServerListApi } from '#/api/resources/server';
 
 defineOptions({ name: 'ProjectContainersTab' });
 
-const props = withDefaults(
-  defineProps<{ defaultEnv?: 'canary' | 'prod' | 'test'; projectId: number }>(),
-  { defaultEnv: 'prod' },
-);
+const props = defineProps<{
+  env: 'canary' | 'prod' | 'test';
+  projectId: number;
+}>();
 
 const project = ref<null | Project>(null);
 const targets = ref<EnvTarget[]>([]);
 const servers = ref<ManagedServer[]>([]);
-const env = ref<'canary' | 'prod' | 'test'>(props.defaultEnv);
+// 环境由打开方决定（在哪个环境页进入详情就只看哪个环境），不提供切换
+const env = computed(() => props.env);
 const loading = ref(false);
 const containers = ref<ProjectContainer[]>([]);
 
@@ -90,11 +91,6 @@ async function init() {
   project.value = detail.project;
   targets.value = detail.targets;
   servers.value = ss;
-  if (!targets.value.some((t) => t.envType === env.value)) {
-    env.value =
-      (targets.value[0]?.envType as 'canary' | 'prod' | 'test' | undefined) ??
-      'prod';
-  }
   await load();
 }
 
@@ -161,12 +157,6 @@ async function doScale() {
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <span class="text-sm">环境：</span>
-      <a-radio-group v-model:value="env" button-style="solid" size="small">
-        <a-radio-button value="prod">正式</a-radio-button>
-        <a-radio-button value="canary">灰度</a-radio-button>
-        <a-radio-button value="test">测试</a-radio-button>
-      </a-radio-group>
       <span v-if="targetServer" class="text-muted-foreground text-xs">
         部署目标：{{ targetServer.name }}（{{ targetServer.host }}）· 前缀
         {{ deployPrefix }}
@@ -251,7 +241,7 @@ async function doScale() {
       :title="`调整 ${scaleForm.service} 实例数`"
       @ok="doScale"
     >
-      <a-form layout="vertical" class="pt-2">
+      <a-form layout="vertical">
         <a-form-item
           label="实例数（最少 1）"
           extra="compose 服务须无固定容器名 / 端口绑定"

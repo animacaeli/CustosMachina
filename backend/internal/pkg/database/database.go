@@ -4,8 +4,10 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -35,8 +37,15 @@ func Open(cfg *config.Database, models []any) (*gorm.DB, error) {
 		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.Driver)
 	}
 
+	// 记录未找到是正常业务分支，不落日志；慢查询与真实错误仍告警
+	gl := logger.New(log.New(os.Stderr, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             200 * time.Millisecond,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		Colorful:                  true,
+	})
 	db, err := gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: gl,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)

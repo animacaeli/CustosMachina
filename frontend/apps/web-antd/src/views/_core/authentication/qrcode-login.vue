@@ -80,7 +80,7 @@ onMounted(async () => {
 
 <template>
   <div class="flex w-full flex-col items-center">
-    <a-spin v-if="loading" size="large" class="my-16" />
+    <a-spin v-if="loading" size="large" />
 
     <template v-else-if="error">
       <a-result class="p-0" status="warning" :sub-title="error">
@@ -105,7 +105,6 @@ onMounted(async () => {
       </div>
       <a-alert
         v-if="isMock"
-        class="mt-3 max-w-[320px]"
         message="本地联调（mock 提供商）"
         type="info"
         show-icon
@@ -114,13 +113,10 @@ onMounted(async () => {
           <a :href="qrText" class="break-all text-xs">点此模拟扫码确认登录</a>
         </template>
       </a-alert>
-      <a-button class="mt-3" size="small" type="link" @click="loadQR">
-        刷新二维码
-      </a-button>
+      <a-button size="small" type="link" @click="loadQR"> 刷新二维码 </a-button>
     </template>
 
     <a-button
-      class="mt-4"
       size="small"
       type="link"
       @click="router.push({ path: '/auth/login' })"

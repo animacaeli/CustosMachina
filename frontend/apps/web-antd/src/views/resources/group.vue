@@ -128,7 +128,7 @@ async function onDelete(g: ServerGroup) {
       :title="editingId ? `编辑分组：${form.name}` : '新增分组'"
       @ok="submitForm"
     >
-      <a-form layout="vertical" class="pt-2">
+      <a-form layout="vertical">
         <a-form-item label="名称" required>
           <a-input v-model:value="form.name" placeholder="如：生产" />
         </a-form-item>

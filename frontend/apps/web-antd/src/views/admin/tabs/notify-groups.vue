@@ -54,7 +54,12 @@ const columns = [
 
 const formOpen = ref(false);
 const editingId = ref<null | number>(null);
-const form = reactive<{ name: string; scope: 'dev' | 'prod'; webhook: string; remark: string }>({ name: '', scope: 'prod', webhook: '', remark: '' });
+const form = reactive<{
+  name: string;
+  scope: 'dev' | 'prod';
+  webhook: string;
+  remark: string;
+}>({ name: '', scope: 'prod', webhook: '', remark: '' });
 
 function openCreate() {
   editingId.value = null;
@@ -114,7 +119,7 @@ async function saveOpsGroup() {
 
 <template>
   <div>
-    <a-alert class="mb-4" show-icon type="info">
+    <a-alert show-icon type="info">
       <template #message>
         登记时显式选择用途：生产类（正式 /
         灰度环境可选）或测试类（测试环境可选）。 支持企微 / 钉钉 / 飞书群机器人
@@ -186,7 +191,7 @@ async function saveOpsGroup() {
       :title="editingId ? '编辑通知群' : '登记群机器人'"
       @ok="submitForm"
     >
-      <a-form layout="vertical" class="pt-2">
+      <a-form layout="vertical">
         <a-form-item label="群名称" required>
           <a-input v-model:value="form.name" placeholder="运维值班群" />
         </a-form-item>

@@ -119,7 +119,7 @@ const EVENT_TAG: Record<string, { color: string; text: string }> = {
             :color="EVENT_TAG[e.type]?.color ?? 'blue'"
           >
             {{ new Date(e.createdAt).toLocaleString() }}
-            <a-tag :color="EVENT_TAG[e.type]?.color ?? 'default'" class="ml-1">
+            <a-tag :color="EVENT_TAG[e.type]?.color ?? 'default'">
               {{ EVENT_TAG[e.type]?.text ?? e.type }}
             </a-tag>
             <div class="text-xs text-gray-500">{{ e.message }}</div>

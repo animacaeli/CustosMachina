@@ -28,7 +28,8 @@ type Options struct {
 func Init(o Options) io.Writer {
 	lvl := parseLevel(o.Level)
 
-	console := zapcore.NewConsoleEncoder(zap.NewDevelopmentEncoderConfig())
+	// 统一 JSON 格式（控制台与文件一致），便于采集与检索
+	console := zapcore.NewJSONEncoder(productionEncoderConfig())
 	cores := []zapcore.Core{zapcore.NewCore(console, zapcore.Lock(os.Stderr), lvl)}
 
 	var fileWriter io.Writer = io.Discard
@@ -41,8 +42,7 @@ func Init(o Options) io.Writer {
 			MaxAge:     orDefault(o.MaxAge, 14),
 			Compress:   true,
 		}
-		// 文件走 JSON，便于后续接入日志采集；控制台保持人类可读。
-		jsonEnc := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+		jsonEnc := zapcore.NewJSONEncoder(productionEncoderConfig())
 		cores = append(cores, zapcore.NewCore(jsonEnc, zapcore.AddSync(lj), lvl))
 		fileWriter = lj
 	}
@@ -72,6 +72,14 @@ func Warnf(format string, args ...any)  { L().Warnf(format, args...) }
 func Errorf(format string, args ...any) { L().Errorf(format, args...) }
 func Error(args ...any)                 { L().Error(args...) }
 func Fatalf(format string, args ...any) { L().Fatalf(format, args...) }
+
+// productionEncoderConfig 生产编码配置 + ISO8601 时间（默认 epoch 秒不可读）。
+func productionEncoderConfig() zapcore.EncoderConfig {
+	cfg := zap.NewProductionEncoderConfig()
+	cfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	cfg.EncodeLevel = zapcore.CapitalLevelEncoder
+	return cfg
+}
 
 func parseLevel(s string) zapcore.Level {
 	switch s {

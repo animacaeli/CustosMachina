@@ -20,11 +20,14 @@ import ContainersTab from './containers-tab.vue';
 
 defineOptions({ name: 'ProjectDetailDrawer' });
 
-const props = defineProps<{
-  env?: 'canary' | 'prod' | 'test';
-  open: boolean;
-  projectId: number | undefined;
-}>();
+const props = withDefaults(
+  defineProps<{
+    env?: 'canary' | 'prod' | 'test';
+    open: boolean;
+    projectId: number | undefined;
+  }>(),
+  { env: 'prod' },
+);
 
 const emit = defineEmits<{ 'update:open': [boolean]; changed: [] }>();
 
@@ -67,7 +70,6 @@ const config = reactive({
   ciToken: '',
   composePath: '',
   defaultBranch: 'main',
-  notifyCanaryGroupId: undefined as number | undefined,
   notifyOnSuccess: false,
   notifyProdGroupId: undefined as number | undefined,
   notifyTestGroupId: undefined as number | undefined,
@@ -85,8 +87,8 @@ function fillConfig(p: Project) {
   config.composePath = p.composePath;
   config.defaultBranch = p.defaultBranch;
   config.ciToken = '';
-  config.notifyProdGroupId = p.notifyProdGroupId ?? undefined;
-  config.notifyCanaryGroupId = p.notifyCanaryGroupId ?? undefined;
+  config.notifyProdGroupId =
+    p.notifyProdGroupId ?? p.notifyCanaryGroupId ?? undefined;
   config.notifyTestGroupId = p.notifyTestGroupId ?? undefined;
   config.notifyOnSuccess = p.notifyOnSuccess;
   config.testSlotCount = p.testSlotCount;
@@ -110,7 +112,6 @@ async function saveConfig() {
       composePath: config.composePath,
       defaultBranch: config.defaultBranch,
       name: project.value.name,
-      notifyCanaryGroupId: config.notifyCanaryGroupId ?? null,
       notifyOnSuccess: config.notifyOnSuccess,
       notifyProdGroupId: config.notifyProdGroupId ?? null,
       notifyTestGroupId: config.notifyTestGroupId ?? null,
@@ -211,7 +212,10 @@ function close() {
             </a-form-item>
 
             <a-divider orientation="left" plain>通知</a-divider>
-            <a-form-item label="正式环境通知群（生产类）">
+            <a-form-item
+              label="生产环境通知群"
+              extra="正式与灰度共用同一通知群（本质是同一个生产环境）"
+            >
               <a-select
                 v-model:value="config.notifyProdGroupId"
                 :options="
@@ -219,16 +223,7 @@ function close() {
                 "
                 allow-clear
                 placeholder="不通知"
-              />
-            </a-form-item>
-            <a-form-item label="灰度环境通知群（生产类）">
-              <a-select
-                v-model:value="config.notifyCanaryGroupId"
-                :options="
-                  prodGroups.map((g) => ({ label: g.name, value: g.id }))
-                "
-                allow-clear
-                placeholder="不通知"
+                style="width: 320px"
               />
             </a-form-item>
             <a-form-item label="测试环境通知群（测试类）">
@@ -283,11 +278,7 @@ function close() {
         </a-tab-pane>
 
         <a-tab-pane key="containers" tab="容器 / Pod">
-          <ContainersTab
-            v-if="projectId"
-            :default-env="env"
-            :project-id="projectId"
-          />
+          <ContainersTab v-if="projectId" :env="env" :project-id="projectId" />
         </a-tab-pane>
       </a-tabs>
     </a-spin>

@@ -499,7 +499,7 @@ async function onDelete(id: number, name: string) {
         <a-button :loading="testingConn" @click="testConn">测试连通</a-button>
         <a-button type="primary" @click="submitForm">保存</a-button>
       </template>
-      <a-form layout="vertical" class="pt-2">
+      <a-form layout="vertical">
         <div class="grid grid-cols-2 gap-x-4">
           <a-form-item label="名称" required>
             <a-input v-model:value="form.name" placeholder="如：web-1" />

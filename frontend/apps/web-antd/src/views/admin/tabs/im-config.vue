@@ -117,7 +117,7 @@ async function save() {
 <template>
   <div>
     <a-card :loading="loading" title="IM 扫码登录">
-      <a-alert class="mb-4" show-icon type="info">
+      <a-alert show-icon type="info">
         <template #message>
           同时只启用一家；扫码回调地址需公网 HTTPS（详见部署文档）。当前：
           <a-tag v-if="currentStatus?.enabled" color="green">已启用</a-tag>
@@ -127,7 +127,6 @@ async function save() {
 
       <a-radio-group
         :value="provider"
-        class="mb-4"
         @change="(e: any) => switchProvider(e.target.value)"
       >
         <a-radio-button v-for="p in PROVIDERS" :key="p.key" :value="p.key">

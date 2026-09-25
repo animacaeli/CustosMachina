@@ -88,8 +88,9 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	p := Project{
 		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
 		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"),
-		NotifyProdGroupID: in.NotifyProdGroupID, NotifyCanaryGroupID: in.NotifyCanaryGroupID,
-		NotifyTestGroupID: in.NotifyTestGroupID, NotifyOnSuccess: onSuccess,
+		NotifyProdGroupID:   in.NotifyProdGroupID,
+		NotifyCanaryGroupID: in.NotifyProdGroupID, // 灰度通知群恒等于正式（不分离）
+		NotifyTestGroupID:   in.NotifyTestGroupID, NotifyOnSuccess: onSuccess,
 		TestSlotCount: defaultInt(in.TestSlotCount, 3), TrafficCap: defaultInt(in.TrafficCap, 50),
 		SlotGraceDays: defaultInt(in.SlotGraceDays, 3),
 	}
@@ -124,9 +125,8 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 	if in.NotifyProdGroupID != nil {
 		p.NotifyProdGroupID = in.NotifyProdGroupID
 	}
-	if in.NotifyCanaryGroupID != nil {
-		p.NotifyCanaryGroupID = in.NotifyCanaryGroupID
-	}
+	// 2026-09-26 用户定案：正式与灰度本质同一生产环境，通知群不分离——灰度恒等于正式
+	p.NotifyCanaryGroupID = p.NotifyProdGroupID
 	if in.NotifyTestGroupID != nil {
 		p.NotifyTestGroupID = in.NotifyTestGroupID
 	}

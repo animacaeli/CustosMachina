@@ -217,7 +217,7 @@ onMounted(async () => {
       :title="editingId ? '编辑仓库' : '登记仓库'"
       @ok="submitReg"
     >
-      <a-form layout="vertical" class="pt-2">
+      <a-form layout="vertical">
         <a-form-item label="名称" required>
           <a-input v-model:value="regForm.name" placeholder="aliyun-hz" />
         </a-form-item>

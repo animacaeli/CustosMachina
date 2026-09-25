@@ -100,7 +100,7 @@ async function adminLogin() {
 
     <!-- 扫码视图 -->
     <template v-if="!showAdmin">
-      <a-spin v-if="qrLoading" class="my-14" size="large" />
+      <a-spin v-if="qrLoading" size="large" />
       <template v-else-if="qrError">
         <a-result class="p-0" status="warning" :sub-title="qrError">
           <template #extra>
@@ -116,23 +116,23 @@ async function adminLogin() {
           alt="登录二维码"
           class="rounded border p-2"
         />
-        <a-alert v-if="isMock" class="mt-3 w-full" show-icon type="info">
+        <a-alert v-if="isMock" show-icon type="info">
           <template #message>
             本地联调（mock 提供商）：
             <a :href="qrText" class="text-xs">点此模拟扫码确认</a>
           </template>
         </a-alert>
-        <a-button class="mt-3" size="small" type="link" @click="loadQR">
+        <a-button size="small" type="link" @click="loadQR">
           刷新二维码
         </a-button>
       </template>
 
-      <a-button class="mt-6" @click="showAdmin = true">超管登录</a-button>
+      <a-button @click="showAdmin = true">超管登录</a-button>
     </template>
 
     <!-- 超管账密视图 -->
     <template v-else>
-      <a-form class="mt-4 w-full" layout="vertical" @submit.prevent>
+      <a-form layout="vertical" @submit.prevent>
         <a-form-item label="登录账号" required>
           <a-input
             v-model:value="form.username"
@@ -155,12 +155,7 @@ async function adminLogin() {
           登 录
         </a-button>
       </a-form>
-      <a-button
-        class="mt-4"
-        size="small"
-        type="link"
-        @click="showAdmin = false"
-      >
+      <a-button size="small" type="link" @click="showAdmin = false">
         ← 返回扫码登录
       </a-button>
     </template>
