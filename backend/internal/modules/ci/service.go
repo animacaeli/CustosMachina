@@ -357,7 +357,10 @@ func (s *Service) PollPending(ctx context.Context) error {
 		return err
 	}
 	for _, b := range pendings {
-		if b.SHA == "" {
+		// SHA 无效（手动重放/异常 webhook）——不可能观察到流水线，直接失败
+		if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
+			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
+				Update("status", BuildFailed)
 			continue
 		}
 		var proj struct {
@@ -378,6 +381,14 @@ func (s *Service) PollPending(ctx context.Context) error {
 		}
 		st, err := client.commitStatus(ctx, proj.RepoPath, b.SHA)
 		if err != nil {
+			// 提交在 gitea 上不存在（假 SHA/仓库改写）——永久错误，终止轮询标失败；
+			// 其余（网络等瞬时错误）保留 pending 下轮再试
+			if strings.Contains(err.Error(), "404") {
+				s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
+					Update("status", BuildFailed)
+				logger.Warnf("[ci] 构建 %d 的提交在 gitea 不存在，标记失败", b.ID)
+				continue
+			}
 			logger.Warnf("[ci] 构建 %d 状态轮询失败: %v", b.ID, err)
 			continue
 		}

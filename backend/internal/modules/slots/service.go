@@ -13,6 +13,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	releasemod "github.com/custos-machina/backend/internal/modules/release"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -259,6 +260,19 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 	}
 	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
 		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)
+	}
+	// 同步落一条部署记录（测试环境发布列表可见、可重新部署/看 CD 日志）
+	rel := releasemod.Release{
+		ProjectID: p.ID, EnvType: "test", Tag: tag,
+		ServerID: serverID, Runtime: "compose",
+		ReleaseBy: slot.OccupiedBy, Status: releasemod.ReleaseSuccess,
+		Output: truncate(output, 8000),
+	}
+	if status == ci.BuildFailed {
+		rel.Status = releasemod.ReleaseFailed
+	}
+	if err := s.db.WithContext(ctx).Create(&rel).Error; err != nil {
+		logger.Warnf("[slots] 落部署记录失败: %v", err)
 	}
 	verb := "部署成功"
 	if status == ci.BuildFailed {

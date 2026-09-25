@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { Build } from '#/api/ci';
 
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { getBuildLogApi, getBuildsApi } from '#/api/ci';
 
@@ -16,6 +16,13 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 const list = ref<Build[]>([]);
+
+// test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
+function splitTag(tag: string): { branch: string; slot: string } {
+  const at = tag.lastIndexOf('@');
+  if (at < 0) return { branch: tag, slot: '-' };
+  return { branch: tag.slice(0, at), slot: tag.slice(at + 1) };
+}
 const total = ref(0);
 const page = ref(1);
 const size = ref(10);
@@ -94,6 +101,25 @@ function fmtDuration(secs: number, status: string) {
   return status === 'running' ? '进行中' : '-';
 }
 
+const columns = computed(() => {
+  const base = [
+    { title: '构建人', dataIndex: 'builder', width: 100 },
+    { title: '时间', key: 'time', width: 170 },
+    { title: '耗时', key: 'duration', width: 90 },
+    { title: '状态', key: 'status', width: 90 },
+    { title: '操作', key: 'action', width: 90 },
+  ];
+  if (props.env === 'test') {
+    // test 的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
+    return [
+      { title: '标签', key: 'tagcol' },
+      { title: '槽位', key: 'slot', width: 80 },
+      ...base,
+    ];
+  }
+  return [{ title: '标签', dataIndex: 'tag' }, ...base];
+});
+
 // ---- 内嵌流水线日志 ----
 const logOpen = ref(false);
 const logText = ref('');
@@ -131,14 +157,7 @@ function fmtTime(v: string) {
       </template>
     </a-alert>
     <a-table
-      :columns="[
-        { title: '标签', dataIndex: 'tag' },
-        { title: '构建人', dataIndex: 'builder', width: 100 },
-        { title: '时间', key: 'time', width: 170 },
-        { title: '耗时', key: 'duration', width: 90 },
-        { title: '状态', key: 'status', width: 90 },
-        { title: '操作', key: 'action', width: 90 },
-      ]"
+      :columns="columns"
       :data-source="list"
       :loading="loading"
       :pagination="{
@@ -152,7 +171,13 @@ function fmtTime(v: string) {
       size="middle"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'time'">
+        <template v-if="column.key === 'tagcol'">
+          {{ splitTag(record.tag).branch }}
+        </template>
+        <template v-else-if="column.key === 'slot'">
+          {{ splitTag(record.tag).slot }}
+        </template>
+        <template v-else-if="column.key === 'time'">
           {{ fmtTime(record.createdAt) }}
         </template>
         <template v-else-if="column.key === 'duration'">
