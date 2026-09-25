@@ -165,13 +165,15 @@ async function onDelete(p: Project) {
         }}</span>
       </template>
       <template #extra>
-        <a-input-search
-          v-model:value="keyword"
-          placeholder="搜索项目名 / 仓库路径"
-          allow-clear
-          style="width: 240px"
-        />
-        <a-button type="primary" @click="openCreate">新增项目</a-button>
+        <div class="flex items-center gap-2">
+          <a-input-search
+            v-model:value="keyword"
+            placeholder="搜索项目名 / 仓库路径"
+            allow-clear
+            style="width: 240px"
+          />
+          <a-button type="primary" @click="openCreate">新增项目</a-button>
+        </div>
       </template>
       <a-table
         :columns="[
