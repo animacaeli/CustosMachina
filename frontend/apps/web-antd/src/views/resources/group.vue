@@ -75,7 +75,7 @@ async function onDelete(g: ServerGroup) {
 
 <template>
   <div class="p-4">
-    <a-card title="服务器分组">
+    <a-card title="主机分组">
       <template #extra>
         <a-button type="primary" @click="openCreate">新增分组</a-button>
       </template>

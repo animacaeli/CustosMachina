@@ -5,6 +5,7 @@ import type {
   ServerGroup,
   ServerPayload,
 } from '#/api/resources/server';
+import type { HostInfo } from '#/api/resources/server';
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
@@ -29,6 +30,46 @@ import Sparkline from './sparkline.vue';
 import TerminalModal from './terminal-modal.vue';
 
 defineOptions({ name: 'ResourcesServer' });
+
+function parseHost(raw: string | undefined): HostInfo | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as HostInfo;
+  } catch {
+    return null;
+  }
+}
+
+function gb(bytes: number): string {
+  return (bytes / 1024 ** 3).toFixed(0);
+}
+
+function hostSummary(raw: string): string {
+  const h = parseHost(raw);
+  if (!h) return '未探测';
+  const parts = [`${h.cpuCores}C`, `${gb(h.memBytes)}G`];
+  if (h.diskBytes > 0) {
+    parts.push(
+      `${gb(h.diskBytes)}G(${Math.round((h.diskUsed / h.diskBytes) * 100)}%)`,
+    );
+  }
+  if (h.netMbps > 0) {
+    parts.push(`${h.netMbps}Mbps`);
+  }
+  return parts.join(' · ');
+}
+
+function hostTooltip(raw: string): string {
+  const h = parseHost(raw);
+  if (!h) return '';
+  return [
+    `CPU：${h.cpuModel || '未知'}（${h.cpuCores} 核）`,
+    `内存：${gb(h.memBytes)} GB`,
+    `硬盘：${gb(h.diskUsed)} / ${gb(h.diskBytes)} GB（${Math.round((h.diskUsed / Math.max(h.diskBytes, 1)) * 100)}%）`,
+    `网卡协商速率：${h.netMbps > 0 ? `${h.netMbps} Mbps（公网带宽为云厂商属性，机器内测不到）` : '未知'}`,
+    `探测时间：${h.probedAt}`,
+  ].join('\n');
+}
 
 const userStore = useUserStore();
 // 终端仅 admin 以上（后端 casbin 兜底，这里只控制按钮可见性）
@@ -295,7 +336,7 @@ async function onDelete(id: number, name: string) {
 
 <template>
   <div class="p-4">
-    <a-card title="服务器">
+    <a-card title="主机管理">
       <template #extra>
         <div class="flex items-center gap-2">
           <a-select
@@ -359,6 +400,17 @@ async function onDelete(id: number, name: string) {
               />
             </div>
             <span v-else class="text-xs text-gray-400">采集中…</span>
+          </template>
+        </a-table-column>
+        <a-table-column title="配置" :width="200">
+          <template #default="{ record }">
+            <a-tooltip
+              v-if="parseHost(record.hostInfo)"
+              :title="hostTooltip(record.hostInfo)"
+            >
+              <span class="text-xs">{{ hostSummary(record.hostInfo) }}</span>
+            </a-tooltip>
+            <span v-else class="text-muted-foreground text-xs">未探测</span>
           </template>
         </a-table-column>
         <a-table-column title="状态" :width="90">

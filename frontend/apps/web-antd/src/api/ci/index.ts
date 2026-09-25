@@ -27,7 +27,7 @@ export interface Registry {
   id: number;
   name: string;
   remark: string;
-  type: 'aliyun' | 'gitea' | 'tencent';
+  type: 'aliyun' | 'gitea' | 'harbor' | 'tencent';
 }
 
 export async function getRegistriesApi() {

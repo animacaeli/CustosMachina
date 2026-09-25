@@ -12,6 +12,8 @@ export interface NotifyGroup {
 
 export interface SaveNotifyGroupInput {
   name: string;
+  /** 生产类 prod（正式/灰度可选） | 测试类 dev */
+  scope: 'dev' | 'prod';
   remark?: string;
   webhook?: string; // 留空保留
 }

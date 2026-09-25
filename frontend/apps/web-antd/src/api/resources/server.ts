@@ -1,10 +1,22 @@
 import { requestClient } from '#/api/request';
 
 /** 受管服务器（后端 resources.Server，凭据字段已剔除，仅 hasCredential） */
+export interface HostInfo {
+  cpuCores: number;
+  cpuModel: string;
+  diskBytes: number;
+  diskUsed: number;
+  memBytes: number;
+  netMbps: number;
+  probedAt: string;
+}
+
 export interface ManagedServer {
   authType: 'key' | 'password';
   agentVersion: string;
   createdAt: string;
+  /** 主机配置探测结果（JSON 字符串；环境探测时刷新，空 = 未探测） */
+  hostInfo: string;
   groupId: null | number;
   hasCredential: boolean;
   host: string;

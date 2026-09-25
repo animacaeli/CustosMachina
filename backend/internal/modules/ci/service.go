@@ -143,7 +143,7 @@ func (s *Service) clientFor(ctx context.Context, repoPath string) (*giteaClient,
 
 type SaveRegistryInput struct {
 	Name       string `json:"name" binding:"required,max=64"`
-	Type       string `json:"type" binding:"required,oneof=aliyun tencent gitea"`
+	Type       string `json:"type" binding:"required,oneof=aliyun tencent gitea harbor"`
 	Address    string `json:"address" binding:"required,max=255"`
 	Credential string `json:"credential" binding:"omitempty,max=512"` // "username:password"；留空保留
 	Remark     string `json:"remark" binding:"max=255"`

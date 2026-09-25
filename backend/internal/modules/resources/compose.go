@@ -2,9 +2,11 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,13 +20,14 @@ import (
 // 环境探测 + 安装引导 + compose 部署（M4）。
 
 type envProbe struct {
-	Distro        string `json:"distro"` // centos / ubuntu / debian / 其他原样
-	DistroLike    string `json:"distroLike"`
-	DockerVersion string `json:"dockerVersion"` // 空 = 未安装/不可用
-	ComposeVer    string `json:"composeVer"`    // compose 插件版本，空 = 无
-	DockerErr     string `json:"dockerErr"`
-	ComposeErr    string `json:"composeErr"`
-	Ready         bool   `json:"ready"` // docker + compose 都可用
+	Distro        string    `json:"distro"` // centos / ubuntu / debian / 其他原样
+	DistroLike    string    `json:"distroLike"`
+	DockerVersion string    `json:"dockerVersion"` // 空 = 未安装/不可用
+	ComposeVer    string    `json:"composeVer"`    // compose 插件版本，空 = 无
+	DockerErr     string    `json:"dockerErr"`
+	ComposeErr    string    `json:"composeErr"`
+	Ready         bool      `json:"ready"`          // docker + compose 都可用
+	Host          *HostInfo `json:"host,omitempty"` // 主机配置（采集即缓存）
 }
 
 var distroRe = regexp.MustCompile(`(?m)^ID=["']?([a-z0-9_.-]+)["']?`)
@@ -61,6 +64,14 @@ func (h *Handler) probeEnv(c *gin.Context) {
 		p.ComposeVer = strings.TrimSpace(out)
 	}
 	p.Ready = p.DockerVersion != "" && p.ComposeVer != ""
+	// 顺带采集主机配置并缓存（失败不影响探测结果）
+	if hi, herr := probeHostInfo(srv, cred); herr == nil {
+		if b, jerr := json.Marshal(hi); jerr == nil {
+			_ = h.svc.eventsDB.WithContext(c.Request.Context()).Model(&Server{}).
+				Where("id = ?", srv.ID).Update("host_info", string(b)).Error
+			p.Host = hi
+		}
+	}
 	httpx.OK(c, p)
 }
 
@@ -428,4 +439,58 @@ func (s *Service) DestroyCompose(ctx context.Context, serverID uint, name string
 	s.recordSimpleEvent(ctx, serverID, "compose_destroy",
 		fmt.Sprintf("销毁 compose 项目 %s：%s", name, map[bool]string{true: "成功", false: "失败"}[err == nil]))
 	return out, err
+}
+
+// HostInfo 主机配置（环境探测时采集缓存；公网带宽是云厂商属性，机器内拿不到，
+// 这里展示的是网卡协商速率）。
+type HostInfo struct {
+	CPUModel  string `json:"cpuModel"`
+	CPUCores  int    `json:"cpuCores"`
+	MemBytes  uint64 `json:"memBytes"`
+	DiskBytes uint64 `json:"diskBytes"`
+	DiskUsed  uint64 `json:"diskUsed"`
+	NetMbps   int    `json:"netMbps"`
+	ProbedAt  string `json:"probedAt"`
+}
+
+// hostProbeScript 一条 SSH 命令输出 KEY=VAL 行（兼容无 lscpu 的老系统，全用基础工具）。
+const hostProbeScript = `echo "cores=$(nproc)"; ` +
+	`echo "model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs echo)"; ` +
+	`echo "mem=$(free -b | awk 'NR==2{print $2}')"; ` +
+	`echo "disk=$(df -B1 / | awk 'NR==2{print $2" "$3}')"; ` +
+	`echo "net=$(for f in /sys/class/net/e*/speed; do cat "$f" 2>/dev/null; done | sort -n | tail -1)"`
+
+// probeHostInfo 采集主机配置并缓存到 servers.host_info。
+func probeHostInfo(srv *Server, cred *credential) (*HostInfo, error) {
+	out, err := sshRunOutput(srv, cred, hostProbeScript, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	info := &HostInfo{ProbedAt: time.Now().Format(time.RFC3339)}
+	for _, line := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "cores":
+			info.CPUCores, _ = strconv.Atoi(v)
+		case "model":
+			info.CPUModel = v
+		case "mem":
+			info.MemBytes, _ = strconv.ParseUint(v, 10, 64)
+		case "disk":
+			parts := strings.Fields(v)
+			if len(parts) == 2 {
+				info.DiskBytes, _ = strconv.ParseUint(parts[0], 10, 64)
+				info.DiskUsed, _ = strconv.ParseUint(parts[1], 10, 64)
+			}
+		case "net":
+			info.NetMbps, _ = strconv.Atoi(v)
+		}
+	}
+	if info.CPUCores == 0 && info.MemBytes == 0 {
+		return nil, fmt.Errorf("采集结果为空")
+	}
+	return info, nil
 }

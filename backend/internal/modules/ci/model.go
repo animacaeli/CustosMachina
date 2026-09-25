@@ -47,7 +47,7 @@ func (Build) TableName() string { return "builds" }
 type Registry struct {
 	ID         uint           `gorm:"primarykey" json:"id"`
 	Name       string         `gorm:"size:64;uniqueIndex;not null" json:"name"`
-	Type       string         `gorm:"size:16;not null" json:"type"` // aliyun | tencent | gitea
+	Type       string         `gorm:"size:16;not null" json:"type"` // aliyun | tencent | gitea | harbor
 	Address    string         `gorm:"size:255;not null" json:"address"`
 	Credential string         `gorm:"type:text" json:"-"` // 加密后的用户名:密码，绝不外发
 	Remark     string         `gorm:"size:255" json:"remark"`

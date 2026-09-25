@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"gorm.io/gorm"
 
@@ -32,39 +31,32 @@ func toOut(g Group) GroupOut {
 type Service struct {
 	db     *gorm.DB
 	cipher *crypto.Cipher
-	sender *wecomSender
+	sender *sender
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
-	return &Service{db: db, cipher: cipher, sender: newWecomSender()}
+	return &Service{db: db, cipher: cipher, sender: newSender()}
 }
 
 // ---- 群管理 ----
 
 type SaveGroupInput struct {
 	Name    string `json:"name" binding:"required,max=64"`
+	Scope   string `json:"scope" binding:"required,oneof=prod dev"`
 	Webhook string `json:"webhook" binding:"omitempty,max=1024"`
 	Remark  string `json:"remark" binding:"max=255"`
 }
 
-// scopeOfName 名称前缀推导用途；不合规直接报错（前缀是群登记的硬约束）。
-func scopeOfName(name string) (string, error) {
-	switch {
-	case strings.HasPrefix(name, "【P】"):
-		return ScopeProd, nil
-	case strings.HasPrefix(name, "【dev】"):
-		return ScopeDev, nil
-	default:
-		return "", fmt.Errorf("群名称必须以【P】（生产类）或【dev】（测试类）开头")
-	}
+// validScope 用途显式选择（2026-09-24 审核：取消名称前缀约束，登记时直接选用途）。
+func validScope(scope string) bool {
+	return scope == ScopeProd || scope == ScopeDev
 }
 
 func (s *Service) Create(ctx context.Context, in SaveGroupInput) (*GroupOut, error) {
-	scope, err := scopeOfName(in.Name)
-	if err != nil {
-		return nil, err
+	if !validScope(in.Scope) {
+		return nil, fmt.Errorf("用途须为 prod 或 dev")
 	}
-	g := Group{Name: in.Name, Scope: scope, Remark: in.Remark}
+	g := Group{Name: in.Name, Scope: in.Scope, Remark: in.Remark}
 	if in.Webhook != "" {
 		enc, err := s.encryptWebhook(in.Webhook)
 		if err != nil {
@@ -84,11 +76,7 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveGroupInput) (*Grou
 	if err := s.db.WithContext(ctx).First(&g, id).Error; err != nil {
 		return nil, ErrNotFound
 	}
-	scope, err := scopeOfName(in.Name)
-	if err != nil {
-		return nil, err
-	}
-	g.Name, g.Scope, g.Remark = in.Name, scope, in.Remark
+	g.Name, g.Scope, g.Remark = in.Name, in.Scope, in.Remark
 	if in.Webhook != "" { // 留空保留原 webhook（与服务器凭据同语义）
 		enc, err := s.encryptWebhook(in.Webhook)
 		if err != nil {
@@ -154,11 +142,7 @@ func (s *Service) Send(ctx context.Context, group *Group, title, content string)
 		s.record(ctx, group.ID, title, content, "failed", "群未配置 webhook")
 		return fmt.Errorf("群 %q 未配置 webhook", group.Name)
 	}
-	text := "**" + title + "**\n" + content
-	if len(text) > 4000 {
-		text = text[:4000]
-	}
-	err := s.sender.sendMarkdown(ctx, group.ID, webhook, text)
+	err := s.sender.Send(ctx, group.ID, webhook, title, content)
 	s.record(ctx, group.ID, title, content, okOr(err), errString(err))
 	return err
 }
@@ -220,8 +204,10 @@ func (s *Service) encryptWebhook(webhook string) (string, error) {
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置，无法加密 webhook")
 	}
-	if !strings.HasPrefix(webhook, "https://qyapi.weixin.qq.com/cgi-bin/webhook/send") {
-		return "", errors.New("webhook 必须是企微群机器人地址（qyapi.weixin.qq.com/cgi-bin/webhook/send...）")
+	switch detectProvider(webhook) {
+	case provWecom, provDingtalk, provFeishu:
+	default:
+		return "", errors.New("webhook 须为企微 / 钉钉 / 飞书群机器人地址")
 	}
 	return s.cipher.Encrypt(webhook)
 }

@@ -30,28 +30,24 @@ type identitySettingTable struct {
 
 func (identitySettingTable) TableName() string { return "platform_settings" }
 
-func TestScopeOfName(t *testing.T) {
-	cases := []struct {
-		name  string
-		scope string
-		ok    bool
-	}{
-		{"【P】运维值班群", ScopeProd, true},
-		{"【dev】测试通知群", ScopeDev, true},
-		{"P 运维群", "", false},
-		{"【p】小写前缀", "", false},
-		{"普通群", "", false},
+func TestValidScope(t *testing.T) {
+	for scope, ok := range map[string]bool{ScopeProd: true, ScopeDev: true, "other": false, "": false} {
+		if got := validScope(scope); got != ok {
+			t.Errorf("validScope(%q) = %v, want %v", scope, got, ok)
+		}
 	}
-	for _, c := range cases {
-		got, err := scopeOfName(c.name)
-		if c.ok && err != nil {
-			t.Errorf("%q 应合法: %v", c.name, err)
-		}
-		if !c.ok && err == nil {
-			t.Errorf("%q 应被拒绝", c.name)
-		}
-		if c.ok && got != c.scope {
-			t.Errorf("%q scope = %q, want %q", c.name, got, c.scope)
+}
+
+func TestDetectProvider(t *testing.T) {
+	cases := map[string]provider{
+		"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x": provWecom,
+		"https://oapi.dingtalk.com/robot/send?access_token=x":    provDingtalk,
+		"https://open.feishu.cn/open-apis/bot/v2/hook/x":         provFeishu,
+		"https://example.com/hook":                               provUnknown,
+	}
+	for url, want := range cases {
+		if got := detectProvider(url); got != want {
+			t.Errorf("detectProvider(%q) = %v, want %v", url, got, want)
 		}
 	}
 }
@@ -60,11 +56,11 @@ func TestGroupCRUD_WebhookMasked(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil)
 
-	if _, err := svc.Create(t.Context(), SaveGroupInput{Name: "普通群", Webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x"}); err == nil {
-		t.Fatal("无前缀群名应被拒绝")
+	if _, err := svc.Create(t.Context(), SaveGroupInput{Name: "值班群", Scope: "bad"}); err == nil {
+		t.Fatal("非法 scope 应被拒绝")
 	}
 
-	g, err := svc.Create(t.Context(), SaveGroupInput{Name: "【P】值班群"})
+	g, err := svc.Create(t.Context(), SaveGroupInput{Name: "值班群", Scope: ScopeProd})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}
@@ -73,7 +69,7 @@ func TestGroupCRUD_WebhookMasked(t *testing.T) {
 	}
 
 	// 更新留空 webhook = 保留
-	if _, err := svc.Update(t.Context(), g.ID, SaveGroupInput{Name: "【P】值班群", Remark: "r"}); err != nil {
+	if _, err := svc.Update(t.Context(), g.ID, SaveGroupInput{Name: "值班群", Scope: ScopeProd, Remark: "r"}); err != nil {
 		t.Fatalf("更新失败: %v", err)
 	}
 
@@ -89,7 +85,7 @@ func TestGroupCRUD_WebhookMasked(t *testing.T) {
 func TestSend_NoWebhook(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil)
-	g, err := svc.Create(t.Context(), SaveGroupInput{Name: "【dev】测试群"})
+	g, err := svc.Create(t.Context(), SaveGroupInput{Name: "测试群", Scope: ScopeDev})
 	if err != nil {
 		t.Fatalf("创建失败: %v", err)
 	}
@@ -111,7 +107,7 @@ func TestSend_NoWebhook(t *testing.T) {
 // binding tag 回归：未知 tag 会 panic（第二阶段审核教训），新 input struct 必须过绑定测试。
 func TestSaveGroupInputBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, body := range []string{`{"name":"【P】群"}`, `{"name":"x","webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k","remark":"r"}`} {
+	for _, body := range []string{`{"name":"值班群","scope":"prod"}`, `{"name":"x","scope":"dev","webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k","remark":"r"}`} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest("PUT", "/", strings.NewReader(body))
 		c.Request.Header.Set("Content-Type", "application/json")

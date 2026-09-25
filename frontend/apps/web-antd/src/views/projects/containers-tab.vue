@@ -170,8 +170,8 @@ async function doScale() {
       </span>
       <span v-else class="text-xs text-orange-500">该环境未配置部署目标</span>
       <a-button :disabled="!targetServer" size="small" @click="load">
-刷新
-</a-button>
+        刷新
+      </a-button>
     </div>
 
     <a-table

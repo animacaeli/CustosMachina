@@ -54,11 +54,12 @@ const columns = [
 
 const formOpen = ref(false);
 const editingId = ref<null | number>(null);
-const form = reactive({ name: '', webhook: '', remark: '' });
+const form = reactive<{ name: string; scope: 'dev' | 'prod'; webhook: string; remark: string }>({ name: '', scope: 'prod', webhook: '', remark: '' });
 
 function openCreate() {
   editingId.value = null;
   form.name = '';
+  form.scope = 'prod';
   form.webhook = '';
   form.remark = '';
   formOpen.value = true;
@@ -67,6 +68,7 @@ function openCreate() {
 function openEdit(g: NotifyGroup) {
   editingId.value = g.id;
   form.name = g.name;
+  form.scope = g.scope;
   form.webhook = ''; // 留空保留
   form.remark = g.remark;
   formOpen.value = true;
@@ -114,8 +116,10 @@ async function saveOpsGroup() {
   <div>
     <a-alert class="mb-4" show-icon type="info">
       <template #message>
-        群名称前缀是硬约束：【P】开头 = 生产类（正式 / 灰度可选），【dev】开头 =
-        测试类（测试环境可选）。webhook 从企微群机器人配置页复制。
+        登记时显式选择用途：生产类（正式 /
+        灰度环境可选）或测试类（测试环境可选）。 支持企微 / 钉钉 / 飞书群机器人
+        webhook（按地址自动识别消息格式；钉钉加签机器人请把 sign 拼进 webhook
+        地址）。
       </template>
     </a-alert>
 
@@ -183,12 +187,21 @@ async function saveOpsGroup() {
       @ok="submitForm"
     >
       <a-form layout="vertical" class="pt-2">
-        <a-form-item label="群名称" required extra="必须以【P】或【dev】开头">
-          <a-input v-model:value="form.name" placeholder="【P】运维值班群" />
+        <a-form-item label="群名称" required>
+          <a-input v-model:value="form.name" placeholder="运维值班群" />
+        </a-form-item>
+        <a-form-item label="用途" required>
+          <a-select
+            v-model:value="form.scope"
+            :options="[
+              { label: '生产类（正式 / 灰度）', value: 'prod' },
+              { label: '测试类（测试环境）', value: 'dev' },
+            ]"
+          />
         </a-form-item>
         <a-form-item
           label="机器人 Webhook"
-          extra="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...；编辑时留空保留"
+          extra="企微 / 钉钉 / 飞书群机器人地址；编辑时留空保留"
         >
           <a-input-password v-model:value="form.webhook" />
         </a-form-item>

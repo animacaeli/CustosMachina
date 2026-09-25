@@ -20,7 +20,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           icon: 'lucide:server-cog',
           authority: ['superadmin', 'admin', 'ops', 'dev'],
-          title: '服务器',
+          title: '主机',
         },
       },
       {
@@ -30,7 +30,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           icon: 'lucide:folder-tree',
           authority: ['superadmin', 'admin', 'ops'],
-          title: '服务器分组',
+          title: '主机分组',
         },
       },
     ],

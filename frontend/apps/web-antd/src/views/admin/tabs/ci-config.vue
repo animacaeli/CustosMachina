@@ -68,6 +68,7 @@ const regForm = reactive({
 const typeLabels: Record<string, string> = {
   aliyun: '阿里云 ACR',
   gitea: 'gitea 内置',
+  harbor: '自建 Harbor',
   tencent: '腾讯云 TCR',
 };
 
@@ -169,8 +170,8 @@ onMounted(async () => {
         />
       </a-form-item>
       <a-button :loading="globalSaving" type="primary" @click="saveGlobal">
-保存
-</a-button>
+        保存
+      </a-button>
 
       <a-divider orientation="left" plain>镜像仓库</a-divider>
     </a-form>
@@ -202,8 +203,8 @@ onMounted(async () => {
       <a-table-column :width="150" key="action" title="操作">
         <template #default="{ record }">
           <a-button size="small" type="link" @click="openEdit(record)">
-编辑
-</a-button>
+            编辑
+          </a-button>
           <a-popconfirm title="确认删除该仓库？" @confirm="onDelete(record)">
             <a-button danger size="small" type="link">删除</a-button>
           </a-popconfirm>
@@ -227,6 +228,7 @@ onMounted(async () => {
               { label: 'gitea 内置', value: 'gitea' },
               { label: '阿里云 ACR', value: 'aliyun' },
               { label: '腾讯云 TCR', value: 'tencent' },
+              { label: '自建 Harbor', value: 'harbor' },
             ]"
           />
         </a-form-item>
