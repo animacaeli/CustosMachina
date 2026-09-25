@@ -36,13 +36,14 @@ type projectRow struct {
 	ComposePath         string
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
+	NotifyTestGroupID   *uint
 }
 
 func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
 	var p projectRow
 	if err := s.db.WithContext(ctx).
 		Table("projects").
-		Select("id, name, repo_path, compose_path, notify_prod_group_id, notify_canary_group_id").
+		Select("id, name, repo_path, compose_path, notify_prod_group_id, notify_canary_group_id, notify_test_group_id").
 		Where("id = ?", id).First(&p).Error; err != nil {
 		return nil, errors.New("项目不存在")
 	}
@@ -71,7 +72,7 @@ func (s *Service) envTarget(ctx context.Context, projectID uint, env string) (*E
 
 type ReleaseInput struct {
 	ProjectID uint   `json:"projectId" binding:"required"`
-	EnvType   string `json:"envType" binding:"required,oneof=prod canary"`
+	EnvType   string `json:"envType" binding:"required,oneof=prod canary test"`
 	Tag       string `json:"tag" binding:"required,max=128"`
 }
 
@@ -222,6 +223,8 @@ func (s *Service) notifyRelease(ctx context.Context, p *projectRow, rel *Release
 		groupID = p.NotifyProdGroupID
 	case "canary":
 		groupID = p.NotifyCanaryGroupID
+	case "test":
+		groupID = p.NotifyTestGroupID
 	}
 	if groupID == nil || s.notify == nil {
 		return
@@ -258,10 +261,14 @@ func normalizeName(name string) string {
 }
 
 func envLabel(env string) string {
-	if env == "prod" {
+	switch env {
+	case "prod":
 		return "正式"
+	case "test":
+		return "测试"
+	default:
+		return "灰度"
 	}
-	return "灰度"
 }
 
 func truncate(s string, n int) string {

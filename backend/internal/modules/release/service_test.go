@@ -29,6 +29,7 @@ type projectTbl struct {
 	ComposePath         string
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
+	NotifyTestGroupID   *uint
 }
 
 func (projectTbl) TableName() string { return "projects" }

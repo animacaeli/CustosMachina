@@ -34,19 +34,20 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 }
 
 type SaveProjectInput struct {
-	Name                string `json:"name" binding:"required,max=64"`
-	RepoURL             string `json:"repoUrl" binding:"required,url,max=255"`
-	RepoPath            string `json:"repoPath" binding:"required,max=255"`
-	CIToken             string `json:"ciToken" binding:"omitempty,max=512"` // 留空保留
-	ComposePath         string `json:"composePath" binding:"omitempty,max=255"`
-	DefaultBranch       string `json:"defaultBranch" binding:"omitempty,max=128"`
-	NotifyProdGroupID   *uint  `json:"notifyProdGroupId"`
-	NotifyCanaryGroupID *uint  `json:"notifyCanaryGroupId"`
-	NotifyTestGroupID   *uint  `json:"notifyTestGroupId"`
-	NotifyOnSuccess     bool   `json:"notifyOnSuccess"`
-	TestSlotCount       int    `json:"testSlotCount" binding:"omitempty,min=0,max=64"`
-	TrafficCap          int    `json:"trafficCap" binding:"omitempty,min=1,max=100"`
-	SlotGraceDays       int    `json:"slotGraceDays" binding:"omitempty,min=1,max=30"`
+	Name          string `json:"name" binding:"required,max=64"`
+	RepoURL       string `json:"repoUrl" binding:"required,url,max=255"`
+	RepoPath      string `json:"repoPath" binding:"required,max=255"`
+	CIToken       string `json:"ciToken" binding:"omitempty,max=512"` // 留空保留
+	ComposePath   string `json:"composePath" binding:"omitempty,max=255"`
+	DefaultBranch string `json:"defaultBranch" binding:"omitempty,max=128"`
+	// 指针语义：Create nil = 不设置（通知群）/默认 true（成功通知）；Update nil = 保留原值
+	NotifyProdGroupID   *uint `json:"notifyProdGroupId"`
+	NotifyCanaryGroupID *uint `json:"notifyCanaryGroupId"`
+	NotifyTestGroupID   *uint `json:"notifyTestGroupId"`
+	NotifyOnSuccess     *bool `json:"notifyOnSuccess"`
+	TestSlotCount       int   `json:"testSlotCount" binding:"omitempty,min=0,max=64"`
+	TrafficCap          int   `json:"trafficCap" binding:"omitempty,min=1,max=100"`
+	SlotGraceDays       int   `json:"slotGraceDays" binding:"omitempty,min=1,max=30"`
 }
 
 // validateNotifyGroups 校验环境→群用途匹配：prod/canary 只能绑【P】群，test 只能绑【dev】群。
@@ -80,11 +81,15 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	if err := s.validateNotifyGroups(in.NotifyProdGroupID, in.NotifyCanaryGroupID, in.NotifyTestGroupID); err != nil {
 		return nil, err
 	}
+	onSuccess := true // 默认成功也通知（2026-09-26 用户要求默认勾选）
+	if in.NotifyOnSuccess != nil {
+		onSuccess = *in.NotifyOnSuccess
+	}
 	p := Project{
 		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
 		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"),
 		NotifyProdGroupID: in.NotifyProdGroupID, NotifyCanaryGroupID: in.NotifyCanaryGroupID,
-		NotifyTestGroupID: in.NotifyTestGroupID, NotifyOnSuccess: in.NotifyOnSuccess,
+		NotifyTestGroupID: in.NotifyTestGroupID, NotifyOnSuccess: onSuccess,
 		TestSlotCount: defaultInt(in.TestSlotCount, 3), TrafficCap: defaultInt(in.TrafficCap, 50),
 		SlotGraceDays: defaultInt(in.SlotGraceDays, 3),
 	}
@@ -115,8 +120,19 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 	if in.DefaultBranch != "" {
 		p.DefaultBranch = in.DefaultBranch
 	}
-	p.NotifyProdGroupID, p.NotifyCanaryGroupID = in.NotifyProdGroupID, in.NotifyCanaryGroupID
-	p.NotifyTestGroupID, p.NotifyOnSuccess = in.NotifyTestGroupID, in.NotifyOnSuccess
+	// nil = 保留原值（部分更新不清空；显式传 null 会被 JSON 解为 nil，如需清空用前端全量提交约定外的专门接口）
+	if in.NotifyProdGroupID != nil {
+		p.NotifyProdGroupID = in.NotifyProdGroupID
+	}
+	if in.NotifyCanaryGroupID != nil {
+		p.NotifyCanaryGroupID = in.NotifyCanaryGroupID
+	}
+	if in.NotifyTestGroupID != nil {
+		p.NotifyTestGroupID = in.NotifyTestGroupID
+	}
+	if in.NotifyOnSuccess != nil {
+		p.NotifyOnSuccess = *in.NotifyOnSuccess
+	}
 	if in.TestSlotCount > 0 {
 		p.TestSlotCount = in.TestSlotCount
 	}

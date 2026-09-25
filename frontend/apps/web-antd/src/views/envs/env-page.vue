@@ -40,7 +40,7 @@ const envMeta: Record<'canary' | 'prod' | 'test', EnvMeta> = {
     title: '正式环境',
   },
   test: {
-    actions: ['build', 'slot'],
+    actions: ['build', 'release', 'slot'],
     desc: '全自动 CI/CD：占用槽位后 push 分支即自动重建测试环境',
     title: '测试环境',
   },
@@ -55,6 +55,17 @@ const actionLabel: Record<string, string> = {
 
 const loading = ref(false);
 const projects = ref<Project[]>([]);
+const keyword = ref('');
+
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase();
+  if (!kw) return projects.value;
+  return projects.value.filter(
+    (p) =>
+      p.name.toLowerCase().includes(kw) ||
+      p.repoPath.toLowerCase().includes(kw),
+  );
+});
 
 async function load() {
   loading.value = true;
@@ -154,16 +165,21 @@ async function onDelete(p: Project) {
         }}</span>
       </template>
       <template #extra>
+        <a-input-search
+          v-model:value="keyword"
+          placeholder="搜索项目名 / 仓库路径"
+          allow-clear
+          style="width: 240px"
+        />
         <a-button type="primary" @click="openCreate">新增项目</a-button>
       </template>
       <a-table
         :columns="[
           { title: '项目', key: 'name' },
-          { title: '默认分支', dataIndex: 'defaultBranch', width: 110 },
-          { title: '环境操作', key: 'envActions', width: 220 },
+          { title: '环境操作', key: 'envActions', width: 230 },
           { title: '管理', key: 'manage', width: 170 },
         ]"
-        :data-source="projects"
+        :data-source="filtered"
         :loading="loading"
         :pagination="false"
         row-key="id"
@@ -177,15 +193,17 @@ async function onDelete(p: Project) {
             </div>
           </template>
           <template v-else-if="column.key === 'envActions'">
-            <a-button
-              v-for="act in meta.actions"
-              :key="act"
-              :type="act === 'release' ? 'primary' : 'default'"
-              size="small"
-              @click="open(act, record)"
-            >
-              {{ actionLabel[act] }}
-            </a-button>
+            <div class="flex gap-2">
+              <a-button
+                v-for="act in meta.actions"
+                :key="act"
+                :type="act === 'release' ? 'primary' : 'default'"
+                size="small"
+                @click="open(act, record)"
+              >
+                {{ actionLabel[act] }}
+              </a-button>
+            </div>
           </template>
           <template v-else-if="column.key === 'manage'">
             <a-button size="small" type="link" @click="open('detail', record)">
@@ -207,6 +225,7 @@ async function onDelete(p: Project) {
 
     <!-- 项目管理（详情 = 配置/部署目标/容器） -->
     <ProjectDetailDrawer
+      :env="env"
       :open="openDrawer === 'detail'"
       :project-id="currentId"
       @changed="load"
@@ -221,7 +240,6 @@ async function onDelete(p: Project) {
       @close="openDrawer = ''"
     />
     <ReleaseDrawer
-      v-if="env !== 'test'"
       :env="env"
       :open="openDrawer === 'release'"
       :project-id="currentId"

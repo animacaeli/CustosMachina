@@ -21,6 +21,7 @@ import ContainersTab from './containers-tab.vue';
 defineOptions({ name: 'ProjectDetailDrawer' });
 
 const props = defineProps<{
+  env?: 'canary' | 'prod' | 'test';
   open: boolean;
   projectId: number | undefined;
 }>();
@@ -119,6 +120,15 @@ async function saveConfig() {
       testSlotCount: config.testSlotCount,
       trafficCap: config.trafficCap,
     });
+    if (deployServerId.value) {
+      await saveProjectTargetsApi(props.projectId, {
+        targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
+          envType,
+          runtime: 'compose' as const,
+          serverId: deployServerId.value!,
+        })),
+      });
+    }
     message.success('配置已保存');
     emit('changed');
   } finally {
@@ -126,51 +136,13 @@ async function saveConfig() {
   }
 }
 
-// ---- 部署目标 ----
-const envLabels: Record<string, string> = {
-  canary: '灰度',
-  prod: '正式',
-  test: '测试',
-};
-const targetRows = reactive(
-  (['prod', 'canary', 'test'] as const).map((envType) => ({
-    envType,
-    runtime: 'compose' as 'compose' | 'k3s',
-    serverId: undefined as number | undefined,
-  })),
-);
+// ---- 部署主机 ----
+// 部署的编排细节在流水线/compose 文件里；平台只需要知道部署到哪台主机（SSH 凭据）。
+// 三个环境通常同机（compose 期隔离域靠项目名前缀），UI 简化为一个下拉，保存时三环境同值。
+const deployServerId = ref<number | undefined>();
 
 function fillTargets(ts: EnvTarget[]) {
-  for (const row of targetRows) {
-    const hit = ts.find((t) => t.envType === row.envType);
-    row.serverId = hit?.serverId;
-    row.runtime = hit?.runtime ?? 'compose';
-  }
-}
-
-const targetsSaving = ref(false);
-async function saveTargets() {
-  if (!props.projectId) return;
-  const rows = targetRows
-    .filter((r) => r.serverId)
-    .map((r) => ({
-      envType: r.envType,
-      runtime: r.runtime,
-      serverId: r.serverId!,
-    }));
-  if (rows.length === 0) {
-    message.warning('至少配置一个环境的部署目标');
-    return;
-  }
-  targetsSaving.value = true;
-  try {
-    await saveProjectTargetsApi(props.projectId, { targets: rows });
-    message.success('部署目标已保存');
-    emit('changed');
-    await load();
-  } finally {
-    targetsSaving.value = false;
-  }
+  deployServerId.value = ts[0]?.serverId;
 }
 
 function close() {
@@ -193,6 +165,24 @@ function close() {
         <a-tab-pane key="config" tab="配置">
           <a-form layout="vertical" class="max-w-2xl">
             <a-divider orientation="left" plain>CI / 部署</a-divider>
+            <a-form-item
+              label="部署主机"
+              extra="正式 / 灰度 / 测试共用（隔离域靠项目名前缀区分）；编排细节在仓库的 compose 文件里"
+            >
+              <a-select
+                v-model:value="deployServerId"
+                :options="
+                  servers.map((s) => ({
+                    label: `${s.name}（${s.host}）`,
+                    value: s.id,
+                  }))
+                "
+                allow-clear
+                placeholder="未配置（发布/槽位不可用）"
+                show-search
+                style="width: 360px"
+              />
+            </a-form-item>
             <a-form-item
               label="部署描述文件路径"
               extra="compose 文件在仓库中的路径（发布时按标签 checkout 该文件）"
@@ -292,61 +282,12 @@ function close() {
           </a-form>
         </a-tab-pane>
 
-        <a-tab-pane key="targets" tab="部署目标">
-          <a-table
-            :data-source="targetRows"
-            :pagination="false"
-            row-key="envType"
-            size="middle"
-          >
-            <a-table-column :width="100" title="环境">
-              <template #default="{ record }">
-                {{ envLabels[record.envType] }}
-              </template>
-            </a-table-column>
-            <a-table-column title="目标主机">
-              <template #default="{ record }">
-                <a-select
-                  v-model:value="record.serverId"
-                  :options="
-                    servers.map((s) => ({
-                      label: `${s.name}（${s.host}）`,
-                      value: s.id,
-                    }))
-                  "
-                  allow-clear
-                  placeholder="未配置"
-                  show-search
-                  style="width: 100%"
-                />
-              </template>
-            </a-table-column>
-            <a-table-column :width="160" title="运行时">
-              <template #default="{ record }">
-                <a-select
-                  v-model:value="record.runtime"
-                  :options="[
-                    { label: 'docker-compose', value: 'compose' },
-                    { label: 'k3s（未开放）', value: 'k3s', disabled: true },
-                  ]"
-                  style="width: 100%"
-                />
-              </template>
-            </a-table-column>
-          </a-table>
-          <div class="mt-4">
-            <a-button
-              :loading="targetsSaving"
-              type="primary"
-              @click="saveTargets"
-            >
-              保存部署目标
-            </a-button>
-          </div>
-        </a-tab-pane>
-
         <a-tab-pane key="containers" tab="容器 / Pod">
-          <ContainersTab v-if="projectId" :project-id="projectId" />
+          <ContainersTab
+            v-if="projectId"
+            :default-env="env"
+            :project-id="projectId"
+          />
         </a-tab-pane>
       </a-tabs>
     </a-spin>

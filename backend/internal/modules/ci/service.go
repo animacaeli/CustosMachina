@@ -460,15 +460,17 @@ func (s *Service) RawClient(ctx context.Context, repoPath string) (*RawGitea, st
 
 // Branches 供前端表单（M5 槽位占用选分支）。
 func (s *Service) Branches(ctx context.Context, projectID uint) ([]string, error) {
-	var repoPath string
-	if err := s.db.Table("projects").Select("repo_path").Where("id = ?", projectID).First(&repoPath).Error; err != nil {
+	var row struct{ RepoPath string }
+	if err := s.db.Table("projects").Select("repo_path").Where("id = ?", projectID).First(&row).Error; err != nil {
 		return nil, ErrNotFound
 	}
-	client, err := s.clientFor(ctx, repoPath)
+	client, err := s.clientFor(ctx, row.RepoPath)
 	if err != nil {
-		return nil, err
+		// 未配置全局 CI 不阻断槽位等功能：返回空列表，前端降级为手输分支
+		logger.Warnf("[ci] 拉分支降级为空列表: %v", err)
+		return []string{}, nil
 	}
-	return client.branches(ctx, repoPath)
+	return client.branches(ctx, row.RepoPath)
 }
 
 func (s *Service) encrypt(v string) (string, error) {

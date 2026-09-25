@@ -17,12 +17,15 @@ import { getServerListApi } from '#/api/resources/server';
 
 defineOptions({ name: 'ProjectContainersTab' });
 
-const props = defineProps<{ projectId: number }>();
+const props = withDefaults(
+  defineProps<{ defaultEnv?: 'canary' | 'prod' | 'test'; projectId: number }>(),
+  { defaultEnv: 'prod' },
+);
 
 const project = ref<null | Project>(null);
 const targets = ref<EnvTarget[]>([]);
 const servers = ref<ManagedServer[]>([]);
-const env = ref<'canary' | 'prod' | 'test'>('prod');
+const env = ref<'canary' | 'prod' | 'test'>(props.defaultEnv);
 const loading = ref(false);
 const containers = ref<ProjectContainer[]>([]);
 

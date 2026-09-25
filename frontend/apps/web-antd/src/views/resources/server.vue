@@ -13,6 +13,7 @@ import { useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
+import { probeEnvApi } from '#/api/resources/containers';
 import {
   createServerApi,
   deleteServerApi,
@@ -139,6 +140,21 @@ function openMetrics(s: (typeof list.value)[number]) {
 }
 
 // --- Web 终端 ---
+// --- 主机配置探测（顺带刷新 docker/compose 环境） ---
+const probingId = ref<null | number>(null);
+async function probeHost(s: ManagedServer) {
+  probingId.value = s.id;
+  try {
+    await probeEnvApi(s.id);
+    await load();
+    message.success('探测完成，配置已更新');
+  } catch {
+    // 拦截器提示
+  } finally {
+    probingId.value = null;
+  }
+}
+
 const terminalOpen = ref(false);
 const terminalServer = ref<ManagedServer | null>(null);
 
@@ -428,10 +444,18 @@ async function onDelete(id: number, name: string) {
             {{ fmtTime(record.lastSeen) }}
           </template>
         </a-table-column>
-        <a-table-column title="操作" :width="300">
+        <a-table-column title="操作" :width="340">
           <template #default="{ record }">
             <a-button size="small" type="link" @click="openContainers(record)">
               容器
+            </a-button>
+            <a-button
+              size="small"
+              type="link"
+              :loading="probingId === record.id"
+              @click="probeHost(record)"
+            >
+              探测
             </a-button>
             <a-button
               v-if="canTerminal"
