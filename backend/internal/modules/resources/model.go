@@ -35,6 +35,7 @@ type Server struct {
 	Status       ServerStatus   `gorm:"size:16;default:unknown" json:"status"`
 	LastSeen     *time.Time     `json:"lastSeen"`
 	MetricSecs   int            `gorm:"not null;default:30" json:"metricSecs"` // 采集间隔，15/30/60
+	HostInfo     string         `gorm:"type:text" json:"hostInfo"`             // 主机配置探测结果（JSON，环境探测时刷新）
 	Remark       string         `gorm:"size:255" json:"remark"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`

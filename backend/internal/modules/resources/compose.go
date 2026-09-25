@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
 // 环境探测 + 安装引导 + compose 部署（M4）。
@@ -67,8 +68,10 @@ func (h *Handler) probeEnv(c *gin.Context) {
 	// 顺带采集主机配置并缓存（失败不影响探测结果）
 	if hi, herr := probeHostInfo(srv, cred); herr == nil {
 		if b, jerr := json.Marshal(hi); jerr == nil {
-			_ = h.svc.eventsDB.WithContext(c.Request.Context()).Model(&Server{}).
-				Where("id = ?", srv.ID).Update("host_info", string(b)).Error
+			if uerr := h.svc.eventsDB.WithContext(c.Request.Context()).Model(&Server{}).
+				Where("id = ?", srv.ID).Update("host_info", string(b)).Error; uerr != nil {
+				logger.Warnf("[resources] 主机配置落库失败 server=%d: %v", srv.ID, uerr)
+			}
 			p.Host = hi
 		}
 	}
