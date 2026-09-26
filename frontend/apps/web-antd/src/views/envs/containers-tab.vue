@@ -100,7 +100,8 @@ async function init() {
 }
 
 onMounted(init);
-watch([env, () => props.projectId], () => void load());
+// 换项目必须重拉项目详情（部署前缀/目标主机随之变化），否则会按旧项目过滤
+watch([env, () => props.projectId], () => void init());
 
 // ---- 日志查看（tail 模式，刷新按钮重拉；SSE 跟随后置） ----
 const logOpen = ref(false);

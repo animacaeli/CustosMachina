@@ -159,7 +159,7 @@ func (h *Handler) handleTerminal(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	client, err := DialSSH(srv.Host, srv.Port, cred)
+	client, err := DialSSH(srv.Host, srv.Port, cred, srv.ID)
 	if err != nil {
 		httpx.FailUpstream(c, fmt.Sprintf("SSH 连接失败: %v", err))
 		return

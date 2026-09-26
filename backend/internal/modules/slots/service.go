@@ -30,6 +30,9 @@ type Service struct {
 }
 
 func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service) *Service {
+	// 存量库迁移兜底：清理历史软删的占用行，避免 (project_id, slot_name)
+	// 唯一索引创建失败（占用行本就是临时状态，审计在事件表）
+	db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&Slot{})
 	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy}
 }
 
@@ -149,7 +152,9 @@ func (s *Service) Release(ctx context.Context, projectID uint, slotName string, 
 			return fmt.Errorf("销毁失败（可重试）：%s\n%v", out, derr)
 		}
 	}
-	if err := s.db.WithContext(ctx).Delete(&slot).Error; err != nil {
+	// 硬删：占用行是临时状态（审计已在 server_events/notify），且软删行会占用
+	// (project_id, slot_name) 唯一索引导致无法重新占用
+	if err := s.db.WithContext(ctx).Unscoped().Delete(&slot).Error; err != nil {
 		return err
 	}
 	s.notifySlot(ctx, p, &slot, fmt.Sprintf("槽位 %s 已由释放（分支 %s）", slotName, slot.Branch))

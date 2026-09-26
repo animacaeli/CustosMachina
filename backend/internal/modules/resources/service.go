@@ -38,7 +38,24 @@ type Service struct {
 }
 
 func NewService(servers *ServerRepository, groups *GroupRepository, db *gorm.DB, cipher *crypto.Cipher) *Service {
-	return &Service{servers: servers, groups: groups, eventsDB: db, cipher: cipher}
+	s := &Service{servers: servers, groups: groups, eventsDB: db, cipher: cipher}
+	hostKeys = s // 模块内单例（wire 只构造一个 Service），供包级 SSH 函数做 TOFU 校验
+	return s
+}
+
+// pinned / pin 实现 hostKeyStore（主机公钥持久化在 servers.host_key）。
+func (s *Service) pinned(serverID uint) (string, error) {
+	var row struct{ HostKey string }
+	if err := s.eventsDB.Table("servers").Select("host_key").
+		Where("id = ?", serverID).First(&row).Error; err != nil {
+		return "", err
+	}
+	return row.HostKey, nil
+}
+
+func (s *Service) pin(serverID uint, keyB64 string) error {
+	return s.eventsDB.Model(&Server{}).Where("id = ?", serverID).
+		Update("host_key", keyB64).Error
 }
 
 // ---- 服务器 ----

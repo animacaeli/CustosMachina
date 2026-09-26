@@ -23,7 +23,7 @@ const dockerSockPath = "/var/run/docker.sock"
 // 因此自定义拨号必须在 WithHost 之后用 WithDialContext 重新注入（否则会对
 // docker.local 做真实 DNS 解析，表现为容器接口超时/报 no such host）。
 func dockerClientFor(srv *Server, cred *credential) (*dc.Client, *ssh.Client, error) {
-	sshClient, err := DialSSH(srv.Host, srv.Port, cred)
+	sshClient, err := DialSSH(srv.Host, srv.Port, cred, srv.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("SSH 连接失败: %w", err)
 	}
@@ -55,7 +55,7 @@ func sshRunOutput(srv *Server, cred *credential, cmd string, timeout time.Durati
 
 // sshRunOutputWithStdin 执行命令并先把 stdin 内容写入（部署时上传 compose 文件）。
 func sshRunOutputWithStdin(srv *Server, cred *credential, cmd, stdin string, timeout time.Duration) (string, error) {
-	client, err := DialSSH(srv.Host, srv.Port, cred)
+	client, err := DialSSH(srv.Host, srv.Port, cred, srv.ID)
 	if err != nil {
 		return "", fmt.Errorf("SSH 连接失败: %w", err)
 	}

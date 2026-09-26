@@ -36,6 +36,7 @@ type Server struct {
 	LastSeen     *time.Time     `json:"lastSeen"`
 	MetricSecs   int            `gorm:"not null;default:30" json:"metricSecs"` // 采集间隔，15/30/60
 	HostInfo     string         `gorm:"type:text" json:"hostInfo"`             // 主机配置探测结果（JSON，环境探测时刷新）
+	HostKey      string         `gorm:"size:128" json:"-"`                     // 主机公钥（base64，TOFU 首连记录，绝不外发
 	Remark       string         `gorm:"size:255" json:"remark"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`

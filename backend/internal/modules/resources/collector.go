@@ -227,7 +227,7 @@ func (c *Collector) collectOne(ctx context.Context, srv Server) {
 		c.recordFailure(ctx, &srv, err)
 		return
 	}
-	client, err := DialSSH(srv.Host, srv.Port, cred)
+	client, err := DialSSH(srv.Host, srv.Port, cred, srv.ID)
 	if err != nil {
 		c.recordFailure(ctx, &srv, err)
 		return
