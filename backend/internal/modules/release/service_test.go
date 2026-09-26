@@ -69,7 +69,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestExecuteRequiresPassedBuild(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db))
+	svc := NewService(db, nil, nil, nil, realReader(db), nil)
 	db.Create(&projectTbl{ID: 1, Name: "Demo App", RepoPath: "org/demo", ComposePath: "deploy/c.yml"})
 
 	// 无构建记录
@@ -109,7 +109,7 @@ func TestNormalizeName(t *testing.T) {
 
 func TestPassedTags(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db))
+	svc := NewService(db, nil, nil, nil, realReader(db), nil)
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v1", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v2", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v3", Status: "failed"})

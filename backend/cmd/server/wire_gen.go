@@ -71,7 +71,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	projectsHandler := projects.NewHandler(projectsService)
 	ciService := ci.NewService(db, cipher, notifyService, projectsService)
 	ciHandler := ci.NewHandler(ciService)
-	releaseService := release.NewService(db, ciService, resourcesService, notifyService, projectsService)
+	releaseService := release.NewService(db, ciService, resourcesService, notifyService, projectsService, cipher)
 	releaseHandler := release.NewHandler(releaseService)
 	canaryService := canary.NewService(db, resourcesService, notifyService, projectsService)
 	canaryHandler := canary.NewHandler(canaryService)

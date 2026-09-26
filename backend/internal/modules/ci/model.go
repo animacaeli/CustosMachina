@@ -34,6 +34,7 @@ type Build struct {
 	Source       string         `gorm:"size:16;not null" json:"source"`
 	Status       string         `gorm:"size:16;not null;default=pending" json:"status"`
 	DurationSecs int            `json:"durationSecs"`                    // 终态时计算；running 期由前端用 started_at 差值显示
+	FailCount    int            `gorm:"not null;default:0" json:"-"`     // 防抖：连续 N 次非 success 才标 failed（commit status 在 job 切换间隙可能短暂回落）
 	LogURL       string         `gorm:"size:512" json:"logUrl"`          // gitea Actions 页面（外链兜底）
 	Notified     bool           `gorm:"not null;default:false" json:"-"` // 终态是否已通知
 	StartedAt    time.Time      `json:"startedAt"`

@@ -363,7 +363,7 @@ func (s *Service) PollPending(ctx context.Context) error {
 	}
 	// 长时间无终态（runner 挂了 / commit status 不可得）标失败并通知——
 	// 观测链路失效时不能永远显示"排队中"
-	pendingTimeout := 30 * time.Minute
+	pendingTimeout := 45 * time.Minute
 	for _, b := range pendings {
 		if time.Since(b.CreatedAt) > pendingTimeout {
 			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
@@ -416,6 +416,21 @@ func (s *Service) PollPending(ctx context.Context) error {
 		newStatus := mapStatus(st.State)
 		if newStatus == b.Status {
 			continue
+		}
+		// 防抖：commit status 在 job 切换间隙可能短暂回落为非 success，
+		// 连续 2 次非 success 才标 failed（防误杀 running 中的构建）
+		if newStatus == BuildFailed {
+			if b.FailCount < 1 {
+				s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
+					Update("fail_count", b.FailCount+1)
+				continue
+			}
+		} else if newStatus == BuildSuccess {
+			// 恢复为 success 时重置计数
+			if b.FailCount > 0 {
+				s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
+					Update("fail_count", 0)
+			}
 		}
 		updates := map[string]any{"status": newStatus}
 		if b.LogURL == "" {

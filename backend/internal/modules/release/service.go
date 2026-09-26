@@ -15,6 +15,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/resources"
+	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
@@ -26,10 +27,60 @@ type Service struct {
 	res    *resources.Service
 	notify *notify.Service
 	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
+	cipher *crypto.Cipher  // registry 凭据解密
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader) *Service {
-	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj}
+// registryCred 项目绑定的 registry 凭据（namespace 隔离：镜像路径里的
+// namespace 在仓库 compose 中声明，平台只负责按项目绑定的 registry 登录）。
+type registryCred struct {
+	Address  string
+	Username string
+	Password string
+	HasCred  bool
+}
+
+// registryFor 取项目绑定的 registry 凭据（解密；未绑定或无凭据返回 HasCred=false）。
+func (s *Service) registryFor(ctx context.Context, projectID uint) (*registryCred, error) {
+	var row struct {
+		RAddress    string
+		RCredential string
+	}
+	if err := s.db.WithContext(ctx).Table("projects").
+		Select("registries.address, registries.credential").
+		Joins("LEFT JOIN registries ON registries.id = projects.registry_id").
+		Where("projects.id = ?", projectID).
+		First(&row).Error; err != nil {
+		return &registryCred{}, nil // 未绑定
+	}
+	if row.RAddress == "" || row.RCredential == "" {
+		return &registryCred{}, nil
+	}
+	// 解密 "username:password"
+	dec, err := s.decryptRegistryCred(row.RCredential)
+	if err != nil {
+		return nil, fmt.Errorf("registry 凭据解密失败: %w", err)
+	}
+	return &registryCred{Address: row.RAddress, Username: dec[0], Password: dec[1], HasCred: true}, nil
+}
+
+func (s *Service) decryptRegistryCred(enc string) ([]string, error) {
+	c := s.cipher
+	if c == nil {
+		return nil, fmt.Errorf("平台主密钥未配置")
+	}
+	dec, err := c.Decrypt(enc)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.SplitN(dec, ":", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("凭据格式须为 username:password")
+	}
+	return parts, nil
+}
+
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader, cipher *crypto.Cipher) *Service {
+	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj, cipher: cipher}
 }
 
 // projectRow 只读 projects 所需列（避免跨模块循环依赖）。
@@ -117,6 +168,20 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		ReleaseBy: operator, Status: ReleaseFailed,
 	}
 	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
+
+	// 私有 registry：部署前在目标机 docker login（namespace 隔离由镜像路径
+	// 中的 namespace 段保证——平台只按项目绑定的 registry 地址认证）
+	reg, err := s.registryFor(ctx, in.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if reg != nil && reg.HasCred {
+		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
+			return nil, fmt.Errorf("目标机 registry 登录失败: %w", err)
+		}
+		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)
+	}
+
 	startedAt := time.Now()
 	out, _, err := s.res.DeployComposeTo(ctx, target.ServerID, deployName, yamlContent)
 	rel.DurationSecs = int(time.Since(startedAt).Seconds())

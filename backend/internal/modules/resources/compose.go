@@ -322,6 +322,33 @@ func (h *Handler) recreateCompose(c *gin.Context) {
 	httpx.OK(c, gin.H{"output": out})
 }
 
+// RegistryLogin 在目标机执行 docker login（发布前调用，使私有镜像可拉取）。
+// 凭据经 SSH stdin 传入，不在目标机磁盘残留（docker login 写 ~/.docker/config.json，
+// 部署完成后调用 RegistryLogout 清除）。
+func (s *Service) RegistryLogin(ctx context.Context, serverID uint, registryAddr, username, password string) error {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	// 用 --password-stdin 避免 password 出现在进程列表
+	cmd := fmt.Sprintf("docker login %s -u %s --password-stdin",
+		shellQuote(registryAddr), shellQuote(username))
+	out, err := sshRunOutputWithStdin(srv, cred, cmd, password+"\n", 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("registry 登录失败: %s\n%v", out, err)
+	}
+	return nil
+}
+
+// RegistryLogout 清除目标机上的 registry 认证（部署后调用）。
+func (s *Service) RegistryLogout(ctx context.Context, serverID uint, registryAddr string) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return
+	}
+	_, _ = sshRunOutput(srv, cred, "docker logout "+shellQuote(registryAddr)+" 2>/dev/null", 15*time.Second)
+}
+
 // DeployComposeTo 部署 compose 到指定服务器（第三阶段 M3 起供 release 模块复用）。
 // name 需已过白名单校验；返回部署输出与远端目录。
 func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error) {

@@ -33,17 +33,7 @@ type Slot struct {
 
 func (Slot) TableName() string { return "env_slots" }
 
-// Override 槽位差异化配置（key/value，释放保留；部署时环境变量注入）。
-type Override struct {
-	ID        uint      `gorm:"primarykey" json:"id"`
-	ProjectID uint      `gorm:"index:uniq_slot_key;not null" json:"projectId"`
-	SlotName  string    `gorm:"index:uniq_slot_key;size:32;not null" json:"slotName"`
-	Key       string    `gorm:"index:uniq_slot_key;size:64;not null" json:"key"`
-	Value     string    `gorm:"size:512" json:"value"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
-func (Override) TableName() string { return "slot_overrides" }
-
 // Models 返回本模块需要自动迁移的模型。
-func Models() []any { return []any{&Slot{}, &Override{}} }
+// 槽位差异化配置（slot_overrides）已移除——由配置中心（AgileConfig）接管，
+// 配置中心自带 dev1/dev2/dev3 的槽位级隔离（2026-09-26 用户决策）。
+func Models() []any { return []any{&Slot{}} }

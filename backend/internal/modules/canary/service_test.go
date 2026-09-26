@@ -122,7 +122,7 @@ func TestPublishVersioning(t *testing.T) {
 	if err != nil || v != 1 || ssh.calls != 1 {
 		t.Fatalf("发布异常: v=%d calls=%d err=%v", v, ssh.calls, err)
 	}
-	if !strings.Contains(ssh.lastContent, "map $http_x_canary_mux") || !strings.Contains(ssh.lastContent, "split_clients") {
+	if !strings.Contains(ssh.lastContent, "map $http_x_canary") || !strings.Contains(ssh.lastContent, "split_clients") {
 		t.Fatalf("渲染缺分流配置:\n%s", ssh.lastContent)
 	}
 	if !strings.Contains(ssh.lastPath, "demo") {

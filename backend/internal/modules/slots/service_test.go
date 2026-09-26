@@ -24,7 +24,7 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&Slot{}, &Override{}, &projectTbl{}, &buildTbl{}); err != nil {
+	if err := db.AutoMigrate(&Slot{}, &projectTbl{}, &buildTbl{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	db.Create(&projectTbl{ID: 1, Name: "demo", TestSlotCount: 3, SlotGraceDays: 3})

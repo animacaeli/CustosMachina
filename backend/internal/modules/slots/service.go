@@ -158,7 +158,7 @@ func (s *Service) Occupy(ctx context.Context, projectID uint, in OccupyInput, ui
 	return &slot, nil
 }
 
-// Release 释放槽位：销毁隔离域容器，覆盖配置保留（slot_overrides 不动），删除占用行。
+// Release 释放槽位：销毁隔离域容器，（槽位配置由外部配置中心管理，平台不再持有），删除占用行。
 func (s *Service) Release(ctx context.Context, projectID uint, slotName string, uid uint, isAdmin bool) error {
 	var slot Slot
 	if err := s.db.WithContext(ctx).
