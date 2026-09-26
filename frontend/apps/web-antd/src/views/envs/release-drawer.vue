@@ -255,7 +255,7 @@ function fmtTime(v: string) {
     <a-modal v-model:open="logOpen" :title="logTitle" :width="820" footer="">
       <pre
         class="max-h-[65vh] overflow-auto rounded p-3 text-xs leading-5"
-        style=" color: #c9d1d9;background: #0b0e14"
+        style="color: #c9d1d9; background: #0b0e14"
         >{{ logText }}</pre>
     </a-modal>
   </a-drawer>

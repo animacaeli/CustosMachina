@@ -126,7 +126,7 @@ async function saveConfig() {
         targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
           envType,
           runtime: 'compose' as const,
-          serverId: deployServerId.value!,
+          serverId: deployServerId.value as number,
         })),
       });
     }

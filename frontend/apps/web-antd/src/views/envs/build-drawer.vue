@@ -217,7 +217,7 @@ function fmtTime(v: string) {
       <a-spin :spinning="logLoading">
         <pre
           class="max-h-[70vh] overflow-auto rounded p-3 text-xs leading-5"
-          style=" color: #c9d1d9;background: #0b0e14"
+          style="color: #c9d1d9; background: #0b0e14"
           >{{ logText }}</pre>
       </a-spin>
     </a-drawer>
