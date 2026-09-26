@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,7 +16,7 @@ import (
 func NewEngine(cfg *config.Config, modules Modules, auth AuthMiddleware, authz gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(cfg.HTTP.Mode)
 	e := gin.New()
-	e.Use(requestLogger(), gin.Recovery(), cors())
+	e.Use(requestLogger(), gin.Recovery(), cors(cfg.CORS.Origins))
 
 	api := e.Group("/api")
 	public := api.Group("")
@@ -39,9 +40,20 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
-func cors() gin.HandlerFunc {
+func cors(origins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		allowed := false
+		for _, o := range strings.Split(origins, ",") {
+			if strings.TrimSpace(o) == "*" || strings.TrimSpace(o) == origin {
+				allowed = true
+				break
+			}
+		}
+		if origin != "" && allowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		if c.Request.Method == http.MethodOptions {

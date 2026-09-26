@@ -173,14 +173,9 @@ func (h *Handler) deployCompose(c *gin.Context) {
 	}
 	out, dir, err := h.svc.DeployComposeTo(c.Request.Context(), id, name, in.YAML)
 	success := err == nil
-	srv, _, _ := h.svc.serverWithCredential(c.Request.Context(), id)
-	var host string
-	if srv != nil {
-		host = srv.Host
-		h.svc.recordSimpleEvent(c.Request.Context(), srv.ID, "compose_deploy",
-			fmt.Sprintf("%s 部署 compose 项目 %s 到 %s：%s", h.operator(c), name, host,
-				map[bool]string{true: "成功", false: "失败"}[success]))
-	}
+	h.svc.recordSimpleEvent(c.Request.Context(), id, "compose_deploy",
+		fmt.Sprintf("%s 部署 compose 项目 %s：%s", h.operator(c), name,
+			map[bool]string{true: "成功", false: "失败"}[success]))
 	if !success {
 		httpx.FailUpstream(c, fmt.Sprintf("部署失败：\n%s\n%v", out, err))
 		return

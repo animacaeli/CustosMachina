@@ -157,7 +157,9 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 }
 
 func (s *Service) Delete(ctx context.Context, id uint) error {
-	res := s.db.WithContext(ctx).Delete(&Project{}, id)
+	// 硬删：软删行会占住 name 唯一索引导致"删了建不回"；构建/发布记录
+	// 按 project_id 关联保留（项目没了列表不再展示，作为历史沉淀可接受）
+	res := s.db.WithContext(ctx).Unscoped().Delete(&Project{}, id)
 	if res.Error != nil {
 		return res.Error
 	}

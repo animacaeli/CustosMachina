@@ -17,6 +17,13 @@ type Config struct {
 	IM       IM
 	Redis    Redis
 	Log      Log
+	CORS     CORS
+}
+
+// CORS 跨域来源白名单；逗号分隔。默认 * 兼容既有部署，生产建议
+// 配置为前端实际域名（单镜像同源部署可直接配自身域名）。
+type CORS struct {
+	Origins string
 }
 
 // Log 日志配置（第三阶段 M0：zap + 文件滚动）。
@@ -90,6 +97,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.max_size_mb", 50)
 	v.SetDefault("log.max_backups", 5)
 	v.SetDefault("log.max_age_days", 14)
+	v.SetDefault("cors.origins", "*")
 
 	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
 	// 这里显式逐项读取，保证 env 覆盖一定生效。
@@ -120,6 +128,9 @@ func Load() (*Config, error) {
 			Addr:     v.GetString("redis.addr"),
 			Password: v.GetString("redis.password"),
 			DB:       v.GetInt("redis.db"),
+		},
+		CORS: CORS{
+			Origins: v.GetString("cors.origins"),
 		},
 		Log: Log{
 			Level:      v.GetString("log.level"),

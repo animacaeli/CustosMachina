@@ -63,7 +63,8 @@ func (r *GroupRepository) Update(ctx context.Context, g *ServerGroup) error {
 }
 
 func (r *GroupRepository) Delete(ctx context.Context, id uint) error {
-	return r.db.WithContext(ctx).Delete(&ServerGroup{}, id).Error
+	// 硬删：软删行占住 name 唯一索引（"删了建不回"）
+	return r.db.WithContext(ctx).Unscoped().Delete(&ServerGroup{}, id).Error
 }
 
 // CountByGroup 统计各分组下服务器数（删除分组前校验用）。

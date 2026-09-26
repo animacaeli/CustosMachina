@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -27,13 +28,29 @@ type Service struct {
 	ci     *ci.Service
 	res    *resources.Service
 	notify *notify.Service
+
+	// push 重建风暴防护：同槽位串行执行，正在跑时只记 pending、
+	// 跑完补跑一次（部署幂等——按分支最新提交，连续 push 合并为最后一次）
+	rebuildMu      sync.Mutex
+	rebuildRunning map[uint]bool
+	rebuildPending map[uint]*rebuildReq
+}
+
+type rebuildReq struct {
+	p      *projectRow
+	slotID uint
+	slot   Slot
+	source string
 }
 
 func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service) *Service {
 	// 存量库迁移兜底：清理历史软删的占用行，避免 (project_id, slot_name)
 	// 唯一索引创建失败（占用行本就是临时状态，审计在事件表）
 	db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&Slot{})
-	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy}
+	return &Service{
+		db: db, ci: ciSvc, res: resSvc, notify: ntfy,
+		rebuildRunning: map[uint]bool{}, rebuildPending: map[uint]*rebuildReq{},
+	}
 }
 
 // projectRow 只读所需列。
@@ -127,7 +144,7 @@ func (s *Service) Occupy(ctx context.Context, projectID uint, in OccupyInput, ui
 		return nil, err
 	}
 	// 立即拉起（失败不回滚占用：用户可修好后等推送重建，或手动释放）
-	go s.rebuild(context.WithoutCancel(ctx), p, &slot, "occupy")
+	s.dispatchRebuild(p, &slot, "occupy")
 	return &slot, nil
 }
 
@@ -234,11 +251,43 @@ func (s *Service) OnBranchPush(ctx context.Context, repoPath, branch, pusher str
 		Find(&hits)
 	for i := range hits {
 		slot := hits[i]
-		go s.rebuild(context.WithoutCancel(ctx), &proj, &slot, "push:"+pusher)
+		s.dispatchRebuild(&proj, &slot, "push:"+pusher)
 	}
 }
 
-// rebuild 拉起槽位隔离域：按分支取 compose 描述 → 部署 <proj>-test-<slot>；落构建记录 + 通知。
+// dispatchRebuild 投递重建请求：目标槽位空闲则立即执行（异步），
+// 正在跑则记 pending（覆盖旧 pending），跑完补跑一次——部署幂等（按分支
+// 最新提交），连续 push 合并为最后一次的结果。
+func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source string) {
+	req := &rebuildReq{p: p, slotID: slot.ID, slot: *slot, source: source}
+	s.rebuildMu.Lock()
+	defer s.rebuildMu.Unlock()
+	if s.rebuildRunning[slot.ID] {
+		s.rebuildPending[slot.ID] = req
+		return
+	}
+	s.rebuildRunning[slot.ID] = true
+	go s.rebuildLoop(req)
+}
+
+// rebuildLoop 串行消费同槽位的重建请求，直到无新 pending。
+func (s *Service) rebuildLoop(first *rebuildReq) {
+	req := first
+	for {
+		s.rebuild(context.Background(), req.p, &req.slot, req.source)
+		s.rebuildMu.Lock()
+		next := s.rebuildPending[req.slotID]
+		delete(s.rebuildPending, req.slotID)
+		if next == nil {
+			delete(s.rebuildRunning, req.slotID)
+			s.rebuildMu.Unlock()
+			return
+		}
+		s.rebuildMu.Unlock()
+		req = next
+	}
+}
+
 func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source string) {
 	serverID, err := s.testTarget(ctx, p.ID)
 	if err != nil {
@@ -331,7 +380,10 @@ func (s *Service) SweepExpire(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		s.db.WithContext(ctx).Model(&slot).Update("status", StatusExpired)
+		if err := s.db.WithContext(ctx).Model(&slot).Update("status", StatusExpired).Error; err != nil {
+			logger.Warnf("[slots] 标记过期失败 slot=%s: %v", slot.SlotName, err)
+			continue
+		}
 		s.notifySlot(ctx, p, &slot, fmt.Sprintf("槽位 %s 已到期限（分支 %s），%d 天宽限后自动回收，请及时续期或释放",
 			slot.SlotName, slot.Branch, p.SlotGraceDays))
 	}

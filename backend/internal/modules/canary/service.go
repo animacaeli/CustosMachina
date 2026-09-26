@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 
@@ -26,6 +27,10 @@ type Service struct {
 	db     *gorm.DB
 	ssh    SSHRunner
 	notify *notify.Service
+
+	// mu 串行化策略写操作：流量总和校验与版本推进都是读-改-写，
+	// 并发会超 TrafficCap / 出现中间态（单实例部署下进程内锁足够）
+	mu sync.Mutex
 }
 
 func NewService(db *gorm.DB, ssh SSHRunner, ntfy *notify.Service) *Service {
@@ -60,6 +65,13 @@ func (s *Service) validate(ctx context.Context, projectID uint, in SavePolicyInp
 		if in.HeaderKey == "" || in.HeaderValue == "" {
 			return errors.New("请求头策略需填写 header 键与值")
 		}
+		// 写入 nginx map 片段的值必须限定字符集（Go 转义 ≠ nginx 语法安全）
+		for _, ch := range in.HeaderKey + in.HeaderValue {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+				ch == '-' || ch == '_' || ch == '.' || ch >= 0x80) { // 0x80+ 允许中文等 UTF-8 字节
+				return errors.New("请求头键/值只允许字母、数字、-_. 与中文")
+			}
+		}
 	default: // traffic
 		if in.TrafficPercent <= 0 {
 			return errors.New("流量策略需填写比例")
@@ -93,6 +105,8 @@ func (s *Service) validate(ctx context.Context, projectID uint, in SavePolicyInp
 }
 
 func (s *Service) Create(ctx context.Context, projectID uint, in SavePolicyInput) (*Policy, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.validate(ctx, projectID, in, 0); err != nil {
 		return nil, err
 	}
@@ -109,6 +123,8 @@ func (s *Service) Create(ctx context.Context, projectID uint, in SavePolicyInput
 }
 
 func (s *Service) Update(ctx context.Context, projectID, id uint, in SavePolicyInput) (*Policy, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var p Policy
 	if err := s.db.WithContext(ctx).Where("project_id = ?", projectID).First(&p, id).Error; err != nil {
 		return nil, ErrNotFound
@@ -130,6 +146,8 @@ func (s *Service) Update(ctx context.Context, projectID, id uint, in SavePolicyI
 }
 
 func (s *Service) Delete(ctx context.Context, projectID, id uint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	res := s.db.WithContext(ctx).Where("project_id = ?", projectID).Delete(&Policy{}, id)
 	if res.Error != nil {
 		return res.Error
@@ -160,6 +178,8 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]Policy, int, erro
 // Publish 把当前全部启用策略版本化整体生效：渲染 nginx 配置写入灰度部署目标并 reload。
 // 版本语义：新版本 = 已发布集合整体替换（旧版本策略全部退回未发布）。
 func (s *Service) Publish(ctx context.Context, projectID uint, operator string) (int, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var ps []Policy
 	if err := s.db.WithContext(ctx).
 		Where("project_id = ? AND enabled = ?", projectID, true).
@@ -201,20 +221,22 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 		return 0, out, err
 	}
 
-	// 版本推进：全部启用策略标为新版本，其余退回 0
+	// 版本推进（事务：全部退回 0 再标记新版本，避免中间态"无生效版本"）
 	var maxV int64
 	s.db.WithContext(ctx).Model(&Policy{}).
 		Where("project_id = ?", projectID).
 		Select("COALESCE(MAX(published_version),0)").Scan(&maxV)
 	newV := int(maxV) + 1
-	if err := s.db.WithContext(ctx).Model(&Policy{}).
-		Where("project_id = ?", projectID).
-		Update("published_version", 0).Error; err != nil {
-		return 0, "", err
-	}
-	if err := s.db.WithContext(ctx).Model(&Policy{}).
-		Where("id IN ?", policyIDs(ps)).
-		Update("published_version", newV).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Policy{}).
+			Where("project_id = ?", projectID).
+			Update("published_version", 0).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Policy{}).
+			Where("id IN ?", policyIDs(ps)).
+			Update("published_version", newV).Error
+	}); err != nil {
 		return 0, "", err
 	}
 	logger.Infof("[canary] 项目 %d 策略发布 v%d（%d 条），操作人 %s", projectID, newV, len(ps), operator)

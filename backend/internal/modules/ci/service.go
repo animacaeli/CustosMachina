@@ -79,7 +79,9 @@ func (s *Service) GetGlobal(ctx context.Context) (*GlobalConfigOut, error) {
 
 func (s *Service) SaveGlobal(ctx context.Context, in SaveGlobalInput) (*GlobalConfigOut, error) {
 	var g GlobalConfig
-	s.db.WithContext(ctx).First(&g, 1) // 无则新建
+	if err := s.db.WithContext(ctx).First(&g, 1).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("读取 CI 全局配置失败: %w", err)
+	}
 	g.ID = 1
 	if in.GiteaBaseURL != "" {
 		g.GiteaBaseURL = strings.TrimRight(in.GiteaBaseURL, "/")
@@ -117,10 +119,13 @@ func (s *Service) projectToken(repoPath string) (string, error) {
 	if row.CIToken == "" || s.cipher == nil {
 		return "", nil
 	}
-	if dec, err := s.cipher.Decrypt(row.CIToken); err == nil {
-		return dec, nil
+	dec, err := s.cipher.Decrypt(row.CIToken)
+	if err != nil {
+		// 项目级 token 解密失败不能静默回落全局 token（权限语义漂移），显式告警
+		logger.Warnf("[ci] 项目 %s 的 token 解密失败，回落全局 token: %v", repoPath, err)
+		return "", nil
 	}
-	return "", nil
+	return dec, nil
 }
 
 func (s *Service) clientFor(ctx context.Context, repoPath string) (*giteaClient, error) {
@@ -185,7 +190,8 @@ func (s *Service) SaveRegistry(ctx context.Context, id uint, in SaveRegistryInpu
 }
 
 func (s *Service) DeleteRegistry(ctx context.Context, id uint) error {
-	res := s.db.WithContext(ctx).Delete(&Registry{}, id)
+	// 硬删：软删行占住 name 唯一索引
+	res := s.db.WithContext(ctx).Unscoped().Delete(&Registry{}, id)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -356,6 +362,23 @@ func (s *Service) PollPending(ctx context.Context) error {
 		Find(&pendings).Error; err != nil {
 		return err
 	}
+	// 长时间无终态（runner 挂了 / commit status 不可得）标失败并通知——
+	// 观测链路失效时不能永远显示"排队中"
+	pendingTimeout := 30 * time.Minute
+	for _, b := range pendings {
+		if time.Since(b.CreatedAt) > pendingTimeout {
+			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
+				Update("status", BuildFailed)
+			var proj2 notifyProjRow
+			if err := s.db.WithContext(ctx).Table("projects").
+				Select("repo_path, notify_on_success, notify_prod_group_id, notify_canary_group_id, notify_test_group_id").
+				Where("id = ?", b.ProjectID).First(&proj2).Error; err == nil {
+				b.Status = BuildFailed
+				s.notifyBuild(ctx, b, proj2, BuildFailed)
+			}
+			logger.Warnf("[ci] 构建 %d（%s）超过 %v 无终态，标记失败", b.ID, b.Tag, pendingTimeout)
+		}
+	}
 	for _, b := range pendings {
 		// SHA 无效（手动重放/异常 webhook）——不可能观察到流水线，直接失败
 		if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
@@ -421,13 +444,16 @@ func (s *Service) PollPending(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) notifyBuild(ctx context.Context, b Build, proj struct {
+// notifyProjRow 项目通知相关列的投影。
+type notifyProjRow struct {
 	RepoPath            string
 	NotifyOnSuccess     bool
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
 	NotifyTestGroupID   *uint
-}, status string) {
+}
+
+func (s *Service) notifyBuild(ctx context.Context, b Build, proj notifyProjRow, status string) {
 	if status == BuildSuccess && !proj.NotifyOnSuccess {
 		return
 	}

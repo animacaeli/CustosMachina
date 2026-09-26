@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -33,19 +34,26 @@ type ticketStore struct {
 
 func newTicketStore() *ticketStore {
 	ts := &ticketStore{m: map[string]ticketEntry{}}
-	go ts.sweepLoop()
+	go ts.sweepLoop(context.Background())
 	return ts
 }
 
-func (ts *ticketStore) sweepLoop() {
-	for now := range time.Tick(ticketSweep) {
-		ts.mu.Lock()
-		for k, v := range ts.m {
-			if now.After(v.expires) {
-				delete(ts.m, k)
+func (ts *ticketStore) sweepLoop(ctx context.Context) {
+	t := time.NewTicker(ticketSweep)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			ts.mu.Lock()
+			for k, v := range ts.m {
+				if now.After(v.expires) {
+					delete(ts.m, k)
+				}
 			}
+			ts.mu.Unlock()
 		}
-		ts.mu.Unlock()
 	}
 }
 

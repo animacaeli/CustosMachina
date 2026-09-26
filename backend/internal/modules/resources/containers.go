@@ -184,6 +184,9 @@ func (h *Handler) containerLogs(c *gin.Context) {
 	// 不会因等待下一条日志而吊住连接与 SSH 资源
 	logCh := make(chan []byte, 16)
 	readDone := make(chan struct{})
+	// 消费端放弃（客户端断开）后必须解除读 goroutine 的阻塞发送，
+	// 否则 reader.Close() 无法唤醒它、<-readDone 永久挂起（handler 泄漏）
+	consumerGone := make(chan struct{})
 	go func() {
 		defer close(readDone)
 		buf := make([]byte, 4096)
@@ -192,7 +195,11 @@ func (h *Handler) containerLogs(c *gin.Context) {
 			if n > 0 {
 				b := make([]byte, n)
 				copy(b, buf[:n])
-				logCh <- b
+				select {
+				case logCh <- b:
+				case <-consumerGone:
+					return
+				}
 			}
 			if err != nil {
 				return
@@ -212,6 +219,7 @@ func (h *Handler) containerLogs(c *gin.Context) {
 	})
 	cli.Close()
 	reader.Close()
+	close(consumerGone)
 	<-readDone
 }
 

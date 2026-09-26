@@ -92,7 +92,8 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveGroupInput) (*Grou
 }
 
 func (s *Service) Delete(ctx context.Context, id uint) error {
-	res := s.db.WithContext(ctx).Delete(&Group{}, id)
+	// 硬删：软删行占住 name 唯一索引
+	res := s.db.WithContext(ctx).Unscoped().Delete(&Group{}, id)
 	if res.Error != nil {
 		return res.Error
 	}
