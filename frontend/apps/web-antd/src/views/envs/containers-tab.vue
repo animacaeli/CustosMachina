@@ -52,7 +52,8 @@ const services = computed(() => {
     if (!map.has(svc)) {
       map.set(svc, { service: svc, containers: [] });
     }
-    map.get(svc)!.containers.push(ct);
+    const entry = map.get(svc);
+    if (entry) entry.containers.push(ct);
   }
   return [...map.values()];
 });
