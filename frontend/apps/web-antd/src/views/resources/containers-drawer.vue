@@ -5,8 +5,9 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
+import { apiURL } from '#/api/request';
 import {
   containerActionApi,
   containerLogsApi,
@@ -120,6 +121,15 @@ onBeforeUnmount(() => {
   window.clearInterval(statsTimer);
   stopFollow();
 });
+
+// 停止是影响线上流量的高危操作，统一加确认（启动无需确认）
+async function confirmStop(cid: string, name: string) {
+  Modal.confirm({
+    title: `停止容器 ${name}？`,
+    content: '停止后该服务将不可用，需要时可再启动。',
+    onOk: () => act(cid, 'stop', name),
+  });
+}
 
 async function act(cid: string, action: 'start' | 'stop', name: string) {
   if (!props.serverId) return;
@@ -246,7 +256,7 @@ async function startFollow() {
   // SSE 跟随：一次性 ticket 走 query（浏览器 EventSource 无法带 header）
   try {
     const { ticket } = await issueTicketApi();
-    const url = `/api/server-containers/${props.serverId}/${logsCid.value}/logs?tail=50&follow=1&ticket=${encodeURIComponent(ticket)}`;
+    const url = `${apiURL}/server-containers/${props.serverId}/${logsCid.value}/logs?tail=50&follow=1&ticket=${encodeURIComponent(ticket)}`;
     es = new EventSource(url);
     follow.value = true;
     es.addEventListener('log', (ev) => {
@@ -361,7 +371,7 @@ function stopFollowOnClose() {
             danger
             :disabled="record.state !== 'running'"
             :loading="actingId === record.id && record.state === 'running'"
-            @click="act(record.id, 'stop', record.name)"
+            @click="confirmStop(record.id, record.name)"
           >
             停止
           </a-button>

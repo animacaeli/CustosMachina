@@ -49,7 +49,9 @@ async function load() {
 
 watch(
   () => [props.open, props.project?.id],
-  () => props.open && load(),
+  async () => {
+    if (props.open) await load().catch((e) => console.warn('[load]', e));
+  },
 );
 
 // 流量总和 vs 项目上限（前端实时校验，后端兜底）

@@ -48,8 +48,17 @@ async function load() {
 }
 
 watch(
+  () => props.projectId,
+  () => {
+    page.value = 1; // 换项目回到第一页，避免停在新项目不存在的页码
+  },
+);
+
+watch(
   () => [props.open, props.projectId, page.value],
-  () => props.open && load(),
+  async () => {
+    if (props.open) await load().catch((e) => console.warn('[load]', e));
+  },
 );
 
 // 未终态的记录持续轮询（后端 jobs 每 30s 拉 gitea commit status）

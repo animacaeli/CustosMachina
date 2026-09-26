@@ -30,6 +30,7 @@ const loading = ref(false);
 const passedTags = ref<string[]>([]);
 const selectedTag = ref<string | undefined>();
 const releasing = ref(false);
+const deployingTag = ref<null | string>(null); // 行级 loading：只转圈当前部署的标签
 
 function fmtDuration(secs: number) {
   if (secs > 0) {
@@ -51,6 +52,7 @@ function openLog(record: ReleaseItem) {
 // 行内"部署"：对任意历史标签重新执行部署（含当前标签）——回滚即部署旧版本
 async function doDeploy(rel: ReleaseItem) {
   if (!props.projectId) return;
+  deployingTag.value = rel.tag;
   releasing.value = true;
   try {
     const nr = await createReleaseApi({
@@ -64,9 +66,10 @@ async function doDeploy(rel: ReleaseItem) {
       message.error(`部署失败：${(nr.output ?? '').slice(0, 200)}`);
     }
     page.value = 1;
-    await load();
+    await load().catch((e) => console.warn('[load]', e));
   } finally {
     releasing.value = false;
+    deployingTag.value = null;
   }
 }
 
@@ -94,10 +97,17 @@ async function load() {
 }
 
 watch(
+  () => props.projectId,
+  () => {
+    page.value = 1; // 换项目回到第一页，避免停在新项目不存在的页码
+  },
+);
+
+watch(
   () => [props.open, props.projectId, page.value],
   async () => {
     if (!props.open || !props.projectId) return;
-    await load();
+    await load().catch((e) => console.warn('[load]', e));
     try {
       passedTags.value = await getPassedTagsApi(props.projectId, props.env);
     } catch {
@@ -125,7 +135,7 @@ async function doRelease() {
     }
     selectedTag.value = undefined;
     page.value = 1;
-    await load();
+    await load().catch((e) => console.warn('[load]', e));
   } finally {
     releasing.value = false;
   }
@@ -203,13 +213,17 @@ function fmtTime(v: string) {
             :title="`部署 ${record.tag} 到${envTitles[props.env] ?? ''}，确认？`"
             @confirm="doDeploy(record)"
           >
-            <a-button :loading="releasing" size="small" type="link">
-部署
-</a-button>
+            <a-button
+              :loading="deployingTag === record.tag"
+              size="small"
+              type="link"
+            >
+              部署
+            </a-button>
           </a-popconfirm>
           <a-button size="small" type="link" @click="openLog(record)">
-日志
-</a-button>
+            日志
+          </a-button>
         </template>
       </template>
     </a-table>

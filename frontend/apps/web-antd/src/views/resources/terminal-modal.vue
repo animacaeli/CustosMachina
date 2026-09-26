@@ -6,6 +6,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 
+import { apiURL } from '#/api/request';
 import { issueTicketApi } from '#/api/resources/containers';
 
 import '@xterm/xterm/css/xterm.css';
@@ -20,9 +21,15 @@ let fit: FitAddon | null = null;
 let ws: null | WebSocket = null;
 
 function wsURL(id: number, ticket: string) {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  // 开发模式走 vite 代理（/api），生产同源；一次性 ticket 替代长期 token
-  return `${proto}://${window.location.host}/api/servers/${id}/terminal?ticket=${encodeURIComponent(ticket)}`;
+  // 由 apiURL 推导 WS 地址（跟随部署配置，而非硬编码 /api 同源）；
+  // 一次性 ticket 替代长期 token
+  const url = new URL(
+    `${apiURL}/servers/${id}/terminal`,
+    window.location.origin,
+  );
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('ticket', ticket);
+  return url.toString();
 }
 
 function cleanup() {
