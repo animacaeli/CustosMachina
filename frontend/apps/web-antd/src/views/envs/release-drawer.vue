@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { ReleaseItem } from '#/api/release';
 
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import { message } from 'ant-design-vue';
 
@@ -22,6 +22,31 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 const list = ref<ReleaseItem[]>([]);
+
+// test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
+function splitTag(tag: string): { branch: string; slot: string } {
+  const at = tag.lastIndexOf('@');
+  if (at < 0) return { branch: tag, slot: '-' };
+  return { branch: tag.slice(0, at), slot: tag.slice(at + 1) };
+}
+
+const columns = computed(() => {
+  const base = [
+    { title: '发布人', dataIndex: 'releaseBy', width: 100 },
+    { title: '时间', key: 'time', width: 170 },
+    { title: '耗时', key: 'duration', width: 80 },
+    { title: '状态', key: 'status', width: 90 },
+    { title: '操作', key: 'action', width: 120 },
+  ];
+  if (props.env === 'test') {
+    return [
+      { title: '标签', key: 'tagcol' },
+      { title: '槽位', key: 'slot', width: 80 },
+      ...base,
+    ];
+  }
+  return [{ title: '标签', dataIndex: 'tag' }, ...base];
+});
 const total = ref(0);
 const page = ref(1);
 const size = ref(10);
@@ -176,14 +201,7 @@ function fmtTime(v: string) {
       </a-button>
     </div>
     <a-table
-      :columns="[
-        { title: '标签', dataIndex: 'tag' },
-        { title: '发布人', dataIndex: 'releaseBy', width: 100 },
-        { title: '时间', key: 'time', width: 170 },
-        { title: '耗时', key: 'duration', width: 80 },
-        { title: '状态', key: 'status', width: 90 },
-        { title: '操作', key: 'action', width: 120 },
-      ]"
+      :columns="columns"
       :data-source="list"
       :loading="loading"
       :pagination="{
@@ -197,7 +215,13 @@ function fmtTime(v: string) {
       size="middle"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'time'">
+        <template v-if="column.key === 'tagcol'">
+          {{ splitTag(record.tag).branch }}
+        </template>
+        <template v-else-if="column.key === 'slot'">
+          {{ splitTag(record.tag).slot }}
+        </template>
+        <template v-else-if="column.key === 'time'">
           {{ fmtTime(record.createdAt) }}
         </template>
         <template v-else-if="column.key === 'duration'">

@@ -540,6 +540,17 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
 		return "", errors.New("构建记录不存在")
 	}
+	// 测试环境槽位构建没有 gitea 流水线（部署由平台直接执行），
+	// 其"日志"= 对应的部署输出（releases 按 tag 取最新）
+	if b.EnvType == "test" {
+		var out struct{ Output string }
+		if err := s.db.WithContext(ctx).Table("releases").
+			Select("output").Where("project_id = ? AND tag = ?", b.ProjectID, b.Tag).
+			Order("id DESC").First(&out).Error; err != nil {
+			return "", errors.New("该构建没有对应的部署输出记录")
+		}
+		return "（槽位部署输出，无独立流水线）\n" + out.Output, nil
+	}
 	if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
 		return "", errors.New("该记录无关联提交（手动重放的测试数据）")
 	}
