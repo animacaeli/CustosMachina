@@ -1,6 +1,7 @@
 package slots
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,10 +13,30 @@ import (
 	"gorm.io/gorm"
 )
 
-// realReader 测试用：直接用同库的 projects.Service 作只读投影
-// （测试库建了 projects 同构表，真实实现比 fake 覆盖更全）。
-func realReader(db *gorm.DB) projects.Reader {
-	return projects.NewService(db, nil)
+// fakeReader 测试用：返回固定投影，不依赖真实 projects 表
+// （CI 的 SQLite 内存库与本地行为差异曾导致 realReader 查不到表）。
+type fakeReader struct {
+	v *projects.View
+}
+
+func (f *fakeReader) ViewByID(_ context.Context, _ uint) (*projects.View, error) {
+	if f.v == nil {
+		return nil, projects.ErrViewNotFound
+	}
+	return f.v, nil
+}
+
+func (f *fakeReader) ViewByRepoPath(_ context.Context, _ string) (*projects.View, error) {
+	return f.v, nil
+}
+
+func (f *fakeReader) EncryptedCIToken(_ context.Context, _ string) string { return "" }
+
+func newFakeReader() *fakeReader {
+	return &fakeReader{v: &projects.View{
+		ID: 1, Name: "demo", RepoPath: "tester/demo", ComposePath: "deploy/c.yml",
+		TestSlotCount: 3, SlotGraceDays: 3, TrafficCap: 50,
+	}}
 }
 
 func testDB(t *testing.T) *gorm.DB {
@@ -24,30 +45,13 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&Slot{}, &projectTbl{}, &buildTbl{}); err != nil {
+	if err := db.AutoMigrate(&Slot{}, &buildTbl{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
-	db.Create(&projectTbl{ID: 1, Name: "demo", TestSlotCount: 3, SlotGraceDays: 3})
+
 	db.Exec("CREATE TABLE project_env_targets (id integer primary key, project_id integer, env_type text, server_id integer, runtime text)")
 	return db
 }
-
-type projectTbl struct {
-	ID                  uint `gorm:"primarykey"`
-	Name                string
-	RepoPath            string
-	ComposePath         string
-	DefaultBranch       string
-	TestSlotCount       int
-	SlotGraceDays       int
-	TrafficCap          int
-	NotifyOnSuccess     bool
-	NotifyProdGroupID   *uint
-	NotifyCanaryGroupID *uint
-	NotifyTestGroupID   *uint
-}
-
-func (projectTbl) TableName() string { return "projects" }
 
 type buildTbl struct{ ID uint }
 
@@ -55,7 +59,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestOccupyAndSlotBounds(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db))
+	svc := NewService(db, nil, nil, nil, newFakeReader())
 
 	// 超出配置个数的槽位
 	if _, err := svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev5", Branch: "feat/x", DurationValue: 1, DurationUnit: "days"}, 1, "u"); err == nil {
@@ -85,7 +89,7 @@ func TestOccupyAndSlotBounds(t *testing.T) {
 
 func TestReleasePermission(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db))
+	svc := NewService(db, nil, nil, nil, newFakeReader())
 	// 未配测试部署目标时 Release 应在销毁前报错提示（项目未配置目标）
 	svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev1", Branch: "b", DurationValue: 1, DurationUnit: "days"}, 7, "张三")
 	if err := svc.Release(t.Context(), 1, "dev1", 8, false); err == nil {
@@ -95,7 +99,7 @@ func TestReleasePermission(t *testing.T) {
 
 func TestSweepExpireMarksAndRecycles(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db))
+	svc := NewService(db, nil, nil, nil, newFakeReader())
 	// 直接落一条已过期的占用
 	old := Slot{
 		ProjectID: 1, SlotName: "dev2", Branch: "feat/old",
