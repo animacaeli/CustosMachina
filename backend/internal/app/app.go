@@ -99,6 +99,8 @@ var moduleSet = wire.NewSet(
 	slots.Set,
 	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
+	// ci/release/canary/slots 通过只读投影取项目数据（替代跨模块直读表）
+	wire.Bind(new(projects.Reader), new(*projects.Service)),
 	ProvideModules,
 )
 

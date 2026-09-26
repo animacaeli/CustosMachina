@@ -14,10 +14,12 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	releasemod "github.com/custos-machina/backend/internal/modules/release"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("槽位不存在")
@@ -28,6 +30,7 @@ type Service struct {
 	ci     *ci.Service
 	res    *resources.Service
 	notify *notify.Service
+	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 
 	// push 重建风暴防护：同槽位串行执行，正在跑时只记 pending、
 	// 跑完补跑一次（部署幂等——按分支最新提交，连续 push 合并为最后一次）
@@ -43,12 +46,12 @@ type rebuildReq struct {
 	source string
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service) *Service {
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader) *Service {
 	// 存量库迁移兜底：清理历史软删的占用行，避免 (project_id, slot_name)
 	// 唯一索引创建失败（占用行本就是临时状态，审计在事件表）
 	db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&Slot{})
 	return &Service{
-		db: db, ci: ciSvc, res: resSvc, notify: ntfy,
+		db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj,
 		rebuildRunning: map[uint]bool{}, rebuildPending: map[uint]*rebuildReq{},
 	}
 }
@@ -65,13 +68,20 @@ type projectRow struct {
 }
 
 func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
-	var p projectRow
-	if err := s.db.WithContext(ctx).Table("projects").
-		Select("id, name, repo_path, compose_path, test_slot_count, slot_grace_days, notify_test_group_id").
-		Where("id = ?", id).First(&p).Error; err != nil {
+	v, err := s.proj.ViewByID(ctx, id)
+	if err != nil {
 		return nil, errors.New("项目不存在")
 	}
-	return &p, nil
+	return viewToRow(v), nil
+}
+
+// viewToRow projects.View → 本模块投影。
+func viewToRow(v *projects.View) *projectRow {
+	return &projectRow{
+		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, ComposePath: v.ComposePath,
+		TestSlotCount: v.TestSlotCount, SlotGraceDays: v.SlotGraceDays,
+		NotifyTestGroupID: v.NotifyTestGroupID,
+	}
 }
 
 func (s *Service) testTarget(ctx context.Context, projectID uint) (uint, error) {
@@ -239,12 +249,11 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]map[string]any, e
 
 // OnBranchPush 项目仓库某分支收到 push：匹配占用该分支的槽位并重建。
 func (s *Service) OnBranchPush(ctx context.Context, repoPath, branch, pusher string) {
-	var proj projectRow
-	if err := s.db.WithContext(ctx).Table("projects").
-		Select("id, name, repo_path, compose_path, test_slot_count, slot_grace_days, notify_test_group_id").
-		Where("lower(repo_path) = ?", strings.ToLower(repoPath)).First(&proj).Error; err != nil {
+	v, err := s.proj.ViewByRepoPath(ctx, repoPath)
+	if err != nil {
 		return // 未登记项目
 	}
+	proj := *viewToRow(v)
 	var hits []Slot
 	s.db.WithContext(ctx).
 		Where("project_id = ? AND branch = ? AND status IN ?", proj.ID, branch, []string{StatusOccupied, StatusExpired}).
@@ -426,21 +435,7 @@ func (s *Service) notifySlot(ctx context.Context, p *projectRow, slot *Slot, tex
 }
 
 func deployName(projectName, slotName string) string {
-	n := strings.ToLower(strings.TrimSpace(projectName))
-	var b strings.Builder
-	for _, ch := range n {
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9', ch == '_', ch == '.', ch == '-':
-			b.WriteRune(ch)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		out = "project"
-	}
-	return out + "-test-" + slotName
+	return strx.NormalizeName(projectName) + "-test-" + slotName
 }
 
 func slotIndex(name string) int {

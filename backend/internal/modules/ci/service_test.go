@@ -9,10 +9,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
+
+// realReader 测试用：直接用同库的 projects.Service 作只读投影
+// （测试库建了 projects 同构表，真实实现比 fake 覆盖更全）。
+func realReader(db *gorm.DB) projects.Reader {
+	return projects.NewService(db, nil)
+}
 
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -27,9 +34,14 @@ func testDB(t *testing.T) *gorm.DB {
 }
 
 type projectRow struct {
-	ID                  uint   `gorm:"primarykey"`
-	RepoPath            string `gorm:"size:255"`
-	CIToken             string `gorm:"type:text"`
+	ID                  uint `gorm:"primarykey"`
+	Name                string
+	RepoPath            string
+	ComposePath         string
+	DefaultBranch       string
+	TestSlotCount       int
+	SlotGraceDays       int
+	TrafficCap          int
 	NotifyOnSuccess     bool
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
@@ -61,7 +73,7 @@ func TestValidCanaryTag(t *testing.T) {
 
 func TestWebhookSignature(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil)
+	svc := NewService(db, nil, nil, realReader(db))
 	body := []byte(`{}`)
 	// 未初始化全局配置 → 拒绝
 	if err := svc.VerifySignature(t.Context(), body, ""); err == nil {
@@ -82,7 +94,7 @@ func TestWebhookSignature(t *testing.T) {
 
 func TestHandleTagPush(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil)
+	svc := NewService(db, nil, nil, realReader(db))
 	db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s"})
 	db.Create(&projectRow{ID: 1, RepoPath: "org/demo"})
 
@@ -128,7 +140,7 @@ func TestHandleTagPush(t *testing.T) {
 
 func TestListBuildsPaged(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil)
+	svc := NewService(db, nil, nil, realReader(db))
 	for i := 0; i < 5; i++ {
 		db.Create(&Build{ProjectID: 1, EnvType: "prod", Tag: "v1.0." + string(rune('0'+i)), Status: BuildSuccess})
 	}

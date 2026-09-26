@@ -30,18 +30,11 @@ const env = computed(() => props.env);
 const loading = ref(false);
 const containers = ref<ProjectContainer[]>([]);
 
-// 部署名 = <normalizeName(project.name)>-<env>[-<slot>]（与后端一致）；
-// 必须带环境段过滤——只到项目前缀会把 prod/canary/test 三个隔离域混在一起
-const deployPrefix = computed(() => {
-  const raw = (project.value?.name ?? '')
-    .toLowerCase()
-    .trim()
-    .replaceAll(' ', '-');
-  const norm = [...raw]
-    .map((ch) => (/[a-z0-9_.-]/.test(ch) ? ch : '-'))
-    .join('');
-  return `${norm || 'project'}-${props.env}-`;
-});
+// 部署前缀由后端下发（project.deployPrefix + 环境段）——命名规则只在
+// 后端实现一处，防前后端漂移；环境段必须带（否则三个隔离域混在一起）
+const deployPrefix = computed(
+  () => `${project.value?.deployPrefix ?? 'project-'}${props.env}-`,
+);
 
 const targetServer = computed(() => {
   const t = targets.value.find((x) => x.envType === env.value);

@@ -117,7 +117,7 @@ func (h *Handler) createRegistry(c *gin.Context) {
 }
 
 func (h *Handler) updateRegistry(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -139,7 +139,7 @@ func (h *Handler) updateRegistry(c *gin.Context) {
 }
 
 func (h *Handler) deleteRegistry(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -172,7 +172,7 @@ func (h *Handler) listBuilds(c *gin.Context) {
 }
 
 func (h *Handler) buildLog(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -185,7 +185,7 @@ func (h *Handler) buildLog(c *gin.Context) {
 }
 
 func (h *Handler) branches(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -196,16 +196,6 @@ func (h *Handler) branches(c *gin.Context) {
 	}
 	httpx.OK(c, names)
 }
-
-func idParam(c *gin.Context) (uint, bool) {
-	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id64 == 0 {
-		httpx.FailBadRequest(c, "无效的 id")
-		return 0, false
-	}
-	return uint(id64), true
-}
-
 func atoiDefault(s string, def int) int {
 	if s == "" {
 		return def

@@ -56,6 +56,8 @@ export async function setOpsGroupApi(groupId: number) {
 export interface Project {
   composePath: string;
   defaultBranch: string;
+  /** <norm>-<env> 项目段（后端统一下发，容器视图过滤用） */
+  deployPrefix: string;
   hasCiToken: boolean;
   id: number;
   name: string;

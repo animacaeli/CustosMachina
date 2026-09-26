@@ -45,6 +45,8 @@ type Project struct {
 	TrafficCap    int `gorm:"not null;default:50" json:"trafficCap"`
 	SlotGraceDays int `gorm:"not null;default:3" json:"slotGraceDays"` // 槽位过期宽限天数
 
+	DeployPrefix string `gorm:"-" json:"deployPrefix"` // <norm>-<env> 的项目段（容器视图过滤用，后端统一下发防前后端漂移）
+
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`

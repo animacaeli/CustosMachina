@@ -5,10 +5,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
+
+// realReader 测试用：直接用同库的 projects.Service 作只读投影
+// （测试库建了 projects 同构表，真实实现比 fake 覆盖更全）。
+func realReader(db *gorm.DB) projects.Reader {
+	return projects.NewService(db, nil)
+}
 
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -27,6 +35,11 @@ type projectTbl struct {
 	Name                string
 	RepoPath            string
 	ComposePath         string
+	DefaultBranch       string
+	TestSlotCount       int
+	SlotGraceDays       int
+	TrafficCap          int
+	NotifyOnSuccess     bool
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
 	NotifyTestGroupID   *uint
@@ -56,7 +69,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestExecuteRequiresPassedBuild(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil)
+	svc := NewService(db, nil, nil, nil, realReader(db))
 	db.Create(&projectTbl{ID: 1, Name: "Demo App", RepoPath: "org/demo", ComposePath: "deploy/c.yml"})
 
 	// 无构建记录
@@ -85,18 +98,18 @@ func TestNormalizeName(t *testing.T) {
 		"A_B.c-1":  "a_b.c-1",
 		"  x  ":    "x",
 	} {
-		if got := normalizeName(in); got != want {
-			t.Errorf("normalizeName(%q) = %q, want %q", in, got, want)
+		if got := strx.NormalizeName(in); got != want {
+			t.Errorf("strx.NormalizeName(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if normalizeName("　") == "" {
+	if strx.NormalizeName("　") == "" {
 		t.Fatal("全非法字符不应返回空串（兜底 project）")
 	}
 }
 
 func TestPassedTags(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil)
+	svc := NewService(db, nil, nil, nil, realReader(db))
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v1", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v2", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v3", Status: "failed"})

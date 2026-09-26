@@ -3,6 +3,7 @@ package httpx
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,4 +41,14 @@ func FailUpstream(c *gin.Context, message string) {
 
 func FailServer(c *gin.Context, err error) {
 	Fail(c, http.StatusInternalServerError, 500, err.Error())
+}
+
+// ParamID 解析路径参数 :id 为正整数；非法时直接回 400 并返回 ok=false。
+func ParamID(c *gin.Context) (uint, bool) {
+	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id64 == 0 {
+		FailBadRequest(c, "无效的 id")
+		return 0, false
+	}
+	return uint(id64), true
 }

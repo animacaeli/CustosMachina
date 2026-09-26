@@ -1,8 +1,6 @@
 package notify
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
@@ -57,7 +55,7 @@ func (h *Handler) create(c *gin.Context) {
 }
 
 func (h *Handler) update(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -79,7 +77,7 @@ func (h *Handler) update(c *gin.Context) {
 }
 
 func (h *Handler) remove(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -95,7 +93,7 @@ func (h *Handler) remove(c *gin.Context) {
 }
 
 func (h *Handler) test(c *gin.Context) {
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -135,13 +133,4 @@ func (h *Handler) putOpsGroup(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
-}
-
-func idParam(c *gin.Context) (uint, bool) {
-	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id64 == 0 {
-		httpx.FailBadRequest(c, "无效的 id")
-		return 0, false
-	}
-	return uint(id64), true
 }

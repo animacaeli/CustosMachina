@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("策略不存在")
@@ -27,14 +28,15 @@ type Service struct {
 	db     *gorm.DB
 	ssh    SSHRunner
 	notify *notify.Service
+	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 
 	// mu 串行化策略写操作：流量总和校验与版本推进都是读-改-写，
 	// 并发会超 TrafficCap / 出现中间态（单实例部署下进程内锁足够）
 	mu sync.Mutex
 }
 
-func NewService(db *gorm.DB, ssh SSHRunner, ntfy *notify.Service) *Service {
-	return &Service{db: db, ssh: ssh, notify: ntfy}
+func NewService(db *gorm.DB, ssh SSHRunner, ntfy *notify.Service, proj projects.Reader) *Service {
+	return &Service{db: db, ssh: ssh, notify: ntfy, proj: proj}
 }
 
 // ---- 策略 CRUD ----
@@ -49,17 +51,15 @@ type SavePolicyInput struct {
 }
 
 func (s *Service) validate(ctx context.Context, projectID uint, in SavePolicyInput, excludeID uint) error {
-	var proj struct {
+	projView, err := s.proj.ViewByID(ctx, projectID)
+	if err != nil {
+		return errors.New("项目不存在")
+	}
+	proj := struct {
 		TrafficCap          int
 		NotifyCanaryGroupID *uint
 		Name                string
-	}
-	if err := s.db.WithContext(ctx).
-		Table("projects").
-		Select("traffic_cap, notify_canary_group_id, name").
-		Where("id = ?", projectID).First(&proj).Error; err != nil {
-		return errors.New("项目不存在")
-	}
+	}{TrafficCap: projView.TrafficCap, NotifyCanaryGroupID: projView.NotifyCanaryGroupID, Name: projView.Name}
 	switch in.Type {
 	case TypeHeader:
 		if in.HeaderKey == "" || in.HeaderValue == "" {
@@ -196,12 +196,11 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 		}
 	}
 
-	var proj struct {
-		Name string
-	}
-	if err := s.db.WithContext(ctx).Table("projects").Select("name").Where("id = ?", projectID).First(&proj).Error; err != nil {
+	projView, err := s.proj.ViewByID(ctx, projectID)
+	if err != nil {
 		return 0, "", errors.New("项目不存在")
 	}
+	proj := struct{ Name string }{Name: projView.Name}
 	var target struct{ ServerID uint }
 	if err := s.db.WithContext(ctx).
 		Table("project_env_targets").
@@ -212,11 +211,11 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 	}
 
 	sort.Slice(ps, func(i, j int) bool { return ps[i].ID < ps[j].ID })
-	conf, err := renderNginx(normName(proj.Name), ps)
+	conf, err := renderNginx(strx.NormalizeName(proj.Name), ps)
 	if err != nil {
 		return 0, "", err
 	}
-	out, err := s.ssh.DeployNginxConf(ctx, target.ServerID, normName(proj.Name), conf)
+	out, err := s.ssh.DeployNginxConf(ctx, target.ServerID, strx.NormalizeName(proj.Name), conf)
 	if err != nil {
 		return 0, out, err
 	}
@@ -249,22 +248,4 @@ func policyIDs(ps []Policy) []uint {
 		ids[i] = p.ID
 	}
 	return ids
-}
-
-func normName(name string) string {
-	n := strings.ToLower(strings.TrimSpace(name))
-	var b strings.Builder
-	for _, ch := range n {
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9', ch == '_', ch == '.', ch == '-':
-			b.WriteRune(ch)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		out = "project"
-	}
-	return out
 }

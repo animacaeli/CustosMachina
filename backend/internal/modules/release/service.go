@@ -13,7 +13,9 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/resources"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("发布记录不存在")
@@ -23,10 +25,11 @@ type Service struct {
 	ci     *ci.Service
 	res    *resources.Service
 	notify *notify.Service
+	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service) *Service {
-	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy}
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader) *Service {
+	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj}
 }
 
 // projectRow 只读 projects 所需列（避免跨模块循环依赖）。
@@ -41,14 +44,15 @@ type projectRow struct {
 }
 
 func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
-	var p projectRow
-	if err := s.db.WithContext(ctx).
-		Table("projects").
-		Select("id, name, repo_path, compose_path, notify_prod_group_id, notify_canary_group_id, notify_test_group_id").
-		Where("id = ?", id).First(&p).Error; err != nil {
+	v, err := s.proj.ViewByID(ctx, id)
+	if err != nil {
 		return nil, errors.New("项目不存在")
 	}
-	return &p, nil
+	return &projectRow{
+		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, ComposePath: v.ComposePath,
+		NotifyProdGroupID: v.NotifyProdGroupID, NotifyCanaryGroupID: v.NotifyCanaryGroupID,
+		NotifyTestGroupID: v.NotifyTestGroupID,
+	}, nil
 }
 
 // EnvTarget 项目某环境的部署目标。
@@ -112,7 +116,7 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		ServerID: target.ServerID, Runtime: "compose",
 		ReleaseBy: operator, Status: ReleaseFailed,
 	}
-	deployName := fmt.Sprintf("%s-%s", normalizeName(p.Name), in.EnvType)
+	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
 	startedAt := time.Now()
 	out, _, err := s.res.DeployComposeTo(ctx, target.ServerID, deployName, yamlContent)
 	rel.DurationSecs = int(time.Since(startedAt).Seconds())
@@ -241,26 +245,6 @@ func (s *Service) notifyRelease(ctx context.Context, p *projectRow, rel *Release
 	go func() {
 		_ = s.notify.Send(context.WithoutCancel(ctx), g, title, content)
 	}()
-}
-
-func normalizeName(name string) string {
-	n := strings.ToLower(strings.TrimSpace(name))
-	n = strings.ReplaceAll(n, " ", "-")
-	// 白名单外字符替换掉，确保可作 compose project 名
-	var b strings.Builder
-	for _, ch := range n {
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9', ch == '_', ch == '.', ch == '-':
-			b.WriteRune(ch)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		out = "project"
-	}
-	return out
 }
 
 func envLabel(env string) string {

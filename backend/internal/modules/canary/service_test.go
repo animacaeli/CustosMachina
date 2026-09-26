@@ -6,10 +6,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
+
+// realReader 测试用：直接用同库的 projects.Service 作只读投影
+// （测试库建了 projects 同构表，真实实现比 fake 覆盖更全）。
+func realReader(db *gorm.DB) projects.Reader {
+	return projects.NewService(db, nil)
+}
 
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -27,9 +34,17 @@ func testDB(t *testing.T) *gorm.DB {
 
 type projectTbl struct {
 	ID                  uint `gorm:"primarykey"`
-	TrafficCap          int
 	Name                string
+	RepoPath            string
+	ComposePath         string
+	DefaultBranch       string
+	TestSlotCount       int
+	SlotGraceDays       int
+	TrafficCap          int
+	NotifyOnSuccess     bool
+	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
+	NotifyTestGroupID   *uint
 }
 
 func (projectTbl) TableName() string { return "projects" }
@@ -68,7 +83,7 @@ func mkInput(typ string, pct int) SavePolicyInput {
 
 func TestTrafficCapValidation(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, &fakeSSH{}, nil)
+	svc := NewService(db, &fakeSSH{}, nil, realReader(db))
 
 	if _, err := svc.Create(t.Context(), 1, mkInput(TypeTraffic, 60)); err == nil {
 		t.Fatal("单条 60% 应超 50% 上限被拒")
@@ -95,7 +110,7 @@ func TestTrafficCapValidation(t *testing.T) {
 func TestPublishVersioning(t *testing.T) {
 	db := testDB(t)
 	ssh := &fakeSSH{}
-	svc := NewService(db, ssh, nil)
+	svc := NewService(db, ssh, nil, realReader(db))
 	// 灰度部署目标
 	db.Exec("CREATE TABLE project_env_targets (id integer primary key, project_id integer, env_type text, server_id integer, runtime text)")
 	db.Exec("INSERT INTO project_env_targets (project_id, env_type, server_id, runtime) VALUES (1,'canary',7,'compose')")

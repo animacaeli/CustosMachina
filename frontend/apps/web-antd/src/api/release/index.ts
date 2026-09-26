@@ -44,10 +44,6 @@ export async function createReleaseApi(data: {
   return requestClient.post<ReleaseItem>('/releases', data);
 }
 
-export async function rollbackReleaseApi(id: number) {
-  return requestClient.post<ReleaseItem>(`/releases/${id}/rollback`);
-}
-
 /** compose 服务实例伸缩 */
 export async function scaleComposeApi(
   serverId: number,

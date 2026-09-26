@@ -6,10 +6,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
+
+// realReader 测试用：直接用同库的 projects.Service 作只读投影
+// （测试库建了 projects 同构表，真实实现比 fake 覆盖更全）。
+func realReader(db *gorm.DB) projects.Reader {
+	return projects.NewService(db, nil)
+}
 
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -26,13 +33,18 @@ func testDB(t *testing.T) *gorm.DB {
 }
 
 type projectTbl struct {
-	ID                uint `gorm:"primarykey"`
-	Name              string
-	RepoPath          string
-	ComposePath       string
-	TestSlotCount     int
-	SlotGraceDays     int
-	NotifyTestGroupID *uint
+	ID                  uint `gorm:"primarykey"`
+	Name                string
+	RepoPath            string
+	ComposePath         string
+	DefaultBranch       string
+	TestSlotCount       int
+	SlotGraceDays       int
+	TrafficCap          int
+	NotifyOnSuccess     bool
+	NotifyProdGroupID   *uint
+	NotifyCanaryGroupID *uint
+	NotifyTestGroupID   *uint
 }
 
 func (projectTbl) TableName() string { return "projects" }
@@ -43,7 +55,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestOccupyAndSlotBounds(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil)
+	svc := NewService(db, nil, nil, nil, realReader(db))
 
 	// 超出配置个数的槽位
 	if _, err := svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev5", Branch: "feat/x", DurationValue: 1, DurationUnit: "days"}, 1, "u"); err == nil {
@@ -73,7 +85,7 @@ func TestOccupyAndSlotBounds(t *testing.T) {
 
 func TestReleasePermission(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil)
+	svc := NewService(db, nil, nil, nil, realReader(db))
 	// 未配测试部署目标时 Release 应在销毁前报错提示（项目未配置目标）
 	svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev1", Branch: "b", DurationValue: 1, DurationUnit: "days"}, 7, "张三")
 	if err := svc.Release(t.Context(), 1, "dev1", 8, false); err == nil {
@@ -83,7 +95,7 @@ func TestReleasePermission(t *testing.T) {
 
 func TestSweepExpireMarksAndRecycles(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil)
+	svc := NewService(db, nil, nil, nil, realReader(db))
 	// 直接落一条已过期的占用
 	old := Slot{
 		ProjectID: 1, SlotName: "dev2", Branch: "feat/old",

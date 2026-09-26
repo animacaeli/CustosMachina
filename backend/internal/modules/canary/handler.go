@@ -65,7 +65,7 @@ func (h *Handler) update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (h *Handler) remove(c *gin.Context) {
 	if !ok {
 		return
 	}
-	id, ok := idParam(c)
+	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
@@ -137,15 +137,6 @@ func projectParam(c *gin.Context) (uint, bool) {
 	id64, err := strconv.ParseUint(c.Param("projectId"), 10, 64)
 	if err != nil || id64 == 0 {
 		httpx.FailBadRequest(c, "无效的 projectId")
-		return 0, false
-	}
-	return uint(id64), true
-}
-
-func idParam(c *gin.Context) (uint, bool) {
-	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id64 == 0 {
-		httpx.FailBadRequest(c, "无效的 id")
 		return 0, false
 	}
 	return uint(id64), true

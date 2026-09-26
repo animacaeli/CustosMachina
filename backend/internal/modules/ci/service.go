@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 )
@@ -44,13 +45,14 @@ type Service struct {
 	db     *gorm.DB
 	cipher *crypto.Cipher
 	notify *notify.Service
+	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 
 	// BranchPushHook 分支推送钩子（slots 模块经 app 注入：push → 匹配槽位自动重建）。
 	BranchPushHook func(ctx context.Context, repoPath, branch, pusher string)
 }
 
-func NewService(db *gorm.DB, cipher *crypto.Cipher, ntfy *notify.Service) *Service {
-	return &Service{db: db, cipher: cipher, notify: ntfy}
+func NewService(db *gorm.DB, cipher *crypto.Cipher, ntfy *notify.Service, proj projects.Reader) *Service {
+	return &Service{db: db, cipher: cipher, notify: ntfy, proj: proj}
 }
 
 // ---- 全局配置 ----
@@ -112,13 +114,11 @@ func (s *Service) loadGlobal(ctx context.Context) (*GlobalConfig, error) {
 
 // projectToken 项目级 token（空 = 全局）。projects 表直读（同库，避免模块循环依赖）。
 func (s *Service) projectToken(repoPath string) (string, error) {
-	var row struct{ CIToken string }
-	if err := s.db.Table("projects").Select("ci_token").Where("repo_path = ?", repoPath).First(&row).Error; err != nil {
-		return "", nil // 项目可能未登记，回落全局
-	}
-	if row.CIToken == "" || s.cipher == nil {
+	enc := s.proj.EncryptedCIToken(context.Background(), repoPath)
+	if enc == "" || s.cipher == nil {
 		return "", nil
 	}
+	row := struct{ CIToken string }{CIToken: enc}
 	dec, err := s.cipher.Decrypt(row.CIToken)
 	if err != nil {
 		// 项目级 token 解密失败不能静默回落全局 token（权限语义漂移），显式告警
@@ -264,18 +264,17 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 	}
 	tag := strings.TrimPrefix(p.Ref, "refs/tags/")
 
-	// 项目匹配：repo full_name（大小写不敏感）
-	var proj struct {
-		ID                  uint
-		NotifyOnSuccess     bool
-		NotifyProdGroupID   *uint
-		NotifyCanaryGroupID *uint
-		NotifyTestGroupID   *uint
-	}
-	if err := s.db.Table("projects").
-		Where("lower(repo_path) = ?", strings.ToLower(p.repoPath())).
-		First(&proj).Error; err != nil {
+	// 项目匹配（精确优先/大小写兜底由 Reader 内聚）
+	projView, err := s.proj.ViewByRepoPath(ctx, p.repoPath())
+	if err != nil {
 		return nil, nil // 非平台登记的项目，忽略
+	}
+	proj := notifyProjRow{
+		ID:                  projView.ID,
+		NotifyOnSuccess:     projView.NotifyOnSuccess,
+		NotifyProdGroupID:   projView.NotifyProdGroupID,
+		NotifyCanaryGroupID: projView.NotifyCanaryGroupID,
+		NotifyTestGroupID:   projView.NotifyTestGroupID,
 	}
 
 	// 标签规则 → 环境：v* = 正式；canary-* = 灰度（格式校验 canary-yyyymmdd-缩写）
@@ -369,12 +368,13 @@ func (s *Service) PollPending(ctx context.Context) error {
 		if time.Since(b.CreatedAt) > pendingTimeout {
 			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
 				Update("status", BuildFailed)
-			var proj2 notifyProjRow
-			if err := s.db.WithContext(ctx).Table("projects").
-				Select("repo_path, notify_on_success, notify_prod_group_id, notify_canary_group_id, notify_test_group_id").
-				Where("id = ?", b.ProjectID).First(&proj2).Error; err == nil {
+			if pv, err := s.proj.ViewByID(ctx, b.ProjectID); err == nil {
 				b.Status = BuildFailed
-				s.notifyBuild(ctx, b, proj2, BuildFailed)
+				s.notifyBuild(ctx, b, notifyProjRow{
+					ID: pv.ID, RepoPath: pv.RepoPath, NotifyOnSuccess: pv.NotifyOnSuccess,
+					NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
+					NotifyTestGroupID: pv.NotifyTestGroupID,
+				}, BuildFailed)
 			}
 			logger.Warnf("[ci] 构建 %d（%s）超过 %v 无终态，标记失败", b.ID, b.Tag, pendingTimeout)
 		}
@@ -386,16 +386,14 @@ func (s *Service) PollPending(ctx context.Context) error {
 				Update("status", BuildFailed)
 			continue
 		}
-		var proj struct {
-			RepoPath            string
-			NotifyOnSuccess     bool
-			NotifyProdGroupID   *uint
-			NotifyCanaryGroupID *uint
-			NotifyTestGroupID   *uint
-		}
-		if err := s.db.Table("projects").Select("repo_path, notify_on_success, notify_prod_group_id, notify_canary_group_id, notify_test_group_id").
-			Where("id = ?", b.ProjectID).First(&proj).Error; err != nil {
+		pv, verr := s.proj.ViewByID(ctx, b.ProjectID)
+		if verr != nil {
 			continue
+		}
+		proj := notifyProjRow{
+			ID: pv.ID, RepoPath: pv.RepoPath, NotifyOnSuccess: pv.NotifyOnSuccess,
+			NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
+			NotifyTestGroupID: pv.NotifyTestGroupID,
 		}
 		client, err := s.clientFor(ctx, proj.RepoPath)
 		if err != nil {
@@ -446,6 +444,7 @@ func (s *Service) PollPending(ctx context.Context) error {
 
 // notifyProjRow 项目通知相关列的投影。
 type notifyProjRow struct {
+	ID                  uint
 	RepoPath            string
 	NotifyOnSuccess     bool
 	NotifyProdGroupID   *uint
@@ -544,11 +543,11 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 	if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
 		return "", errors.New("该记录无关联提交（手动重放的测试数据）")
 	}
-	var projRow struct{ RepoPath string }
-	if err := s.db.Table("projects").Select("repo_path").Where("id = ?", b.ProjectID).First(&projRow).Error; err != nil {
+	pv, err := s.proj.ViewByID(ctx, b.ProjectID)
+	if err != nil {
 		return "", errors.New("项目不存在")
 	}
-	repoPath := projRow.RepoPath
+	repoPath := pv.RepoPath
 	client, err := s.clientFor(ctx, repoPath)
 	if err != nil {
 		return "", err
@@ -562,10 +561,11 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 
 // Branches 供前端表单（M5 槽位占用选分支）。
 func (s *Service) Branches(ctx context.Context, projectID uint) ([]string, error) {
-	var row struct{ RepoPath string }
-	if err := s.db.Table("projects").Select("repo_path").Where("id = ?", projectID).First(&row).Error; err != nil {
+	pv, err := s.proj.ViewByID(ctx, projectID)
+	if err != nil {
 		return nil, ErrNotFound
 	}
+	row := struct{ RepoPath string }{RepoPath: pv.RepoPath}
 	client, err := s.clientFor(ctx, row.RepoPath)
 	if err != nil {
 		// 未配置全局 CI 不阻断槽位等功能：返回空列表，前端降级为手输分支

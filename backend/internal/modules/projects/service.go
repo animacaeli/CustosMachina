@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/pkg/crypto"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("项目不存在")
@@ -21,6 +22,7 @@ type ProjectOut struct {
 func toOut(p Project) ProjectOut {
 	out := ProjectOut{Project: p, HasCIToken: p.CIToken != ""}
 	out.CIToken = ""
+	out.DeployPrefix = strx.NormalizeName(p.Name) + "-" // 容器视图过滤用（前端不再自行实现命名规则）
 	return out
 }
 
