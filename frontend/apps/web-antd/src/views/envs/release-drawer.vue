@@ -26,7 +26,7 @@ const list = ref<ReleaseItem[]>([]);
 // test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
 function splitTag(tag: string): { branch: string; slot: string } {
   const at = tag.lastIndexOf('@');
-  if (at < 0) return { branch: tag, slot: '-' };
+  if (at === -1) return { branch: tag, slot: '-' };
   return { branch: tag.slice(0, at), slot: tag.slice(at + 1) };
 }
 
@@ -91,7 +91,7 @@ async function doDeploy(rel: ReleaseItem) {
       message.error(`部署失败：${(nr.output ?? '').slice(0, 200)}`);
     }
     page.value = 1;
-    await load().catch((e) => console.warn('[load]', e));
+    await load().catch((error) => console.warn('[load]', error));
   } finally {
     releasing.value = false;
     deployingTag.value = null;
@@ -132,7 +132,7 @@ watch(
   () => [props.open, props.projectId, page.value],
   async () => {
     if (!props.open || !props.projectId) return;
-    await load().catch((e) => console.warn('[load]', e));
+    await load().catch((error) => console.warn('[load]', error));
     try {
       passedTags.value = await getPassedTagsApi(props.projectId, props.env);
     } catch {
@@ -160,7 +160,7 @@ async function doRelease() {
     }
     selectedTag.value = undefined;
     page.value = 1;
-    await load().catch((e) => console.warn('[load]', e));
+    await load().catch((error) => console.warn('[load]', error));
   } finally {
     releasing.value = false;
   }
@@ -255,7 +255,7 @@ function fmtTime(v: string) {
     <a-modal v-model:open="logOpen" :title="logTitle" :width="820" footer="">
       <pre
         class="max-h-[65vh] overflow-auto rounded p-3 text-xs leading-5"
-        style="background: #0b0e14; color: #c9d1d9"
+        style=" color: #c9d1d9;background: #0b0e14"
         >{{ logText }}</pre>
     </a-modal>
   </a-drawer>

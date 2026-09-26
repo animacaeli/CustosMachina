@@ -50,7 +50,8 @@ async function load() {
 watch(
   () => [props.open, props.project?.id],
   async () => {
-    if (props.open) await load().catch((e) => console.warn('[load]', e));
+    if (props.open)
+      await load().catch((error) => console.warn('[load]', error));
   },
 );
 

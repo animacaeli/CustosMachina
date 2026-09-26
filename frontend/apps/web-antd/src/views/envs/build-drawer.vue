@@ -20,7 +20,7 @@ const list = ref<Build[]>([]);
 // test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
 function splitTag(tag: string): { branch: string; slot: string } {
   const at = tag.lastIndexOf('@');
-  if (at < 0) return { branch: tag, slot: '-' };
+  if (at === -1) return { branch: tag, slot: '-' };
   return { branch: tag.slice(0, at), slot: tag.slice(at + 1) };
 }
 const total = ref(0);
@@ -57,7 +57,8 @@ watch(
 watch(
   () => [props.open, props.projectId, page.value],
   async () => {
-    if (props.open) await load().catch((e) => console.warn('[load]', e));
+    if (props.open)
+      await load().catch((error) => console.warn('[load]', error));
   },
 );
 
@@ -216,7 +217,7 @@ function fmtTime(v: string) {
       <a-spin :spinning="logLoading">
         <pre
           class="max-h-[70vh] overflow-auto rounded p-3 text-xs leading-5"
-          style="background: #0b0e14; color: #c9d1d9"
+          style=" color: #c9d1d9;background: #0b0e14"
           >{{ logText }}</pre>
       </a-spin>
     </a-drawer>

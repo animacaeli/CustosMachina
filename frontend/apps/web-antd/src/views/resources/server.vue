@@ -1,11 +1,11 @@
 <script lang="ts" setup>
 import type {
+  HostInfo,
   ManagedServer,
   MetricPoint,
   ServerGroup,
   ServerPayload,
 } from '#/api/resources/server';
-import type { HostInfo } from '#/api/resources/server';
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
