@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		j.POST("/:id/trigger", h.trigger)
 	}
 	r.Authed.GET("/cron-runs", h.listRuns)
+	r.Authed.GET("/cron-runs/:id", h.getRun)
 }
 
 func (h *Handler) listScripts(c *gin.Context) {
@@ -150,6 +151,20 @@ func (h *Handler) trigger(c *gin.Context) {
 			return
 		}
 		httpx.FailUpstream(c, err.Error())
+		return
+	}
+	httpx.OK(c, run)
+}
+
+// getRun 单条运行记录（前端轮询实时日志用：running 状态时 output 为增量刷库值）。
+func (h *Handler) getRun(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	var run CronRun
+	if err := h.svc.db.WithContext(c.Request.Context()).First(&run, id).Error; err != nil {
+		httpx.FailNotFound(c, "运行记录不存在")
 		return
 	}
 	httpx.OK(c, run)

@@ -63,6 +63,13 @@ func (f *fakeRunner) RecordEvent(_ context.Context, _ uint, typ, msg string) {
 	f.events = append(f.events, typ+":"+msg)
 }
 
+func (f *fakeRunner) RunCommandStreamOn(_ context.Context, _ uint, cmd, stdin string, _ time.Duration, onChunk func(string)) (string, error) {
+	if onChunk != nil && f.out != "" {
+		onChunk(f.out) // 模拟首个输出块
+	}
+	return f.RunCommandOn(context.Background(), 0, cmd, stdin, 0)
+}
+
 func newSvc(t *testing.T) (*Service, *fakeRunner) {
 	t.Helper()
 	r := &fakeRunner{}
@@ -284,7 +291,7 @@ func TestTriggerExecutesAndAudits(t *testing.T) {
 func TestBuildCommandCompose(t *testing.T) {
 	job := &CronJob{Carrier: CarrierCompose, ProjectName: "demo", Service: "migrate"}
 	sc := &CronScript{Type: ScriptComposeRun}
-	cmd := buildCommand(job, sc, "", "--label custos.cron.run=1")
+	cmd := buildCommand(job, sc, "", "--label custos.cron.run=1", "demo")
 	want := "docker compose -p demo -f /opt/custos-machina/compose/demo/compose.yaml run --rm --label custos.cron.run=1 migrate"
 	if cmd != want {
 		t.Errorf("compose 命令不符\n got %q\nwant %q", cmd, want)
@@ -492,5 +499,48 @@ func TestSchedulePreview(t *testing.T) {
 	}
 	if _, err := svc.SchedulePreview("bad", 5); err == nil {
 		t.Error("非法表达式应被拒绝")
+	}
+}
+
+// compose 载体域名跟随蓝绿活跃色（DomainResolver 注入后替换，未注入用原名）。
+type fakeResolver struct{ m map[string]string }
+
+func (f fakeResolver) ActiveDomainFor(_ context.Context, base string) string {
+	if d, ok := f.m[base]; ok {
+		return d
+	}
+	return base // 与真实实现一致：未启用蓝绿返回原名
+}
+
+func TestComposeDomainFollowsActiveColor(t *testing.T) {
+	svc, _ := newSvc(t)
+	sc := mustScript(t, svc, ScriptComposeRun)
+	ctx := context.Background()
+	job, err := svc.SaveJob(ctx, 0, JobInput{
+		Name: "j", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
+		Carrier: CarrierCompose, ProjectName: "user-manage-v2", Service: "cron-cleanup",
+	}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 未注入 resolver：原名执行
+	if got := svc.composeDomain(ctx, job); got != "user-manage-v2" {
+		t.Fatalf("未注入 resolver 应返回原名, got %q", got)
+	}
+	svc.SetDomainResolver(fakeResolver{m: map[string]string{
+		"user-manage-v2": "user-manage-v2-prod-green",
+	}})
+	if got := svc.composeDomain(ctx, job); got != "user-manage-v2-prod-green" {
+		t.Fatalf("应解析为活跃颜色域, got %q", got)
+	}
+	// 未启用蓝绿的项目原样返回
+	svc.db.Create(&CronJob{Name: "x", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
+		Carrier: CarrierCompose, ProjectName: "other-proj", Service: "s"})
+	var other CronJob
+	svc.db.First(&other, "name = ?", "x")
+	_ = other
+	noop := fakeResolver{m: map[string]string{}}
+	if got := noop.ActiveDomainFor(ctx, "other-proj"); got != "other-proj" {
+		t.Fatalf("未启用蓝绿应原名, got %q", got)
 	}
 }

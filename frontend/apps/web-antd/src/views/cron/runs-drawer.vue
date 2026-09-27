@@ -1,9 +1,9 @@
 <script lang="ts" setup>
 import type { CronRun } from '#/api/cron';
 
-import { ref, watch } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 
-import { getRunsApi } from '#/api/cron';
+import { getRunApi, getRunsApi } from '#/api/cron';
 
 defineOptions({ name: 'CronRunsDrawer' });
 
@@ -16,6 +16,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>();
+
+onBeforeUnmount(stopPoll);
 
 const loading = ref(false);
 const runs = ref<CronRun[]>([]);
@@ -67,10 +69,34 @@ const statusText: Record<string, string> = {
 
 const activeRun = ref<CronRun | null>(null);
 const detailOpen = ref(false);
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+
+function stopPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = undefined;
+  }
+}
+
+// 运行中的记录每 2s 轮询单条（后端流式执行节流 1s 增量刷库，近实时看日志）
+function pollRunning(id: number) {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await getRunApi(id);
+      activeRun.value = r;
+      if (r.status !== 'running') stopPoll();
+    } catch {
+      stopPoll();
+    }
+  }, 2000);
+}
 
 function showDetail(r: CronRun) {
+  stopPoll();
   activeRun.value = r;
   detailOpen.value = true;
+  if (r.status === 'running') pollRunning(r.id);
 }
 
 function fmtDuration(r: CronRun) {
@@ -139,10 +165,17 @@ function fmtDuration(r: CronRun) {
       :footer="null"
       :title="`运行 #${activeRun?.id} 输出`"
       :width="720"
+      @cancel="stopPoll"
     >
+      <div class="mb-1 text-xs">
+        <a-badge
+          :status="activeRun?.status === 'running' ? 'processing' : undefined"
+          :text="activeRun?.status === 'running' ? '执行中（实时输出，2 秒刷新）' : ''"
+        />
+      </div>
       <pre
         class="max-h-96 overflow-auto rounded bg-black/90 p-3 text-xs text-green-300"
-        >{{ activeRun?.output || '（无输出）' }}</pre>
+        >{{ activeRun?.output || '（暂无输出）' }}</pre>
     </a-modal>
   </a-drawer>
 </template>

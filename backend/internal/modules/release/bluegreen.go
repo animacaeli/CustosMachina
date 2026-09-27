@@ -73,6 +73,30 @@ func (s *Service) activeColorChecked(ctx context.Context, projectID uint) (strin
 	return st.ActiveColor, nil
 }
 
+// ActiveDomainFor 实现 cron.DomainResolver：项目基础名 → 当前活跃的隔离域名。
+// 启用蓝绿的项目返回 <norm>-prod-<活跃色>（任务与业务同版本同网络）；未启用/
+// 项目不存在/查询错误一律原样返回（调用方拿原名执行，失败信息明确可排查）。
+// 事后注入而非构造参数（app 层 SetDomainResolver），避免 cron↔release 构造环。
+func (s *Service) ActiveDomainFor(ctx context.Context, baseName string) string {
+	norm := strx.NormalizeName(baseName)
+	var pid uint
+	if err := s.db.WithContext(ctx).Table("projects").
+		Select("id").Where("name IN ?", []string{baseName, norm}).
+		Scan(&pid).Error; err != nil || pid == 0 {
+		return baseName
+	}
+	var st BGState
+	if err := s.db.WithContext(ctx).
+		First(&st, "project_id = ?", pid).Error; err != nil {
+		return baseName
+	}
+	if st.ActiveColor != ColorBlue && st.ActiveColor != ColorGreen {
+		return baseName
+	}
+	logger.Infof("[release] 定时任务域名解析：%s → %s-prod-%s（跟随蓝绿活跃色）", baseName, norm, st.ActiveColor)
+	return fmt.Sprintf("%s-prod-%s", norm, st.ActiveColor)
+}
+
 func oppositeColor(c string) string {
 	if c == ColorBlue {
 		return ColorGreen

@@ -22,15 +22,36 @@ var ErrNotFound = errors.New("任务或脚本不存在")
 // Runner 跨模块 SSH 能力（resources.Service 提供实现，wire.Bind 装配）。
 type Runner interface {
 	RunCommandOn(ctx context.Context, serverID uint, cmd, stdin string, timeout time.Duration) (string, error)
+	// RunCommandStreamOn 输出增量回调（手动执行的实时日志）
+	RunCommandStreamOn(ctx context.Context, serverID uint, cmd, stdin string, timeout time.Duration, onChunk func(string)) (string, error)
 	RecordEvent(ctx context.Context, serverID uint, typ, msg string)
 }
 
+// DomainResolver 项目基础名 → 当前活跃隔离域名（release.Service 提供，
+// app 层 SetDomainResolver 事后注入）。蓝绿项目的 compose 载体任务跟随
+// 活跃颜色域执行（同版本同网络）；未启用蓝绿时返回原名。
+type DomainResolver interface {
+	ActiveDomainFor(ctx context.Context, baseName string) string
+}
+
 type Service struct {
-	db  *gorm.DB
-	ssh Runner
+	db      *gorm.DB
+	ssh     Runner
+	domains DomainResolver // 可空：未注入时按原名执行
 }
 
 func NewService(db *gorm.DB, ssh Runner) *Service { return &Service{db: db, ssh: ssh} }
+
+// SetDomainResolver 注入域名解析器（release.Service 提供，避免构造环）。
+func (s *Service) SetDomainResolver(r DomainResolver) { s.domains = r }
+
+// composeDomain compose 载体的实际隔离域名：蓝绿项目解析为活跃颜色域。
+func (s *Service) composeDomain(ctx context.Context, job *CronJob) string {
+	if s.domains == nil {
+		return job.ProjectName
+	}
+	return s.domains.ActiveDomainFor(ctx, job.ProjectName)
+}
 
 // ---- 脚本库 CRUD ----
 
@@ -361,8 +382,9 @@ func (s *Service) finishRun(run *CronRun, status, output string, start time.Time
 	s.db.Model(&CronJob{}).Where("id = ?", run.JobID).Update("last_status", status)
 }
 
-// buildCommand 按载体拼目标机 shell 命令（hostScriptPath 已由调用方落好脚本文件）。
-func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel string) string {
+// buildCommand 按载体拼目标机 shell 命令（hostScriptPath 已由调用方落好脚本文件；
+// domain 为 compose 载体的实际隔离域名——蓝绿项目已解析为活跃颜色域）。
+func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel, domain string) string {
 	var interpreter string
 	switch script.Type {
 	case ScriptPython:
@@ -376,14 +398,14 @@ func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel str
 	}
 	if job.Carrier == CarrierCompose {
 		// docker compose run：项目 compose 文件在部署固定目录（resources.DeployComposeTo 约定）
-		composeFile := resources.ComposeFileFor(job.ProjectName)
+		composeFile := resources.ComposeFileFor(domain)
 		if hostScriptPath != "" {
 			return fmt.Sprintf(
 				`docker compose -p %s -f %s run --rm %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
-				job.ProjectName, composeFile, runLabel, hostScriptPath, job.Service, interpreter, extra)
+				domain, composeFile, runLabel, hostScriptPath, job.Service, interpreter, extra)
 		}
 		return fmt.Sprintf(`docker compose -p %s -f %s run --rm %s %s%s`,
-			job.ProjectName, composeFile, runLabel, job.Service, extra)
+			domain, composeFile, runLabel, job.Service, extra)
 	}
 	// docker run：脚本以只读卷挂进一次性容器
 	return fmt.Sprintf(`docker run --rm %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
@@ -427,12 +449,23 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 		}
 	}
 
-	cmd := buildCommand(job, &script, hostScriptPath, runLabel)
+	cmd := buildCommand(job, &script, hostScriptPath, runLabel, s.composeDomain(ctx, job))
 	if hostScriptPath != "" {
 		// 执行完顺手清理脚本文件（不因清理失败判任务失败）
 		cmd = fmt.Sprintf(`sh -c %s`, shellQuote(cmd+fmt.Sprintf("; rc=$?; rm -f %s; exit $rc", hostScriptPath)))
 	}
-	out, err := s.ssh.RunCommandOn(ctx, job.ServerID, cmd, "", timeout)
+	// 流式执行：输出增量落库（节流 1s），手动触发后前端轮询即可近实时看到日志
+	var live strings.Builder
+	lastFlush := time.Now()
+	onChunk := func(chunk string) {
+		live.WriteString(chunk)
+		if time.Since(lastFlush) >= time.Second {
+			lastFlush = time.Now()
+			s.db.Model(&CronRun{}).Where("id = ?", run.ID).
+				Update("output", truncateUTF8(live.String(), 64*1024))
+		}
+	}
+	out, err := s.ssh.RunCommandStreamOn(ctx, job.ServerID, cmd, "", timeout, onChunk)
 	if err != nil {
 		if errors.Is(err, resources.ErrCommandTimeout) {
 			// SSH 会话已杀，容器可能还在跑：按运行标签强杀

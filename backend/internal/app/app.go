@@ -84,6 +84,8 @@ func ProvideModules(
 	// 桥接：canary 渲染 conf 时取蓝绿活跃色（release→canary 单向依赖，
 	// color getter 事后注入避免构造环）
 	canarySvc.SetColorGetter(releaseSvc)
+	// 桥接：cron 的 compose 载体任务跟随蓝绿活跃颜色域（同注入模式解构造环）
+	cronSvc.SetDomainResolver(releaseSvc)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH}
 }
 

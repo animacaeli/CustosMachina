@@ -100,6 +100,63 @@ func sshRunOutputWithStdin(srv *Server, cred *credential, cmd, stdin string, tim
 	}
 }
 
+// RunCommandStreamOn 与 RunCommandOn 相同，但输出增量回调 onChunk（实时日志用：
+// cron 手动执行时前端轮询 DB 看到 1 秒内的输出）。返回值为完整输出。
+func (s *Service) RunCommandStreamOn(ctx context.Context, serverID uint, cmd, stdin string, timeout time.Duration, onChunk func(string)) (string, error) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return "", err
+	}
+	client, err := DialSSH(srv.Host, srv.Port, cred, srv.ID)
+	if err != nil {
+		return "", fmt.Errorf("SSH 连接失败: %w", err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+	out := &streamBuf{onChunk: onChunk}
+	session.Stdout = out
+	session.Stderr = out
+	if stdin != "" {
+		inPipe, err := session.StdinPipe()
+		if err != nil {
+			return "", err
+		}
+		go func() {
+			_, _ = inPipe.Write([]byte(stdin))
+			inPipe.Close()
+		}()
+	}
+	done := make(chan error, 1)
+	if err := session.Start(cmd); err != nil {
+		return out.String(), err
+	}
+	go func() { done <- session.Wait() }()
+	select {
+	case err := <-done:
+		return out.String(), err
+	case <-time.After(timeout):
+		_ = session.Signal(ssh.SIGKILL)
+		return out.String(), fmt.Errorf("%w（%s）", ErrCommandTimeout, timeout)
+	}
+}
+
+// streamBuf 在 outBuf 基础上把每个写入块转发给回调（实时日志流）。
+type streamBuf struct {
+	outBuf
+	onChunk func(string)
+}
+
+func (o *streamBuf) Write(p []byte) (int, error) {
+	if o.onChunk != nil {
+		o.onChunk(string(p))
+	}
+	return o.outBuf.Write(p)
+}
+
 type outBuf struct{ b []byte }
 
 func (o *outBuf) Write(p []byte) (int, error) {

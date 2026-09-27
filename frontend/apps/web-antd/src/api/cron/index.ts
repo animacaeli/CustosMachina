@@ -97,6 +97,11 @@ export async function previewScheduleApi(schedule: string, count = 5) {
 
 // ---- 运行历史 ----
 
+/** 单条运行记录（实时日志轮询用：running 状态时 output 增量更新） */
+export async function getRunApi(id: number) {
+  return requestClient.get<CronRun>(`/cron-runs/${id}`);
+}
+
 export async function getRunsApi(params: {
   jobId?: number;
   page: number;
