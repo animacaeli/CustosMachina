@@ -308,6 +308,21 @@ func (s *Service) recordSimpleEvent(ctx context.Context, serverID uint, typ, msg
 	}).Error
 }
 
+// RunCommandOn 在目标机执行命令并返回合并输出（cron 等跨模块的通用执行入口，
+// 与 compose 部署共用同一 SSH 通道；超时杀会话，输出原样带回）。
+func (s *Service) RunCommandOn(ctx context.Context, serverID uint, cmd, stdin string, timeout time.Duration) (string, error) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return "", err
+	}
+	return sshRunOutputWithStdin(srv, cred, cmd, stdin, timeout)
+}
+
+// RecordEvent 跨模块事件落库（审计用），见 recordSimpleEvent。
+func (s *Service) RecordEvent(ctx context.Context, serverID uint, typ, msg string) {
+	s.recordSimpleEvent(ctx, serverID, typ, msg)
+}
+
 // ---- 分组 ----
 
 type GroupInput struct {

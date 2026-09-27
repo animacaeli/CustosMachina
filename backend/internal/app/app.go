@@ -11,6 +11,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/canary"
 	"github.com/custos-machina/backend/internal/modules/ci"
+	cronmod "github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
@@ -35,6 +36,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, release.Models()...)
 	models = append(models, canary.Models()...)
 	models = append(models, slots.Models()...)
+	models = append(models, cronmod.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -62,6 +64,9 @@ func ProvideModules(
 	releaseMod *release.Handler,
 	canaryMod *canary.Handler,
 	slotsMod *slots.Handler,
+	cronH *cronmod.Handler,
+	cronSvc *cronmod.Service,
+	cronSched *cronmod.Scheduler, // 拉起 cron:sched 到点扫描任务（哨兵依赖）
 	slotsSvc *slots.Service,
 	ciSvc *ci.Service,
 	ciPoller *ci.Poller, // 拉起 ci:poll 状态轮询任务（哨兵依赖）
@@ -72,7 +77,7 @@ func ProvideModules(
 	resources.AttachNotifier(notifySvc)
 	// 桥接：分支 push → 匹配占用该分支的测试槽位自动重建
 	ciSvc.BranchPushHook = slotsSvc.OnBranchPush
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -97,8 +102,11 @@ var moduleSet = wire.NewSet(
 	release.Set,
 	canary.Set,
 	slots.Set,
+	cronmod.Set,
 	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
+	// cron 的 Runner（SSH 执行 + 事件审计）同样由 resources.Service 实现
+	wire.Bind(new(cronmod.Runner), new(*resources.Service)),
 	// ci/release/canary/slots 通过只读投影取项目数据（替代跨模块直读表）
 	wire.Bind(new(projects.Reader), new(*projects.Service)),
 	ProvideModules,

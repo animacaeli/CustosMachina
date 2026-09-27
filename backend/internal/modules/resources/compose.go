@@ -138,6 +138,9 @@ type deployInput struct {
 // （此前的 /tmp 临时目录重启即丢，"查看部署文件"也对不上）。
 const deployRoot = "/opt/custos-machina/compose"
 
+// ComposeFileFor 返回部署在目标机固定目录的 compose 文件路径（cron 等跨模块引用）。
+func ComposeFileFor(name string) string { return deployRoot + "/" + name + "/compose.yaml" }
+
 var deployNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 // deployCompose 校验 YAML（compose-go）→ 落盘目标机固定目录 → docker compose up -d。

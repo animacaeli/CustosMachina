@@ -12,6 +12,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/canary"
 	"github.com/custos-machina/backend/internal/modules/ci"
+	"github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
@@ -77,14 +78,16 @@ func InitializeServer() (*server.Server, func(), error) {
 	canaryHandler := canary.NewHandler(canaryService)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService)
 	slotsHandler := slots.NewHandler(slotsService)
-	poller, cleanup4, err := ci.NewPoller(ciService)
+	cronService := cron.NewService(db, resourcesService)
+	cronHandler := cron.NewHandler(cronService)
+	scheduler, cleanup4, err := cron.NewScheduler(cronService)
 	if err != nil {
 		cleanup3()
 		cleanup2()
 		cleanup()
 		return nil, nil, err
 	}
-	sweeper, cleanup5, err := slots.NewSweeper(slotsService)
+	poller, cleanup5, err := ci.NewPoller(ciService)
 	if err != nil {
 		cleanup4()
 		cleanup3()
@@ -92,7 +95,16 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, slotsService, ciService, poller, sweeper, notifyService)
+	sweeper, cleanup6, err := slots.NewSweeper(slotsService)
+	if err != nil {
+		cleanup5()
+		cleanup4()
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, cronHandler, cronService, scheduler, slotsService, ciService, poller, sweeper, notifyService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
@@ -102,6 +114,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	engine := server.NewEngine(configConfig, modules, authMiddleware, handlerFunc)
 	serverServer := server.New(configConfig, engine)
 	return serverServer, func() {
+		cleanup6()
 		cleanup5()
 		cleanup4()
 		cleanup3()

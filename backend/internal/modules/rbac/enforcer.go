@@ -145,11 +145,19 @@ var defaultPolicies = [][]string{
 	{"dev", "/alerts/*", "GET"},
 	{"guest", "/services", "GET"},
 	{"guest", "/services/*", "GET"},
+	// v6（第四阶段 M1）：定时任务/脚本库。管理 admin（中间件全量放行，此处不列）；
+	// ops/dev 只读列表与运行历史；手动触发在 handler 层再拦一层仅管理员
+	{"ops", "/cron-scripts", "GET"},
+	{"ops", "/cron-jobs", "GET"},
+	{"ops", "/cron-runs", "GET"},
+	{"dev", "/cron-scripts", "GET"},
+	{"dev", "/cron-jobs", "GET"},
+	{"dev", "/cron-runs", "GET"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "5" // v5：新增项目/通知群/CI/镜像仓库/构建资源点（projects + notify + ci 模块，第三阶段 M1~M2）
+const policySeedVersion = "6" // v6：新增定时任务/脚本库资源点（cron 模块，第四阶段 M1）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
