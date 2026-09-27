@@ -141,6 +141,6 @@ DB 迁移**只加不改不删**（加表/加可空列）。若发布走了改/�
 
 1. **一次性容器的镜像依赖**：compose-run 依赖项目 compose 里有任务服务定义；`docker run` 依赖镜像可拉取（镜像仓库可达性）。执行器两个都支持，任务定义时二选一。
 2. **python 脚本的运行环境**：目标机需 python3（环境探测顺带确认）；脚本依赖第三方库的场景引导用户走"脚本进镜像"。
-3. **cron 表达式解析**：引入 `github.com/robfig/cron/v3`（MIT、Go 生态事实标准、无传递依赖）。注意只用它的**解析器**（`cron.ParseStandard` + `Schedule.Next`）计算 `next_run_at`，不用它的调度器——调度权威保持是平台的扫描型 Job，避免两套调度并存。支持 5 段式 + `@every`。
+3. **cron 表达式解析**：引入 `github.com/robfig/cron/v3`（MIT、Go 生态事实标准、无传递依赖）。注意只用它的**解析器**（`cron.ParseStandard` + `Schedule.Next`）计算 `next_run_at`，不用它的调度器——调度权威保持是平台的扫描型 Job，避免两套调度并存。按用户要求收敛为**只支持标准 5 段式（分 时 日 月 周）**，@ 描述符不收（2026-09-28 变更，与系统 crontab 语义一致）；表单提供"未来 5 次执行时间"实时预览（robfig Schedule.Next 计算）。
 4. **SFTP 大文件传输**：走 SSH 通道限速于带宽；>100MB 提示走 scp/直传（不做成网盘）。
 5. **k3d 与 docker desktop 的兼容性**：k3d 在 mac docker 上成熟；触发主线时先做 0.5 天验证（选无外部依赖的测试项目即可，风险低）。

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { CronJob, CronJobItem, CronScript } from '#/api/cron';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
@@ -12,6 +12,7 @@ import {
   deleteJobApi,
   getJobsApi,
   getScriptsApi,
+  previewScheduleApi,
   triggerJobApi,
   updateJobApi,
 } from '#/api/cron';
@@ -110,7 +111,7 @@ function openCreate() {
     image: '',
     name: '',
     projectName: '',
-    schedule: '@every 1h',
+    schedule: '0 3 * * *',
     scriptId: undefined,
     serverId: undefined,
     service: '',
@@ -118,6 +119,30 @@ function openCreate() {
   });
   formOpen.value = true;
 }
+
+// 表达式预览：输入停 500ms 后请求未来 5 次触发时间（标准 5 段 crontab）
+const previewTimes = ref<string[]>([]);
+const previewError = ref('');
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  () => form.schedule,
+  (expr) => {
+    previewTimes.value = [];
+    previewError.value = '';
+    if (previewTimer) clearTimeout(previewTimer);
+    if (!expr || !formOpen.value) return;
+    previewTimer = setTimeout(async () => {
+      try {
+        const res = await previewScheduleApi(expr);
+        previewTimes.value = (res.times ?? []).map((t) =>
+          new Date(t).toLocaleString('zh-CN', { hour12: false }),
+        );
+      } catch (e: any) {
+        previewError.value = e?.message ?? '表达式不合法';
+      }
+    }, 500);
+  },
+);
 
 function openEdit(item: CronJobItem) {
   const j = item.job;

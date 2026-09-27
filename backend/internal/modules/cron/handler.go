@@ -29,6 +29,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.PUT("/:id", h.saveScript)
 		g.DELETE("/:id", h.deleteScript)
 	}
+	r.Authed.GET("/cron-jobs/preview", h.previewSchedule)
 	j := r.Authed.Group("/cron-jobs")
 	{
 		j.GET("", h.listJobs)
@@ -74,6 +75,22 @@ func (h *Handler) deleteScript(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// previewSchedule GET /cron-jobs/preview?schedule=0 3 * * *&count=5 表单预览未来触发时间。
+func (h *Handler) previewSchedule(c *gin.Context) {
+	expr := c.Query("schedule")
+	if expr == "" {
+		httpx.FailBadRequest(c, "schedule 必填")
+		return
+	}
+	count := atoiDefault(c.Query("count"), 5)
+	times, err := h.svc.SchedulePreview(expr, count)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"times": times})
 }
 
 func (h *Handler) listJobs(c *gin.Context) {

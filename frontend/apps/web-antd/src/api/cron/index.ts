@@ -88,6 +88,13 @@ export async function triggerJobApi(id: number) {
   return requestClient.post<CronRun>(`/cron-jobs/${id}/trigger`);
 }
 
+/** 表达式预览：未来 count 次触发时间（标准 5 段 crontab） */
+export async function previewScheduleApi(schedule: string, count = 5) {
+  return requestClient.get<{ times: string[] }>('/cron-jobs/preview', {
+    params: { count, schedule },
+  });
+}
+
 // ---- 运行历史 ----
 
 export async function getRunsApi(params: {

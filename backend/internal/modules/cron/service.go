@@ -78,8 +78,6 @@ func (s *Service) DeleteScript(ctx context.Context, id uint) error {
 // ---- 任务 CRUD ----
 
 var (
-	// @every 支持多段时长（@every 1h30m）；至少 1 分钟在 parseSchedule 里判
-	scheduleRe = regexp.MustCompile(`^@every\s+(\d+[smhd])+$`)
 	// 镜像名首字符必须字母数字：拒绝前导 -（--privileged 等 docker run 标志注入）
 	imageRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/._:@-]*$`)
 	svcRe   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
@@ -88,24 +86,40 @@ var (
 	commandRe = regexp.MustCompile(`^[a-zA-Z0-9 =:/_.,@%+-]+$`)
 )
 
-// parseSchedule 用 robfig/cron 的解析器算下次触发时间（只用解析器，不用它的调度器：
-// 调度权威保持是本模块的扫描型 Job，见 scheduler.go）。
+// parseSchedule 用 robfig/cron 的解析器解析标准 5 段 crontab 表达式并算下次触发
+// 时间（只用解析器，不用它的调度器：调度权威保持是本模块的扫描型 Job，见
+// scheduler.go）。只收 5 段式（分 时 日 月 周）：@every/@daily 等描述符不收，
+// 与系统 crontab 语义一致，降低使用者的心智分叉。
 func parseSchedule(expr string, from time.Time) (time.Time, error) {
-	if strings.HasPrefix(expr, "@every") {
-		if !scheduleRe.MatchString(expr) {
-			return time.Time{}, fmt.Errorf("不支持的 @every 格式（示例 @every 30m / @every 1h30m，最小 1 分钟）")
-		}
-		d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(expr, "@every")))
-		if err != nil || d < time.Minute {
-			return time.Time{}, fmt.Errorf("@every 间隔须 ≥ 1 分钟")
-		}
-		return from.Add(d), nil
+	if strings.HasPrefix(strings.TrimSpace(expr), "@") {
+		return time.Time{}, fmt.Errorf("只支持标准 5 段 crontab（分 时 日 月 周），不支持 @ 描述符")
 	}
 	sched, err := cron.ParseStandard(expr)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("cron 表达式不合法（5 段式或 @every）: %w", err)
+		return time.Time{}, fmt.Errorf("crontab 表达式不合法（标准 5 段：分 时 日 月 周，如 0 3 * * *）: %w", err)
 	}
 	return sched.Next(from), nil
+}
+
+// SchedulePreview 计算表达式自 now 起的未来 count 次触发时间（表单预览用）。
+func (s *Service) SchedulePreview(expr string, count int) ([]time.Time, error) {
+	if strings.HasPrefix(strings.TrimSpace(expr), "@") {
+		return nil, fmt.Errorf("只支持标准 5 段 crontab（分 时 日 月 周），不支持 @ 描述符")
+	}
+	sched, err := cron.ParseStandard(expr)
+	if err != nil {
+		return nil, fmt.Errorf("crontab 表达式不合法（标准 5 段：分 时 日 月 周，如 0 3 * * *）: %w", err)
+	}
+	if count <= 0 || count > 20 {
+		count = 5
+	}
+	times := make([]time.Time, 0, count)
+	next := time.Now()
+	for len(times) < count {
+		next = sched.Next(next)
+		times = append(times, next)
+	}
+	return times, nil
 }
 
 // validateCarrier 按计划的"脚本类型 × 执行载体"矩阵校验合法组合。
