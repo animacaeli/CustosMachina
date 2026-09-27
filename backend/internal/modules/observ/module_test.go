@@ -68,3 +68,19 @@ func TestComponentLookup(t *testing.T) {
 		t.Fatal("未知组件应返回 nil")
 	}
 }
+
+// O2 地址内嵌 basic auth 时拆出渲染 sink auth 块。
+func TestRenderVectorAuth(t *testing.T) {
+	_, vectorYAML := renderVector("http://foo:bar@10.0.0.1:5080/api/default/custos/_json")
+	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
+		t.Errorf("uri 应去掉 userinfo:\n%s", vectorYAML)
+	}
+	if !strings.Contains(vectorYAML, "user: foo") || !strings.Contains(vectorYAML, "password: bar") {
+		t.Errorf("basic auth 块缺失:\n%s", vectorYAML)
+	}
+	// 无凭据时不渲染 auth 块
+	_, plain := renderVector("http://10.0.0.1:5080/api/default/custos/_json")
+	if strings.Contains(plain, "strategy: basic") {
+		t.Errorf("无凭据不应渲染 auth 块:\n%s", plain)
+	}
+}

@@ -66,7 +66,7 @@ server {
 
 灰度变量说明：`$<proj>_canary_hit`（请求头策略命中为 1）、
 `$<proj>_traffic_split`（流量策略，值 canary/stable）。
-测试入口：`canary-test.<proj>.local:80`（同机 curl --resolve 验证分流）。
+测试入口：`canary-test.<proj>.local:18999`（同机 `curl --resolve canary-test.<proj>.local:18999:127.0.0.1 http://...:18999/` 验证分流；非 80，避免任意 Host 头访问）。
 
 ### 4. 为什么不做运行时 resolver 解析
 

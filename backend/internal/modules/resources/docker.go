@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -48,6 +49,13 @@ func dockerClientFor(srv *Server, cred *credential) (*dc.Client, *ssh.Client, er
 	return cli, sshClient, nil
 }
 
+// ErrCommandTimeout sshRunOutput 超时的哨兵错误（cron 超时强杀等调用方以
+// errors.Is 判定，不靠错误文案匹配）。
+var ErrCommandTimeout = errors.New("命令超时")
+
+// outBuf 上限：超限保留首尾各半（中间丢弃注明），防止长跑任务输出把平台内存/DB 撑爆。
+const outBufMax = 2 << 20 // 2MB
+
 // sshRunOutput 在目标机执行命令并返回合并输出（compose 部署/环境探测用）。
 func sshRunOutput(srv *Server, cred *credential, cmd string, timeout time.Duration) (string, error) {
 	return sshRunOutputWithStdin(srv, cred, cmd, "", timeout)
@@ -88,13 +96,27 @@ func sshRunOutputWithStdin(srv *Server, cred *credential, cmd, stdin string, tim
 		return out.String(), err
 	case <-time.After(timeout):
 		_ = session.Signal(ssh.SIGKILL)
-		return out.String(), fmt.Errorf("命令超时（%s）", timeout)
+		return out.String(), fmt.Errorf("%w（%s）", ErrCommandTimeout, timeout)
 	}
 }
 
 type outBuf struct{ b []byte }
 
 func (o *outBuf) Write(p []byte) (int, error) {
+	// 超限后丢弃中段（保留首尾各 1MB），写入方仍收到"全部已读"不阻塞远端
+	if len(o.b)+len(p) > outBufMax {
+		keep := outBufMax / 2
+		head := o.b
+		if len(head) > keep {
+			head = head[:keep]
+		}
+		tailP := p
+		if len(tailP) > keep {
+			tailP = tailP[len(tailP)-keep:]
+		}
+		o.b = append(append(head, []byte("\n...（输出超 2MB，中段已截断）...\n")...), tailP...)
+		return len(p), nil
+	}
 	o.b = append(o.b, p...)
 	return len(p), nil
 }

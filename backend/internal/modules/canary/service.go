@@ -12,6 +12,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/projlock"
 	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
@@ -208,6 +209,9 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]Policy, int, erro
 func (s *Service) Publish(ctx context.Context, projectID uint, operator string) (int, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 与蓝绿发布共项目锁：两者都整份重写 <proj>.conf，写入时序必须串行化
+	unlock := projlock.Lock(projectID)
+	defer unlock()
 	var ps []Policy
 	if err := s.db.WithContext(ctx).
 		Where("project_id = ? AND enabled = ?", projectID, true).

@@ -59,7 +59,7 @@ func component(name string) *Component {
 	return nil
 }
 
-var urlRe = regexp.MustCompile(`^https?://[a-zA-Z0-9.:/_-]+$`)
+var urlRe = regexp.MustCompile(`^https?://[a-zA-Z0-9.:@/?=&_-]+$`) // 允许 user:pass@ 与查询串（O2 basic auth）
 
 // renderCadvisor cadvisor compose（挂载只读系统路径 + kmsg 设备）。
 func renderCadvisor() string {
@@ -84,7 +84,22 @@ func renderCadvisor() string {
 
 // renderVector vector compose + 采集配置（docker_logs 源 → O2 http sink）。
 // vector.yaml 与 compose 同目录（部署固定目录），以相对路径挂载。
+// O2 地址可内嵌 basic auth（http://user:pass@host/...），拆出后渲染进 sink 的
+// auth 块（OpenObserve 默认开启 basic auth，无凭据会静默 401 丢日志）。
 func renderVector(o2URL string) (composeYAML, vectorYAML string) {
+	uri, authBlock := o2URL, ""
+	if at := strings.LastIndex(o2URL, "@"); at > len("https://") && strings.Contains(o2URL[:at], ":") {
+		schemeEnd := strings.Index(o2URL, "://") + 3
+		creds := o2URL[schemeEnd:at]
+		if sep := strings.Index(creds, ":"); sep > 0 {
+			uri = o2URL[:schemeEnd] + o2URL[at+1:]
+			authBlock = fmt.Sprintf(`    auth:
+      strategy: basic
+      user: %s
+      password: %s
+`, creds[:sep], creds[sep+1:])
+		}
+	}
 	vectorYAML = fmt.Sprintf(`sources:
   docker_logs:
     type: docker_logs
@@ -97,8 +112,8 @@ sinks:
     encoding:
       codec: json
     healthcheck:
-      enabled: false
-`, o2URL)
+      enabled: true
+%s`, uri, authBlock)
 	composeYAML = fmt.Sprintf(`services:
   vector:
     image: %s
@@ -182,9 +197,10 @@ func (s *Service) Deploy(ctx context.Context, serverID uint, component string) (
 		return "", ErrBadComponent
 	}
 	name := deployName(component)
-	// vector.yaml 与 compose 同目录，先落盘（cat > 相对路径依赖部署固定目录约定）
+	// vector.yaml 与 compose 同目录，先落盘（mkdir -p：首次部署时目录尚不存在）
 	if extraFile != "" {
-		cmd := fmt.Sprintf("cat > %s/%s/vector.yaml", "/opt/custos-machina/compose", name)
+		cmd := fmt.Sprintf("mkdir -p %s/%s && cat > %s/%s/vector.yaml",
+			"/opt/custos-machina/compose", name, "/opt/custos-machina/compose", name)
 		if out, err := s.res.RunCommandOn(ctx, serverID, cmd, extraFile, 30*time.Second); err != nil {
 			return out, fmt.Errorf("写入 vector 配置失败: %w", err)
 		}

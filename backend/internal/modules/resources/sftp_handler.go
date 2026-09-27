@@ -2,7 +2,6 @@ package resources
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 
@@ -106,23 +105,15 @@ func (h *Handler) fileUpload(c *gin.Context) {
 		httpx.FailBadRequest(c, "需 multipart 字段 file 与 dir")
 		return
 	}
-	if fh.Size > 100<<20 {
-		httpx.FailBadRequest(c, "文件超过 100MB，请改用 scp/直传（平台不做网盘）")
-		return
-	}
 	f, err := fh.Open()
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	defer f.Close()
-	content, err := io.ReadAll(f)
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
 	target := path.Join(dir, path.Base(fh.Filename))
-	if err := h.svc.SftpWrite(id, target, content); err != nil {
+	// 流式上传（边读边写，不整读内存）；100MB 上限在 SftpUpload 内统一判
+	if err := h.svc.SftpUpload(id, target, f, fh.Size); err != nil {
 		httpx.FailUpstream(c, err.Error())
 		return
 	}

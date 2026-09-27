@@ -143,31 +143,43 @@ async function submitForm() {
     message.warning('请填写完整（名称 / 脚本 / 主机 / 调度）');
     return;
   }
-  const data = { ...form };
-  if (editingId.value) {
-    await updateJobApi(editingId.value, data);
-    message.success('已更新');
-  } else {
-    await createJobApi(data);
-    message.success('创建成功');
+  try {
+    const data = { ...form };
+    if (editingId.value) {
+      await updateJobApi(editingId.value, data);
+      message.success('已更新');
+    } else {
+      await createJobApi(data);
+      message.success('创建成功');
+    }
+    formOpen.value = false;
+    await load();
+  } catch {
+    // 业务错误由拦截器提示，这里拦住避免 unhandled rejection
   }
-  formOpen.value = false;
-  await load();
 }
 
 async function onDelete(item: CronJobItem) {
-  await deleteJobApi(item.job.id);
-  message.success(`已删除 ${item.job.name}`);
-  await load();
+  try {
+    await deleteJobApi(item.job.id);
+    message.success(`已删除 ${item.job.name}`);
+    await load();
+  } catch {
+    // 运行中等业务错误由拦截器提示
+  }
 }
 
 const triggering = ref(0);
+const runsNonce = ref(0);
 async function onTrigger(item: CronJobItem) {
   triggering.value = item.job.id;
   try {
     await triggerJobApi(item.job.id);
     message.success('已触发，稍后在运行历史查看结果');
     showRuns(item);
+    runsNonce.value += 1; // 抽屉已开时强制刷新历史
+  } catch {
+    // Forbid 等业务错误由拦截器提示
   } finally {
     triggering.value = 0;
   }

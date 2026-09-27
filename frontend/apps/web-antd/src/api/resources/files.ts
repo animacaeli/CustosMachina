@@ -20,8 +20,15 @@ export async function readFileApi(serverId: number, path: string) {
   });
 }
 
-export function fileDownloadUrl(serverId: number, path: string) {
-  return `/api/server-files/${serverId}/download?path=${encodeURIComponent(path)}`;
+/**
+ * 取带一次性 ticket 的下载 URL（浏览器 <a>/window.open 导航不带 Authorization
+ * header，鉴权无 cookie——无 ticket 必 401）。
+ */
+export async function fileDownloadUrl(serverId: number, path: string) {
+  const { ticket } = await requestClient.post<{ ticket: string }>(
+    '/auth/tickets',
+  );
+  return `/api/server-files/${serverId}/download?path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(ticket)}`;
 }
 
 export async function writeFileApi(serverId: number, path: string, content: string) {

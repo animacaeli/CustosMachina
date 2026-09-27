@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/custos-machina/backend/internal/pkg/jobs"
@@ -19,9 +20,10 @@ const missedGrace = 10 * time.Minute
 // 任务增删改不需要重启调度 goroutine。
 type Scheduler struct{}
 
-// NewScheduler 注册扫描任务；启动前先把宕机遗留的 running 记录标记为 unknown。
+// NewScheduler 注册扫描任务；启动前先把宕机遗留的 running 记录标记为 unknown，
+// 并按运行标签清扫目标机上可能残留的一次性容器与脚本文件。
 func NewScheduler(svc *Service) (*Scheduler, func(), error) {
-	svc.markDanglingUnknown()
+	svc.recoverDangling()
 	g := jobs.NewGroup(jobs.Job{
 		Name: "cron:sched", Interval: 30 * time.Second, Fn: svc.scanDue,
 	})
@@ -29,15 +31,45 @@ func NewScheduler(svc *Service) (*Scheduler, func(), error) {
 	return &Scheduler{}, g.Stop, nil
 }
 
-// markDanglingUnknown 平台重启恢复：上次进程发起、结果未知的 running 记录标 unknown，
-// 不自动重跑（计划的错失策略）。
-func (s *Service) markDanglingUnknown() {
+// recoverDangling 平台重启恢复：上次进程发起、结果未知的 running 记录标 unknown
+// （不自动重跑，计划的错失策略），并尽力清扫目标机上残留的一次性容器与脚本文件
+// （SSH 会话断开后 docker run 的 --rm 清理不会触发，容器会一直跑到自然退出）。
+func (s *Service) recoverDangling() {
+	var dangling []CronRun
+	if err := s.db.Where("status = ?", RunRunning).Find(&dangling).Error; err != nil {
+		logger.Warnf("[cron] 查询悬空运行记录失败: %v", err)
+		return
+	}
+	if len(dangling) == 0 {
+		return
+	}
 	res := s.db.Model(&CronRun{}).Where("status = ?", RunRunning).
 		Updates(map[string]any{"status": RunUnknown, "output": "平台重启，执行结果未知（不自动重跑）"})
 	if res.Error != nil {
 		logger.Warnf("[cron] 标记悬空运行记录失败: %v", res.Error)
-	} else if res.RowsAffected > 0 {
-		logger.Infof("[cron] %d 条运行中记录因平台重启标记为 unknown", res.RowsAffected)
+		return
+	}
+	logger.Infof("[cron] %d 条运行中记录因平台重启标记为 unknown", len(dangling))
+	// 按 job 的目标机分组，每台一条命令清容器 + 清脚本（best-effort，失败只记日志）
+	servers := map[uint][]uint{}
+	for _, r := range dangling {
+		var job CronJob
+		if err := s.db.Select("server_id").First(&job, r.JobID).Error; err != nil {
+			continue // job 已删：容器无标签可查，留给目标机自然回收
+		}
+		servers[job.ServerID] = append(servers[job.ServerID], r.ID)
+	}
+	ctx := context.Background()
+	for serverID, runIDs := range servers {
+		var parts []string
+		for _, id := range runIDs {
+			parts = append(parts,
+				fmt.Sprintf("docker ps -aq --filter label=custos.cron.run=%d | xargs -r docker kill", id),
+				fmt.Sprintf("rm -f /opt/custos-machina/cron/task-%d.sh /opt/custos-machina/cron/task-%d.py", id, id))
+		}
+		if out, err := s.ssh.RunCommandOn(ctx, serverID, strings.Join(parts, "; "), "", time.Minute); err != nil {
+			logger.Warnf("[cron] 孤儿容器清扫失败 server=%d: %v\n%s", serverID, err, out)
+		}
 	}
 }
 

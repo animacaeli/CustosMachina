@@ -140,11 +140,15 @@ const mkdirName = ref('');
 async function doMkdir() {
   if (!props.serverId || !mkdirName.value) return;
   const p = cwd.value === '/' ? `/${mkdirName.value}` : `${cwd.value}/${mkdirName.value}`;
-  await mkdirApi(props.serverId, p);
-  message.success('已创建');
-  mkdirOpen.value = false;
-  mkdirName.value = '';
-  load();
+  try {
+    await mkdirApi(props.serverId, p);
+    message.success('已创建');
+    mkdirOpen.value = false;
+    mkdirName.value = '';
+    load();
+  } catch {
+    // 业务错误由拦截器提示
+  }
 }
 
 const renameTarget = ref<FileEntry | null>(null);
@@ -159,10 +163,29 @@ async function doRename() {
   if (!props.serverId || !renameTarget.value) return;
   const from = cwd.value === '/' ? `/${renameTarget.value.name}` : `${cwd.value}/${renameTarget.value.name}`;
   const to = cwd.value === '/' ? `/${renameTo.value}` : `${cwd.value}/${renameTo.value}`;
-  await renameApi(props.serverId, from, to);
-  message.success('已重命名');
-  renameOpen.value = false;
-  load();
+  try {
+    await renameApi(props.serverId, from, to);
+    message.success('已重命名');
+    renameOpen.value = false;
+    load();
+  } catch {
+    // 业务错误由拦截器提示
+  }
+}
+
+const downloading = ref('');
+async function onDownload(e: FileEntry) {
+  if (!props.serverId) return;
+  const p = cwd.value === '/' ? `/${e.name}` : `${cwd.value}/${e.name}`;
+  downloading.value = e.name;
+  try {
+    const url = await fileDownloadUrl(props.serverId, p);
+    window.open(url, '_blank');
+  } catch {
+    // ticket 签发失败由拦截器提示
+  } finally {
+    downloading.value = '';
+  }
 }
 
 async function onRemove(e: FileEntry) {
@@ -227,9 +250,14 @@ async function onRemove(e: FileEntry) {
       <a-table-column :width="190">
         <template #default="{ record }">
           <template v-if="!record.isDir">
-            <a :href="serverId ? fileDownloadUrl(serverId, cwd === '/' ? `/${record.name}` : `${cwd}/${record.name}`) : undefined" target="_blank">
-              <a-button size="small" type="link">下载</a-button>
-            </a>
+            <a-button
+              size="small"
+              type="link"
+              :loading="downloading === record.name"
+              @click="onDownload(record)"
+            >
+              下载
+            </a-button>
             <a-button
               v-if="canWrite && record.size <= 1024 * 1024"
               size="small"

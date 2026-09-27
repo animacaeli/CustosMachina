@@ -10,6 +10,8 @@ defineOptions({ name: 'CronRunsDrawer' });
 const props = defineProps<{
   jobId?: number;
   jobName?: string;
+  /** 递增即强制刷新（抽屉已开且 jobId 不变时 watch 不触发） */
+  nonce?: number;
   open: boolean;
 }>();
 
@@ -37,9 +39,9 @@ async function load() {
 }
 
 watch(
-  () => [props.open, props.jobId],
-  ([open]) => {
-    if (open) {
+  () => [props.open, props.jobId, props.nonce],
+  () => {
+    if (props.open) {
       page.value = 1;
       load();
     }

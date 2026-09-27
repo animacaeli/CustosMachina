@@ -74,7 +74,7 @@ func renderNginx(proj string, policies []Policy, activeColor string) (string, er
 		fmt.Fprintf(&b, "upstream %s-canary-upstream { server %s-canary-server-1:80; }\n", proj, proj)
 	}
 	fmt.Fprintf(&b, "server {\n")
-	fmt.Fprintf(&b, "\tlisten 80;\n\tserver_name canary-test.%s.local;\n", proj)
+	fmt.Fprintf(&b, "\tlisten 18999;\n\tserver_name canary-test.%s.local;\n", proj)
 	fmt.Fprintf(&b, "\tlocation = /_canary_check { return 200 \"backend=$backend\\n\"; }\n")
 	fmt.Fprintf(&b, "\tlocation / {\n")
 	switch {

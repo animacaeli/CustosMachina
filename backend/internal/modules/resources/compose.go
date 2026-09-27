@@ -447,14 +447,14 @@ if [ -n "$NG" ]; then
   BAK="$DIR/$PROJ.conf.bak.$(date +%Y%m%d%H%M%S)"
   [ -f "$DIR/$PROJ.conf" ] && cp "$DIR/$PROJ.conf" "$BAK" || true
   cat > "$DIR/$PROJ.conf"
-  if "$NG" -t 2>&1; then
-    "$NG" -s reload 2>&1
-  else
-    echo "nginx -t failed, restoring backup" >&2
-    cp "$BAK" "$DIR/$PROJ.conf" 2>/dev/null || true
-    exit 1
+  # -t 或 reload 任一失败都还原备份：磁盘 conf 绝不能停留在指向已销毁容器的版本
+  if "$NG" -t 2>&1 && "$NG" -s reload 2>&1; then
+    ls -t "$DIR/$PROJ.conf.bak."* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    exit 0
   fi
-  exit 0
+  echo "nginx -t/reload failed, restoring backup" >&2
+  cp "$BAK" "$DIR/$PROJ.conf" 2>/dev/null || true
+  exit 1
 fi
 CID=$(docker ps --format '{{.Names}}' | grep -x nginx | head -1)
 [ -n "$CID" ] || { echo "nginx not found (host or container)" >&2; exit 127; }
@@ -463,23 +463,22 @@ if [ -n "$HOSTDIR" ] && [ -d "$HOSTDIR" ]; then
   BAK="$HOSTDIR/$PROJ.conf.bak.$(date +%Y%m%d%H%M%S)"
   [ -f "$HOSTDIR/$PROJ.conf" ] && cp "$HOSTDIR/$PROJ.conf" "$BAK" || true
   cat > "$HOSTDIR/$PROJ.conf"
-  if docker exec "$CID" nginx -t 2>&1; then
-    docker exec "$CID" nginx -s reload 2>&1
-  else
-    echo "nginx -t failed, restoring backup" >&2
-    cp "$BAK" "$HOSTDIR/$PROJ.conf" 2>/dev/null || true
-    exit 1
+  if docker exec "$CID" nginx -t 2>&1 && docker exec "$CID" nginx -s reload 2>&1; then
+    ls -t "$HOSTDIR/$PROJ.conf.bak."* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    exit 0
   fi
+  echo "nginx -t/reload failed, restoring backup" >&2
+  cp "$BAK" "$HOSTDIR/$PROJ.conf" 2>/dev/null || true
+  exit 1
 else
   docker exec "$CID" sh -c "cp /etc/nginx/conf.d/$PROJ.conf /etc/nginx/conf.d/$PROJ.conf.bak 2>/dev/null || true"
   docker exec -i "$CID" sh -c "cat > /etc/nginx/conf.d/$PROJ.conf"
-  if docker exec "$CID" nginx -t 2>&1; then
-    docker exec "$CID" nginx -s reload 2>&1
-  else
-    echo "nginx -t failed, restoring backup" >&2
-    docker exec "$CID" sh -c "cp /etc/nginx/conf.d/$PROJ.conf.bak /etc/nginx/conf.d/$PROJ.conf 2>/dev/null || true"
-    exit 1
+  if docker exec "$CID" nginx -t 2>&1 && docker exec "$CID" nginx -s reload 2>&1; then
+    exit 0
   fi
+  echo "nginx -t/reload failed, restoring backup" >&2
+  docker exec "$CID" sh -c "cp /etc/nginx/conf.d/$PROJ.conf.bak /etc/nginx/conf.d/$PROJ.conf 2>/dev/null || true"
+  exit 1
 fi
 `
 	cmd := fmt.Sprintf("PROJ=%s sh -c %s", shellQuote(projName), shellQuote(script))
@@ -576,7 +575,7 @@ func (s *Service) WaitComposeHealthy(ctx context.Context, serverID uint, name st
 	if err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf("docker compose -p %s ps --all --format json", shellQuote(name))
+	cmd := fmt.Sprintf("docker compose -p %s ps -a --format json", shellQuote(name))
 	deadline := time.Now().Add(timeout)
 	var last string
 	for {

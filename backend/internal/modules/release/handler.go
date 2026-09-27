@@ -1,6 +1,7 @@
 package release
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -89,7 +90,9 @@ func (h *Handler) execute(c *gin.Context) {
 			return
 		}
 	}
-	rel, err := h.svc.Execute(c.Request.Context(), in, operatorOf(c))
+	// 发布是长链路（门禁最长 3 分钟 + drain 30s）：脱离 request ctx，
+	// 客户端断开不产生"conf 已切但记录未落"的半完成状态
+	rel, err := h.svc.Execute(context.WithoutCancel(c.Request.Context()), in, operatorOf(c))
 	if err != nil {
 		httpx.FailUpstream(c, err.Error())
 		return

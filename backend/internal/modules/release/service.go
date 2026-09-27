@@ -244,14 +244,14 @@ func (s *Service) Rollback(ctx context.Context, releaseID uint, operator string)
 	rel, err := s.Execute(ctx, ReleaseInput{
 		ProjectID: old.ProjectID, EnvType: old.EnvType, Tag: old.Tag,
 	}, operator)
-	if err != nil {
-		return nil, err
+	// 无论成功失败，只要记录已落库就补上指向关系（failed 的回滚记录同样需要溯源）
+	if rel != nil && rel.ID != 0 {
+		rel.RollbackOf = &old.ID
+		if err := s.db.WithContext(ctx).Model(rel).Update("rollback_of", old.ID).Error; err != nil {
+			return nil, err
+		}
 	}
-	rel.RollbackOf = &old.ID
-	if err := s.db.WithContext(ctx).Model(rel).Update("rollback_of", old.ID).Error; err != nil {
-		return nil, err
-	}
-	return rel, nil
+	return rel, err
 }
 
 // List 分页发布历史。

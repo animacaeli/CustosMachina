@@ -76,15 +76,19 @@ async function submitForm() {
     message.warning('请填写脚本名称');
     return;
   }
-  if (editingId.value) {
-    await updateScriptApi(editingId.value, { ...form });
-    message.success('已更新');
-  } else {
-    await createScriptApi({ ...form });
-    message.success('创建成功');
+  try {
+    if (editingId.value) {
+      await updateScriptApi(editingId.value, { ...form });
+      message.success('已更新');
+    } else {
+      await createScriptApi({ ...form });
+      message.success('创建成功');
+    }
+    formOpen.value = false;
+    await load();
+  } catch {
+    // 业务错误由拦截器提示
   }
-  formOpen.value = false;
-  await load();
 }
 
 async function onDelete(s: CronScript) {

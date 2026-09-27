@@ -150,6 +150,32 @@ func TestBlueGreenHealthGateFailure(t *testing.T) {
 	}
 }
 
+// ---- BGState 落库失败：流量已切到健康新域，绝不能销毁（P0 修复的回归） ----
+
+func TestBlueGreenStateSaveFailureKeepsNewDomain(t *testing.T) {
+	svc, d, _ := setupBG(t)
+	svc.db.Save(&BGState{ProjectID: 1, ActiveColor: ColorBlue})
+	// 注入落库失败：删掉 blue_green_states 表使 Save 必败
+	if err := svc.db.Migrator().DropTable(&BGState{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	rel, err := svc.executeBlueGreen(ctx, &projectRow{Name: "demo"},
+		&EnvTargetRow{ServerID: 1, Runtime: "compose"},
+		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}, "t", "y")
+	if err == nil {
+		t.Fatal("落库失败应返回错误")
+	}
+	_ = rel
+	if len(d.destroyed) != 0 {
+		t.Errorf("conf 已切换后绝不能销毁新域, got %v", d.destroyed)
+	}
+	// 恢复表供后续断言
+	if err := svc.db.AutoMigrate(&BGState{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // ---- conf 切换失败（nginx -t 不过）：线上零影响，销毁新域 ----
 
 func TestBlueGreenConfFailureNoImpact(t *testing.T) {

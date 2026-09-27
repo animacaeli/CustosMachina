@@ -71,8 +71,12 @@ onMounted(async () => {
 watch(serverId, loadStatus);
 
 async function saveO2Url() {
-  await setO2UrlApi(o2Url.value.trim());
-  message.success('O2 地址已保存');
+  try {
+    await setO2UrlApi(o2Url.value.trim());
+    message.success('O2 地址已保存');
+  } catch {
+    // URL 校验等业务错误由拦截器提示
+  }
 }
 
 async function onDeploy(comp: ObservComponent) {
@@ -85,6 +89,8 @@ async function onDeploy(comp: ObservComponent) {
       console.log('[observ]', res.output);
     }
     await loadStatus();
+  } catch {
+    // 部署失败由拦截器提示
   } finally {
     acting.value = '';
   }
@@ -97,6 +103,8 @@ async function onUninstall(comp: ObservComponent) {
     await uninstallObservApi(serverId.value, comp.name);
     message.success(`${comp.name} 已卸载`);
     await loadStatus();
+  } catch {
+    // 卸载失败由拦截器提示
   } finally {
     acting.value = '';
   }

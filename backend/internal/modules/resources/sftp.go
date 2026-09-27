@@ -18,7 +18,8 @@ import (
 
 const (
 	sftpIODialTimeout  = 20 * time.Second
-	sftpMaxEditBytes   = 1 << 20 // 1MB：在线编辑上限（超出提示下载改完再传）
+	sftpMaxEditBytes   = 1 << 20   // 1MB：在线编辑上限（超出提示下载改完再传）
+	sftpMaxUploadBytes = 100 << 20 // 100MB：上传上限（再大走 scp/直传）
 	sftpMaxListEntries = 2000
 )
 
@@ -122,33 +123,76 @@ func (s *Service) SftpRead(serverID uint, name string) (string, error) {
 	return string(buf), nil
 }
 
-// SftpWrite 覆盖写小文件（在线编辑保存 / 上传共用；先备份同目录 .bak）。
+// backupAndSwap 覆盖写的安全序列：写 tmp → 时间戳备份原文件 → tmp 换到原名。
+// tmp 先落盘保证"写失败原文件不动"（直接 rename 原文件后 Create 失败会丢原文件）。
+func backupAndSwap(client *sftp.Client, name string, write func(*sftp.File) error) error {
+	tmp := name + ".custos-tmp"
+	tf, err := client.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败（目录无权限?）: %w", err)
+	}
+	if err := write(tf); err != nil {
+		tf.Close()
+		client.Remove(tmp) // 清理半写的 tmp，原文件未动
+		return fmt.Errorf("写入临时文件失败: %w", err)
+	}
+	if err := tf.Close(); err != nil {
+		return err
+	}
+	if _, err := client.Stat(name); err == nil {
+		bak := fmt.Sprintf("%s.bak.%d", name, time.Now().Unix())
+		if err := client.Rename(name, bak); err != nil {
+			client.Remove(tmp)
+			return fmt.Errorf("备份原文件失败: %w", err)
+		}
+	}
+	if err := client.Rename(tmp, name); err != nil {
+		return fmt.Errorf("落盘失败（原文件已备份）: %w", err)
+	}
+	return nil
+}
+
+// SftpWrite 覆盖写小文件（在线编辑保存；>1MB 拒绝，大文件走 SftpUpload）。
 func (s *Service) SftpWrite(serverID uint, name string, content []byte) error {
 	name, err := normalizeRemotePath(name)
 	if err != nil {
 		return err
 	}
 	if int64(len(content)) > sftpMaxEditBytes {
-		return fmt.Errorf("内容超过 1MB 上限")
+		return fmt.Errorf("内容超过 1MB 上限（大文件请走上传）")
 	}
 	client, closeFn, err := s.sftpClient(serverID)
 	if err != nil {
 		return err
 	}
 	defer closeFn()
-	// 存在则备份（覆盖写前的最小安全网）
-	if _, err := client.Stat(name); err == nil {
-		if err := client.Rename(name, name+".bak"); err != nil {
-			return fmt.Errorf("备份原文件失败: %w", err)
-		}
-	}
-	f, err := client.Create(name)
-	if err != nil {
-		return fmt.Errorf("创建文件失败（目录无权限?）: %w", err)
-	}
-	defer f.Close()
-	_, werr := f.Write(content)
+	werr := backupAndSwap(client, name, func(f *sftp.File) error {
+		_, err := f.Write(content)
+		return err
+	})
 	s.auditSftp(serverID, "write", name, werr)
+	return werr
+}
+
+// SftpUpload 流式上传（multipart 大文件；上限 100MB，边读边写不整读内存）。
+func (s *Service) SftpUpload(serverID uint, name string, r io.Reader, size int64) error {
+	nm, err := normalizeRemotePath(name)
+	if err != nil {
+		return err
+	}
+	if size > sftpMaxUploadBytes {
+		return fmt.Errorf("文件超过 100MB 上限，请改用 scp/直传")
+	}
+	client, closeFn, err := s.sftpClient(serverID)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	werr := backupAndSwap(client, nm, func(f *sftp.File) error {
+		_, err := io.Copy(f, io.LimitReader(r, sftpMaxUploadBytes+1))
+		return err
+	})
+	s.auditSftp(serverID, "upload", nm, werr)
 	return werr
 }
 

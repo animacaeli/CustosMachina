@@ -145,8 +145,12 @@ var defaultPolicies = [][]string{
 	{"dev", "/alerts/*", "GET"},
 	{"guest", "/services", "GET"},
 	{"guest", "/services/*", "GET"},
-	// v6（第四阶段 M1）：定时任务/脚本库。管理 admin（中间件全量放行，此处不列）；
-	// ops/dev 只读列表与运行历史；手动触发在 handler 层再拦一层仅管理员
+	// v6→v7（第四阶段 M1）：定时任务/脚本库。写操作 admin 角色（计划"仅 admin 可建可改"，
+	// 超管由中间件放行）；ops/dev 只读列表与运行历史；手动触发在 handler 层再拦一层 IsAdmin
+	{"admin", "/cron-scripts", "GET|POST|PUT|DELETE"},
+	{"admin", "/cron-scripts/*", "GET|PUT|DELETE"},
+	{"admin", "/cron-jobs", "GET|POST|PUT|DELETE"},
+	{"admin", "/cron-jobs/*", "GET|POST|PUT|DELETE"},
 	{"ops", "/cron-scripts", "GET"},
 	{"ops", "/cron-jobs", "GET"},
 	{"ops", "/cron-runs", "GET"},
@@ -171,7 +175,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "6" // v6：新增定时任务/脚本库资源点（cron 模块，第四阶段 M1）
+const policySeedVersion = "7" // v7：observ/server-files 资源点 + admin 的 cron 写权限（第四阶段 M3/M4 及审核修复）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -271,6 +275,11 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v4→v5：projects/notify-groups 对 admin（新增）与 ops/dev（只读）都是新资源点
 		if len(ps) > 0 && oldVersion == "4" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v5/v6→v7：cron 增量资源点在 v6 下发的部署里只对部分角色生效过，
+		// observ/server-files 对 ops/dev（以及 admin 的 cron 写权限）都需逐条补齐
+		if len(ps) > 0 && (oldVersion == "5" || oldVersion == "6") {
 			entryLevelSeed[p[0]] = true
 		}
 	}

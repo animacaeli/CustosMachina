@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
@@ -76,9 +78,14 @@ func (s *Service) DeleteScript(ctx context.Context, id uint) error {
 // ---- 任务 CRUD ----
 
 var (
-	scheduleRe = regexp.MustCompile(`^@every\s+\d+[smhd]$`)
-	imageRe    = regexp.MustCompile(`^[a-zA-Z0-9/._:@-]+$`)
-	svcRe      = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	// @every 支持多段时长（@every 1h30m）；至少 1 分钟在 parseSchedule 里判
+	scheduleRe = regexp.MustCompile(`^@every\s+(\d+[smhd])+$`)
+	// 镜像名首字符必须字母数字：拒绝前导 -（--privileged 等 docker run 标志注入）
+	imageRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/._:@-]*$`)
+	svcRe   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	// 附加参数白名单：字母数字与安全的分隔符，杜绝 shell 元字符（;|&$` 等会
+	// 在宿主机 sh -c 里执行，绕过"执行=一次性容器"的沙箱模型）
+	commandRe = regexp.MustCompile(`^[a-zA-Z0-9 =:/_.,@%+-]+$`)
 )
 
 // parseSchedule 用 robfig/cron 的解析器算下次触发时间（只用解析器，不用它的调度器：
@@ -86,7 +93,7 @@ var (
 func parseSchedule(expr string, from time.Time) (time.Time, error) {
 	if strings.HasPrefix(expr, "@every") {
 		if !scheduleRe.MatchString(expr) {
-			return time.Time{}, fmt.Errorf("不支持的 @every 格式（示例 @every 1h30m）")
+			return time.Time{}, fmt.Errorf("不支持的 @every 格式（示例 @every 30m / @every 1h30m，最小 1 分钟）")
 		}
 		d, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(expr, "@every")))
 		if err != nil || d < time.Minute {
@@ -166,6 +173,9 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	if _, err := parseSchedule(in.Schedule, time.Now()); err != nil {
 		return nil, err
 	}
+	if in.Command != "" && !commandRe.MatchString(in.Command) {
+		return nil, fmt.Errorf("附加参数含非法字符（只允许字母数字与 =:/_.,@%%+- 和空格）")
+	}
 
 	var job *CronJob
 	if id == 0 {
@@ -200,6 +210,11 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 }
 
 func (s *Service) DeleteJob(ctx context.Context, id uint) error {
+	var running int64
+	if err := s.db.WithContext(ctx).Model(&CronRun{}).
+		Where("job_id = ? AND status = ?", id, RunRunning).Count(&running).Error; err == nil && running > 0 {
+		return fmt.Errorf("任务正在执行中，请等待结束后再删除")
+	}
 	return s.db.WithContext(ctx).Delete(&CronJob{}, id).Error
 }
 
@@ -275,10 +290,20 @@ func (s *Service) Trigger(ctx context.Context, jobID uint) (*CronRun, error) {
 	return run, nil
 }
 
+// runMu 串行化 startRun：Count+Create 必须原子，否则手动触发与调度并发时
+// 双方都数到 0 各起一条 running（Forbid 失效双跑）。进程内锁足够（平台单实例，
+// 与 pkg/jobs 的假设一致）。
+var runMu sync.Mutex
+
 // startRun 落一条 running 记录；并发策略 Forbid：已有 running 则拒绝。
 func (s *Service) startRun(job *CronJob, trigger string) (*CronRun, bool) {
+	runMu.Lock()
+	defer runMu.Unlock()
 	var running int64
-	s.db.Model(&CronRun{}).Where("job_id = ? AND status = ?", job.ID, RunRunning).Count(&running)
+	if err := s.db.Model(&CronRun{}).Where("job_id = ? AND status = ?", job.ID, RunRunning).Count(&running).Error; err != nil {
+		logger.Warnf("[cron] 查询运行中记录失败 job=%d: %v", job.ID, err)
+		return nil, false // 查不动就不跑：宁可漏跑不可双跑
+	}
 	if running > 0 {
 		return nil, false
 	}
@@ -295,6 +320,7 @@ func (s *Service) startRun(job *CronJob, trigger string) (*CronRun, bool) {
 }
 
 func (s *Service) finishRun(run *CronRun, status, output string, start time.Time) {
+	output = truncateUTF8(output, 64*1024) // 所有路径统一截断（成功/失败/超时）
 	now := time.Now()
 	run.Status, run.Output, run.FinishedAt = status, output, &now
 	run.DurationSecs = int(now.Sub(start).Seconds())
@@ -336,6 +362,17 @@ func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel str
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
 
+// truncateUTF8 按字节截断但回退到 rune 边界（防止切碎多字节字符出非法 UTF-8）。
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n-- // 截点落在多字节字符中间：回退到 rune 起点
+	}
+	return s[:n] + "\n...（输出超 64KB 已截断）"
+}
+
 // execute 上传脚本 → 起一次性容器 → 超时强杀 → 落结果与审计。
 func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 	start := time.Now()
@@ -352,7 +389,7 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 	if script.Type == ScriptShell || script.Type == ScriptPython {
 		ext := map[string]string{ScriptShell: "sh", ScriptPython: "py"}[script.Type]
 		hostScriptPath = fmt.Sprintf("/opt/custos-machina/cron/task-%d.%s", run.ID, ext)
-		mkdir := fmt.Sprintf("mkdir -p /opt/custos-machina/cron && cat > %s && chmod 600 %s", hostScriptPath, hostScriptPath)
+		mkdir := fmt.Sprintf("mkdir -p /opt/custos-machina/cron && cat > %s && chmod 644 %s", hostScriptPath, hostScriptPath)
 		if out, err := s.ssh.RunCommandOn(ctx, job.ServerID, mkdir, script.Content, 30*time.Second); err != nil {
 			s.finishRun(run, RunFailed, fmt.Sprintf("上传脚本失败: %v\n%s", err, out), start)
 			s.audit(ctx, job, run, false)
@@ -367,7 +404,7 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 	}
 	out, err := s.ssh.RunCommandOn(ctx, job.ServerID, cmd, "", timeout)
 	if err != nil {
-		if strings.Contains(err.Error(), "超时") {
+		if errors.Is(err, resources.ErrCommandTimeout) {
 			// SSH 会话已杀，容器可能还在跑：按运行标签强杀
 			if killOut, killErr := s.ssh.RunCommandOn(ctx, job.ServerID, killCmd, "", 30*time.Second); killErr != nil {
 				out += fmt.Sprintf("\n[超时强杀失败: %v\n%s]", killErr, killOut)
@@ -379,10 +416,6 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 		s.finishRun(run, RunFailed, fmt.Sprintf("%v\n%s", err, out), start)
 		s.audit(ctx, job, run, false)
 		return
-	}
-	// 截断留痕（SQLite/MySQL text 足够，但防异常大输出）
-	if len(out) > 64*1024 {
-		out = out[:64*1024] + "\n...（输出超 64KB 已截断）"
 	}
 	s.finishRun(run, RunSuccess, out, start)
 	s.audit(ctx, job, run, true)

@@ -114,6 +114,8 @@ async function doDeploy(rel: ReleaseItem) {
     }
     page.value = 1;
     await load().catch((error) => console.warn('[load]', error));
+  } catch {
+    // 部署错误由拦截器提示
   } finally {
     releasing.value = false;
     deployingTag.value = null;
@@ -186,6 +188,8 @@ async function doRelease() {
     selectedTag.value = undefined;
     page.value = 1;
     await load().catch((error) => console.warn('[load]', error));
+  } catch {
+    // 发布错误由拦截器提示
   } finally {
     releasing.value = false;
   }
