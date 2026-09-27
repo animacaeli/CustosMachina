@@ -153,6 +153,13 @@ var defaultPolicies = [][]string{
 	{"dev", "/cron-scripts", "GET"},
 	{"dev", "/cron-jobs", "GET"},
 	{"dev", "/cron-runs", "GET"},
+	// v6（M3）：观测组件一键部署。admin/ops 可部署管理，dev 只读
+	{"admin", "/observ", "GET|POST|PUT"},
+	{"admin", "/observ/*", "GET|POST|PUT"},
+	{"ops", "/observ", "GET|POST|PUT"},
+	{"ops", "/observ/*", "GET|POST|PUT"},
+	{"dev", "/observ", "GET"},
+	{"dev", "/observ/*", "GET"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，

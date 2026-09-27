@@ -16,6 +16,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/observ"
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/modules/release"
@@ -76,6 +77,8 @@ func InitializeServer() (*server.Server, func(), error) {
 	releaseService := release.NewService(db, ciService, resourcesService, notifyService, projectsService, cipher, canaryService)
 	releaseHandler := release.NewHandler(releaseService)
 	canaryHandler := canary.NewHandler(canaryService)
+	observService := observ.NewService(db, resourcesService)
+	observHandler := observ.NewHandler(observService)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService)
 	slotsHandler := slots.NewHandler(slotsService)
 	cronService := cron.NewService(db, resourcesService)
@@ -104,7 +107,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, slotsHandler, cronHandler, cronService, scheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService)
+	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

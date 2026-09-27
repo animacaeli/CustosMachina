@@ -15,6 +15,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/observ"
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/modules/release"
@@ -63,6 +64,7 @@ func ProvideModules(
 	ciMod *ci.Handler,
 	releaseMod *release.Handler,
 	canaryMod *canary.Handler,
+	observH *observ.Handler,
 	slotsMod *slots.Handler,
 	cronH *cronmod.Handler,
 	cronSvc *cronmod.Service,
@@ -82,7 +84,7 @@ func ProvideModules(
 	// 桥接：canary 渲染 conf 时取蓝绿活跃色（release→canary 单向依赖，
 	// color getter 事后注入避免构造环）
 	canarySvc.SetColorGetter(releaseSvc)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -107,11 +109,15 @@ var moduleSet = wire.NewSet(
 	release.Set,
 	canary.Set,
 	slots.Set,
+	observ.Set,
 	cronmod.Set,
 	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
 	// cron 的 Runner（SSH 执行 + 事件审计）同样由 resources.Service 实现
 	wire.Bind(new(cronmod.Runner), new(*resources.Service)),
+	// release 的 deployer/confRenderer 接口化便于测试，实现仍是 resources/canary
+	wire.Bind(new(release.Deployer), new(*resources.Service)),
+	wire.Bind(new(release.ConfRenderer), new(*canary.Service)),
 	// ci/release/canary/slots 通过只读投影取项目数据（替代跨模块直读表）
 	wire.Bind(new(projects.Reader), new(*projects.Service)),
 	ProvideModules,

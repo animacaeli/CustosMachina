@@ -33,6 +33,16 @@ const routes: RouteRecordRaw[] = [
           title: '主机分组',
         },
       },
+      {
+        name: 'ResourcesObserv',
+        path: 'observ',
+        component: () => import('#/views/resources/observ.vue'),
+        meta: {
+          icon: 'lucide:activity',
+          authority: ['superadmin', 'admin', 'ops'],
+          title: '观测组件',
+        },
+      },
     ],
   },
 ];

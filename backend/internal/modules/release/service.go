@@ -23,11 +23,11 @@ var ErrNotFound = errors.New("发布记录不存在")
 type Service struct {
 	db     *gorm.DB
 	ci     *ci.Service
-	res    deployer // *resources.Service（接口化便于测试，见 bluegreen.go）
+	res    Deployer // *resources.Service（接口化便于测试，见 bluegreen.go）
 	notify *notify.Service
 	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 	cipher *crypto.Cipher  // registry 凭据解密
-	canary confRenderer    // 整份 nginx conf 单写者（蓝绿切换时取整份配置；依赖单向：release→canary）
+	canary ConfRenderer    // 整份 nginx conf 单写者（蓝绿切换时取整份配置；依赖单向：release→canary）
 }
 
 // registryCred 项目绑定的 registry 凭据（namespace 隔离：镜像路径里的
@@ -79,7 +79,7 @@ func (s *Service) decryptRegistryCred(enc string) ([]string, error) {
 	return parts, nil
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc deployer, ntfy *notify.Service, proj projects.Reader, cipher *crypto.Cipher, canarySvc confRenderer) *Service {
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc Deployer, ntfy *notify.Service, proj projects.Reader, cipher *crypto.Cipher, canarySvc ConfRenderer) *Service {
 	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj, cipher: cipher, canary: canarySvc}
 }
 

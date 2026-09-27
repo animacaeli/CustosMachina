@@ -29,7 +29,7 @@ const (
 var drainWindow = 30 * time.Second
 
 // deployer 蓝绿链路需要的部署能力（*resources.Service 实现；接口化便于测试）。
-type deployer interface {
+type Deployer interface {
 	DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error)
 	WaitComposeHealthy(ctx context.Context, serverID uint, name string, timeout time.Duration) error
 	DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error)
@@ -39,7 +39,7 @@ type deployer interface {
 }
 
 // confRenderer 整份 nginx conf 单写者（*canary.Service 实现）。
-type confRenderer interface {
+type ConfRenderer interface {
 	FullConf(ctx context.Context, projectID uint, activeColor string) (string, error)
 }
 
