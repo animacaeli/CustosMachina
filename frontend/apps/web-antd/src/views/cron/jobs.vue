@@ -203,7 +203,9 @@ async function onTrigger(item: CronJobItem) {
         :pagination="false"
         row-key="job.id"
       >
-        <a-table-column title="名称" data-index="job.name" />
+        <a-table-column title="名称" key="name">
+          <template #default="{ record }">{{ record.job.name }}</template>
+        </a-table-column>
         <a-table-column title="脚本" :width="140">
           <template #default="{ record }">
             {{ record.scriptName || '—' }}
