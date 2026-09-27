@@ -79,7 +79,7 @@ func (s *Service) scanDue(ctx context.Context) error {
 	var jobs []CronJob
 	// 启用且（无 next_run_at 或已到点）：新建任务保存时已写入 next_run_at，
 	// next_run_at 为空只可能是旧数据/异常，同样纳入扫描由推进逻辑修正
-	if err := s.db.Where("enabled = ? AND (next_run_at IS NULL OR next_run_at <= ?)", true, now).
+	if err := s.db.Where("enabled = ? AND schedule <> '' AND (next_run_at IS NULL OR next_run_at <= ?)", true, now).
 		Find(&jobs).Error; err != nil {
 		return err
 	}

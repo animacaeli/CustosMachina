@@ -544,3 +544,53 @@ func TestComposeDomainFollowsActiveColor(t *testing.T) {
 		t.Fatalf("未启用蓝绿应原名, got %q", got)
 	}
 }
+
+// 仅手动任务：表达式可空、不推进 next_run_at、调度器排除；network 注入校验与拼装。
+func TestManualJobAndNetwork(t *testing.T) {
+	svc, _ := newSvc(t)
+	sc := mustScript(t, svc, ScriptShell)
+	ctx := context.Background()
+
+	// 手动任务（schedule 空 + enabled true）
+	job, err := svc.SaveJob(ctx, 0, JobInput{
+		Name: "oneoff", ScriptID: sc.ID, Schedule: "", ServerID: 1,
+		Carrier: CarrierRun, Image: "alpine:3", Enabled: boolPtr(true),
+	}, "t")
+	if err != nil {
+		t.Fatalf("手动任务创建失败: %v", err)
+	}
+	if job.NextRunAt != nil {
+		t.Fatalf("手动任务不应推进 next_run_at: %v", job.NextRunAt)
+	}
+	// 调度器扫描不产生任何运行记录
+	if err := svc.scanDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	svc.db.Model(&CronRun{}).Where("job_id = ?", job.ID).Count(&n)
+	if n != 0 {
+		t.Fatalf("手动任务不应被调度执行, got %d 条", n)
+	}
+
+	// network 注入拒绝
+	_, err = svc.SaveJob(ctx, 0, JobInput{
+		Name: "bad", ScriptID: sc.ID, Schedule: "", ServerID: 1,
+		Carrier: CarrierRun, Image: "alpine:3", Network: "x; rm -rf /",
+	}, "t")
+	if err == nil {
+		t.Error("network 含 shell 元字符应被拒绝")
+	}
+
+	// network 拼装
+	cmd := buildCommand(&CronJob{Carrier: CarrierRun, Image: "alpine:3", Network: "demo-prod-blue_default"},
+		&CronScript{Type: ScriptShell}, "", "--label L", "")
+	if !strings.Contains(cmd, "--network demo-prod-blue_default") {
+		t.Errorf("docker run 应带 --network: %q", cmd)
+	}
+	// 未设 network 不加标志
+	cmd2 := buildCommand(&CronJob{Carrier: CarrierRun, Image: "alpine:3"},
+		&CronScript{Type: ScriptShell}, "", "--label L", "")
+	if strings.Contains(cmd2, "--network") {
+		t.Errorf("未设 network 不应加 --network: %q", cmd2)
+	}
+}

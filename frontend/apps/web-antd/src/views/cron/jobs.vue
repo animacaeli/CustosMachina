@@ -89,7 +89,10 @@ const form = reactive({
   command: '',
   enabled: true,
   image: '',
+  /** 执行方式：schedule 周期执行 / manual 仅手动（一次性脚本） */
+  mode: 'schedule' as 'manual' | 'schedule',
   name: '',
+  network: '',
   projectName: '',
   schedule: '',
   scriptId: undefined as number | undefined,
@@ -109,7 +112,9 @@ function openCreate() {
     command: '',
     enabled: true,
     image: '',
+    mode: 'schedule',
     name: '',
+    network: '',
     projectName: '',
     schedule: '0 3 * * *',
     scriptId: undefined,
@@ -160,9 +165,11 @@ function openEdit(item: CronJobItem) {
     command: j.command,
     enabled: j.enabled,
     image: j.image,
+    mode: j.schedule ? 'schedule' : 'manual',
     name: j.name,
+    network: j.network ?? '',
     projectName: j.projectName,
-    schedule: j.schedule,
+    schedule: j.schedule || '0 3 * * *',
     scriptId: j.scriptId,
     serverId: j.serverId,
     service: j.service,
@@ -172,12 +179,16 @@ function openEdit(item: CronJobItem) {
 }
 
 async function submitForm() {
-  if (!form.name || !form.scriptId || !form.serverId || !form.schedule) {
-    message.warning('请填写完整（名称 / 脚本 / 主机 / 调度）');
+  if (!form.name || !form.scriptId || !form.serverId) {
+    message.warning('请填写完整（名称 / 脚本 / 主机）');
+    return;
+  }
+  if (form.mode === 'schedule' && !form.schedule) {
+    message.warning('周期执行需填写 crontab 表达式');
     return;
   }
   try {
-    const data = { ...form };
+    const data = { ...form, schedule: form.mode === 'manual' ? '' : form.schedule };
     if (editingId.value) {
       await updateJobApi(editingId.value, data);
       message.success('已更新');
@@ -261,7 +272,9 @@ async function onTrigger(item: CronJobItem) {
         </a-table-column>
         <a-table-column title="下次执行" :width="160">
           <template #default="{ record }">
-            {{ record.job.enabled ? fmtTime(record.job.nextRunAt) : '已停用' }}
+            <span v-if="!record.job.schedule">手动</span>
+            <span v-else-if="!record.job.enabled">已停用</span>
+            <span v-else>{{ fmtTime(record.job.nextRunAt) }}</span>
           </template>
         </a-table-column>
         <a-table-column title="上次结果" :width="90">
@@ -336,7 +349,17 @@ async function onTrigger(item: CronJobItem) {
             placeholder="选择脚本库中的脚本"
           />
         </a-form-item>
-        <a-form-item label="调度表达式（标准 crontab：分 时 日 月 周）" required>
+        <a-form-item label="执行方式" required>
+          <a-radio-group v-model:value="form.mode">
+            <a-radio value="schedule">周期执行（crontab）</a-radio>
+            <a-radio value="manual">仅手动（一次性脚本）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item
+          v-if="form.mode === 'schedule'"
+          label="调度表达式（标准 crontab：分 时 日 月 周）"
+          required
+        >
           <div class="flex gap-1">
             <a-input
               v-model:value="form.schedule"
@@ -405,6 +428,12 @@ async function onTrigger(item: CronJobItem) {
             <a-input v-model:value="form.service" placeholder="如 migrate" />
           </a-form-item>
         </template>
+        <a-form-item
+          v-if="form.carrier === 'run'"
+          label="docker 网络（可选，连业务网络查数据用）"
+        >
+          <a-input v-model:value="form.network" placeholder="留空 = 默认网络" />
+        </a-form-item>
         <a-form-item label="附加参数（可选，追加到命令后）">
           <a-input v-model:value="form.command" placeholder="如 --dry-run" />
         </a-form-item>

@@ -66,6 +66,7 @@ type CronJob struct {
 	ProjectName string         `gorm:"size:64" json:"projectName"`      // carrier=compose-run 必填（部署目录名）
 	Service     string         `gorm:"size:64" json:"service"`          // carrier=compose-run 必填
 	Command     string         `gorm:"size:512" json:"command"`         // 附加参数（shell/python 追加到解释器后）
+	Network     string         `gorm:"size:64" json:"network"`          // carrier=run 可选：docker --network（连业务网络查数据用）
 	TimeoutSecs int            `gorm:"not null;default:600" json:"timeoutSecs"`
 	Enabled     bool           `gorm:"not null;default:true" json:"enabled"`
 	NextRunAt   *time.Time     `gorm:"index" json:"nextRunAt"`

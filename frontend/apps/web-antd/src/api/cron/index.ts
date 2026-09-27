@@ -15,6 +15,7 @@ export interface CronJob {
   carrier: 'compose-run' | 'run';
   command: string;
   enabled: boolean;
+  network: string;
   id: number;
   image: string;
   lastRunAt: null | string;

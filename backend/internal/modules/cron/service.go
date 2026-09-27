@@ -186,13 +186,14 @@ func validateCarrier(scriptType, carrier, image, project, service string) error 
 type JobInput struct {
 	Name        string `json:"name" binding:"required,max=128"`
 	ScriptID    uint   `json:"scriptId" binding:"required"`
-	Schedule    string `json:"schedule" binding:"required,max=64"`
+	Schedule    string `json:"schedule" binding:"omitempty,max=64"` // 空 = 仅手动执行（一次性脚本）
 	ServerID    uint   `json:"serverId" binding:"required"`
 	Carrier     string `json:"carrier" binding:"required,oneof=run compose-run"`
 	Image       string `json:"image" binding:"omitempty,max=255"`
 	ProjectName string `json:"projectName" binding:"omitempty,max=64"`
 	Service     string `json:"service" binding:"omitempty,max=64"`
 	Command     string `json:"command" binding:"omitempty,max=512"`
+	Network     string `json:"network" binding:"omitempty,max=64"` // carrier=run 可选：docker --network
 	TimeoutSecs int    `json:"timeoutSecs" binding:"omitempty,min=10,max=86400"`
 	Enabled     *bool  `json:"enabled"`
 }
@@ -205,8 +206,13 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	if err := validateCarrier(sc.Type, in.Carrier, in.Image, in.ProjectName, in.Service); err != nil {
 		return nil, err
 	}
-	if _, err := parseSchedule(in.Schedule, time.Now()); err != nil {
-		return nil, err
+	if in.Schedule != "" {
+		if _, err := parseSchedule(in.Schedule, time.Now()); err != nil {
+			return nil, err
+		}
+	}
+	if in.Network != "" && !svcRe.MatchString(in.Network) {
+		return nil, fmt.Errorf("网络名含非法字符")
 	}
 	if in.Command != "" && !commandRe.MatchString(in.Command) {
 		return nil, fmt.Errorf("附加参数含非法字符（只允许字母数字与 =:/_.,@%%+- 和空格）")
@@ -222,14 +228,15 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	}
 	job.Name, job.ScriptID, job.Schedule, job.ServerID = in.Name, in.ScriptID, in.Schedule, in.ServerID
 	job.Carrier, job.Image, job.ProjectName, job.Service = in.Carrier, in.Image, in.ProjectName, in.Service
-	job.Command = in.Command
+	job.Command, job.Network = in.Command, in.Network
 	if in.TimeoutSecs > 0 {
 		job.TimeoutSecs = in.TimeoutSecs
 	}
 	if in.Enabled != nil {
 		job.Enabled = *in.Enabled
 	}
-	if job.Enabled {
+	// 无表达式 = 仅手动任务：不推进 next_run_at（调度器按非空表达式排除）
+	if job.Enabled && job.Schedule != "" {
 		next, err := parseSchedule(job.Schedule, time.Now())
 		if err != nil {
 			return nil, err
@@ -407,9 +414,13 @@ func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel, do
 		return fmt.Sprintf(`docker compose -p %s -f %s run --rm %s %s%s`,
 			domain, composeFile, runLabel, job.Service, extra)
 	}
-	// docker run：脚本以只读卷挂进一次性容器
-	return fmt.Sprintf(`docker run --rm %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
-		runLabel, hostScriptPath, job.Image, interpreter, extra)
+	// docker run：脚本以只读卷挂进一次性容器；可选 --network 连业务网络（查数据用）
+	netFlag := ""
+	if job.Network != "" {
+		netFlag = "--network " + job.Network
+	}
+	return fmt.Sprintf(`docker run --rm %s %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
+		runLabel, netFlag, hostScriptPath, job.Image, interpreter, extra)
 }
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
