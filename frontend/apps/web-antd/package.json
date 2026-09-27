@@ -51,6 +51,7 @@
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "@ant-design/icons-vue": "catalog:"
   }
 }

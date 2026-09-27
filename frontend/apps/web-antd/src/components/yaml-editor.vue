@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 /**
  * 通用代码编辑器（Monaco + monaco-yaml）：
- * language 支持 yaml/json/shellscript/python/ini(toml 近似)/plaintext，
+ * language 支持 yaml/json/shell/python/ini(toml 近似)/plaintext，
  * compose 部署文件、脚本编辑、配置中心、SFTP 在线编辑共用。
  * 按需 chunk 加载，不进首屏；schema 为内置 vendored 副本（离线可用）。
  */
@@ -20,7 +20,7 @@ import composeSchema from '#/schemas/compose-spec.json';
 
 const props = withDefaults(
   defineProps<{
-    /** monaco 语言 id：yaml/json/shellscript/python/ini/plaintext（toml 用 ini 近似高亮） */
+    /** monaco 语言 id：yaml/json/shell/python/ini/plaintext（toml 用 ini 近似高亮） */
     language?: string;
     modelValue: string;
     readOnly?: boolean;

@@ -5,6 +5,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
+import { LoadingOutlined } from '@ant-design/icons-vue';
 import { message } from 'ant-design-vue';
 
 import {
@@ -322,21 +323,22 @@ async function onTrigger(item: CronJobItem) {
   <div class="p-4">
     <a-card title="定时任务">
       <template #extra>
-        <a-select
-          v-model:value="projectFilter"
-          :options="projectOptions"
-          allow-clear
-          placeholder="按项目筛选"
-          style="width: 200px"
-          class="mr-3"
-        />
-        <a-button class="mr-2" @click="quickOpen = true">快速执行</a-button>
-        <a-button class="mr-2" @click="showRuns(undefined)">
-          全部运行历史
-        </a-button>
-        <a-button v-if="canWrite" type="primary" @click="openCreate">
-          新增任务
-        </a-button>
+        <div class="flex items-center gap-3">
+          <a-select
+            v-model:value="projectFilter"
+            :options="projectOptions"
+            allow-clear
+            placeholder="按项目筛选"
+            style="width: 200px"
+          />
+          <a-button @click="quickOpen = true">快速执行</a-button>
+          <a-button @click="showRuns(undefined)">
+            全部运行历史
+          </a-button>
+          <a-button v-if="canWrite" type="primary" @click="openCreate">
+            新增任务
+          </a-button>
+        </div>
       </template>
       <a-table
         :data-source="filteredList"
@@ -344,20 +346,20 @@ async function onTrigger(item: CronJobItem) {
         :pagination="false"
         row-key="job.id"
       >
-        <a-table-column title="名称" key="name">
+        <a-table-column title="名称" key="name" :width="170" :ellipsis="true">
           <template #default="{ record }">{{ record.job.name }}</template>
         </a-table-column>
-        <a-table-column title="脚本" :width="140">
+        <a-table-column title="脚本" :width="150" :ellipsis="true">
           <template #default="{ record }">
             {{ record.scriptName || '—' }}
           </template>
         </a-table-column>
-        <a-table-column title="调度" :width="120">
+        <a-table-column title="调度" :width="110">
           <template #default="{ record }">
-            <code>{{ record.job.schedule }}</code>
+            <code>{{ record.job.schedule || '手动' }}</code>
           </template>
         </a-table-column>
-        <a-table-column title="载体" :width="170">
+        <a-table-column title="载体" :width="180" :ellipsis="true">
           <template #default="{ record }">
             <a-tag v-if="record.job.carrier === 'run'" color="blue">
               docker run · {{ record.job.image || '未配镜像' }}
@@ -374,9 +376,15 @@ async function onTrigger(item: CronJobItem) {
             <span v-else>{{ fmtTime(record.job.nextRunAt) }}</span>
           </template>
         </a-table-column>
-        <a-table-column title="上次结果" :width="90">
+        <a-table-column title="上次结果" :width="100">
           <template #default="{ record }">
+            <LoadingOutlined
+              v-if="record.job.lastStatus === 'running'"
+              class="mr-1"
+              spin
+            />
             <a-badge
+              v-else
               :status="
                 (
                   {
@@ -622,7 +630,7 @@ async function onTrigger(item: CronJobItem) {
         <a-form-item label="脚本内容" required>
           <CodeEditor
             v-model="quick.content"
-            :language="quick.type === 'python' ? 'python' : 'shellscript'"
+            :language="quick.type === 'python' ? 'python' : 'shell'"
             height="260px"
           />
         </a-form-item>

@@ -97,7 +97,7 @@ const editLanguage = computed(() => {
   const n = (editPath.value || '').toLowerCase();
   if (n.endsWith('.json')) return 'json';
   if (n.endsWith('.yml') || n.endsWith('.yaml')) return 'yaml';
-  if (n.endsWith('.sh') || n.endsWith('.bash')) return 'shellscript';
+  if (n.endsWith('.sh') || n.endsWith('.bash')) return 'shell';
   if (n.endsWith('.py')) return 'python';
   if (n.endsWith('.toml') || n.endsWith('.ini') || n.endsWith('.conf') || n.endsWith('.properties')) return 'ini';
   if (n.endsWith('.xml') || n.endsWith('.html')) return 'xml';

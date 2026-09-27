@@ -3,6 +3,7 @@ import type { ReleaseItem } from '#/api/release';
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
+import { LoadingOutlined } from '@ant-design/icons-vue';
 import { message } from 'ant-design-vue';
 
 import {
@@ -344,14 +345,14 @@ function fmtTime(v: string) {
           <span v-else>—</span>
         </template>
         <template v-else-if="column.key === 'status'">
+          <LoadingOutlined
+            v-if="record.status === 'running'"
+            class="mr-1"
+            spin
+          />
           <a-tag
-            :color="
-              record.status === 'success'
-                ? 'green'
-                : record.status === 'running'
-                  ? 'processing'
-                  : 'red'
-            "
+            v-else
+            :color="record.status === 'success' ? 'green' : 'red'"
           >
             {{
               record.status === 'success'

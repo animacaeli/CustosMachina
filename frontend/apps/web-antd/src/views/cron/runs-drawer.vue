@@ -3,6 +3,8 @@ import type { CronRun } from '#/api/cron';
 
 import { onBeforeUnmount, ref, watch } from 'vue';
 
+import { LoadingOutlined } from '@ant-design/icons-vue';
+
 import { getRunApi, getRunsApi } from '#/api/cron';
 import { fileDownloadUrl } from '#/api/resources/files';
 
@@ -164,9 +166,15 @@ function fmtDuration(r: CronRun) {
       size="small"
     >
       <a-table-column title="ID" data-index="id" :width="60" />
-      <a-table-column title="状态" :width="100">
+      <a-table-column title="状态" :width="110">
         <template #default="{ record }">
+          <LoadingOutlined
+            v-if="record.status === 'running'"
+            class="mr-1"
+            spin
+          />
           <a-badge
+            v-else
             :color="statusColor[record.status] ?? 'default'"
             :text="statusText[record.status] ?? record.status"
           />

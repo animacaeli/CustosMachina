@@ -29,8 +29,12 @@ const loading = ref(false);
 const components = ref<ObservComponent[]>([]);
 const o2Url = ref('');
 const servers = ref<{ host: string; id: number; name: string }[]>([]);
-const serverId = ref<number | undefined>();
+/** 多主机：部署/卸载对全部选中主机执行（一键铺开，改配置不用一台台点） */
+const serverIds = ref<number[]>([]);
+/** 组件名 → 各主机状态聚合（"运行中 2/3"） */
 const status = ref<Record<string, string>>({});
+/** 组件名 → 分主机明细（悬停看每台状态） */
+const statusDetail = ref<Record<string, Record<number, string>>>({});
 const acting = ref('');
 
 const categoryMeta: Record<string, { text: string; tip: string }> = {
@@ -58,8 +62,8 @@ async function loadBase() {
       id: s.id,
       name: s.name,
     }));
-    if (!serverId.value && servers.value.length > 0) {
-      serverId.value = servers.value[0]!.id;
+    if (serverIds.value.length === 0 && servers.value.length > 0) {
+      serverIds.value = servers.value.map((srv) => srv.id); // 默认全选
     }
   } finally {
     loading.value = false;
@@ -67,12 +71,36 @@ async function loadBase() {
 }
 
 async function loadStatus() {
-  if (!serverId.value) return;
-  try {
-    status.value = await getObservStatusApi(serverId.value);
-  } catch {
-    status.value = {};
+  if (serverIds.value.length === 0) return;
+  const detail: Record<string, Record<number, string>> = {};
+  const agg: Record<string, string> = {};
+  const names = components.value.map((c) => c.name);
+  await Promise.all(
+    serverIds.value.map(async (sid) => {
+      try {
+        const st = await getObservStatusApi(sid);
+        for (const n of names) {
+          detail[n] = detail[n] ?? {};
+          detail[n][sid] = st[n] ?? 'absent';
+        }
+      } catch {
+        for (const n of names) {
+          detail[n] = detail[n] ?? {};
+          detail[n][sid] = 'unknown';
+        }
+      }
+    }),
+  );
+  // 聚合：全部 running 才 running；全部 absent 才 absent；否则 分数
+  for (const n of names) {
+    const vals = Object.values(detail[n] ?? {});
+    const running = vals.filter((v) => v === 'running').length;
+    if (vals.length > 0 && running === vals.length) agg[n] = 'running';
+    else if (running === 0 && vals.every((v) => v === 'absent')) agg[n] = 'absent';
+    else agg[n] = `partial:${running}/${vals.length}`;
   }
+  statusDetail.value = detail;
+  status.value = agg;
 }
 
 onMounted(async () => {
@@ -80,7 +108,7 @@ onMounted(async () => {
   await loadStatus();
 });
 
-watch(serverId, loadStatus);
+watch(serverIds, loadStatus);
 
 async function saveO2Url() {
   try {
@@ -116,37 +144,45 @@ function openDeploy(comp: ObservComponent) {
 }
 
 async function doDeploy() {
-  if (!serverId.value || !deployTarget.value) return;
+  if (serverIds.value.length === 0 || !deployTarget.value) return;
   deploying.value = true;
+  const failed: number[] = [];
   try {
-    const res = await deployObservApi({
-      compose: deployForm.compose,
-      component: deployTarget.value.name,
-      configFiles: deployForm.configs,
-      serverId: serverId.value,
-    });
-    message.success(`${deployTarget.value.name} 部署/升级完成`);
-    if (res.output) {
-      console.log('[observ]', res.output);
+    // 逐台部署（顺序执行避免镜像拉取并发打爆带宽；失败继续下一台）
+    for (const sid of serverIds.value) {
+      const host = servers.value.find((srv) => srv.id === sid);
+      try {
+        await deployObservApi({
+          compose: deployForm.compose,
+          component: deployTarget.value!.name,
+          configFiles: deployForm.configs,
+          serverId: sid,
+        });
+        message.success(`${deployTarget.value.name} → ${host?.name ?? sid} 完成`);
+      } catch {
+        failed.push(sid); // 失败详情由拦截器 toast
+      }
     }
-    deployOpen.value = false;
+    if (failed.length === 0) {
+      deployOpen.value = false;
+    } else {
+      message.warning(`${failed.length} 台主机部署失败（可重试，成功的不受影响）`);
+    }
     await loadStatus();
-  } catch {
-    // 部署失败由拦截器提示
   } finally {
     deploying.value = false;
   }
 }
 
 async function onUninstall(comp: ObservComponent) {
-  if (!serverId.value) return;
+  if (serverIds.value.length === 0) return;
   acting.value = comp.name;
   try {
-    await uninstallObservApi(serverId.value, comp.name);
-    message.success(`${comp.name} 已卸载`);
+    for (const sid of serverIds.value) {
+      await uninstallObservApi(sid, comp.name).catch(() => null);
+    }
+    message.success(`${comp.name} 已在选中主机卸载`);
     await loadStatus();
-  } catch {
-    // 卸载失败由拦截器提示
   } finally {
     acting.value = '';
   }
@@ -156,7 +192,27 @@ const statusMeta: Record<string, { color: string; text: string }> = {
   absent: { color: 'default', text: '未部署' },
   running: { color: 'green', text: '运行中' },
   stopped: { color: 'red', text: '已停止' },
+  unknown: { color: 'purple', text: '探测失败' },
 };
+
+function statusTagMeta(s: string) {
+  if (s.startsWith('partial:')) {
+    return { color: 'orange', text: `部分运行 ${s.slice(8)}` };
+  }
+  return statusMeta[s] ?? { color: 'default', text: s };
+}
+
+function detailText(comp: ObservComponent) {
+  const d = statusDetail.value[comp.name] ?? {};
+  return servers.value
+    .filter((srv) => srv.id in d)
+    .map((srv) => {
+      const v = d[srv.id]!;
+      const label = statusMeta[v]?.text ?? v;
+      return `${srv.name}：${label}`;
+    })
+    .join('\n');
+}
 
 function configLanguage(filename: string) {
   if (filename.endsWith('.yaml') || filename.endsWith('.yml')) return 'yaml';
@@ -171,11 +227,13 @@ function configLanguage(filename: string) {
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <span>目标主机：</span>
         <a-select
-          v-model:value="serverId"
+          v-model:value="serverIds"
           :options="
             servers.map((s) => ({ label: `${s.name}（${s.host}）`, value: s.id }))
           "
-          style="width: 280px"
+          mode="multiple"
+          placeholder="选择主机（部署对全部选中主机执行）"
+          style="min-width: 280px"
         />
         <span class="ml-4">O2 日志地址：</span>
         <a-input
@@ -202,9 +260,11 @@ function configLanguage(filename: string) {
               <a-tag class="ml-2">{{ categoryMeta[comp.category]?.text }}</a-tag>
             </template>
             <template #extra>
-              <a-tag :color="statusMeta[status[comp.name] ?? 'absent']?.color">
-                {{ statusMeta[status[comp.name] ?? 'absent']?.text ?? '未知' }}
-              </a-tag>
+              <a-tooltip :title="detailText(comp)">
+                <a-tag :color="statusTagMeta(status[comp.name] ?? 'absent').color">
+                  {{ statusTagMeta(status[comp.name] ?? 'absent').text }}
+                </a-tag>
+              </a-tooltip>
             </template>
             <p class="mb-2 text-sm whitespace-pre-line text-gray-500">
               {{ comp.remark }}
@@ -216,8 +276,8 @@ function configLanguage(filename: string) {
               <a-button
                 type="primary"
                 size="small"
-                :loading="acting === comp.name"
                 :disabled="comp.needsO2Url && !o2Url"
+                :loading="acting === comp.name || (deploying && deployOpen)"
                 @click="openDeploy(comp)"
               >
                 {{ status[comp.name] === 'running' ? '编辑并升级' : '部署' }}

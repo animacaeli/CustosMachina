@@ -81,7 +81,7 @@ function openView(s: CronScript) {
 
 function scriptLanguage(type?: string) {
   if (type === 'python') return 'python';
-  return 'shellscript';
+  return 'shell';
 }
 const editingId = ref<null | number>(null);
 const form = reactive({
@@ -160,17 +160,18 @@ async function onDelete(s: CronScript) {
   <div class="p-4">
     <a-card title="脚本库">
       <template #extra>
-        <a-select
-          v-model:value="projectFilter"
-          :options="projectOptions"
-          allow-clear
-          placeholder="按项目筛选"
-          style="width: 200px"
-          class="mr-3"
-        />
-        <a-button v-if="canWrite" type="primary" @click="openCreate">
-          新增脚本
-        </a-button>
+        <div class="flex items-center gap-3">
+          <a-select
+            v-model:value="projectFilter"
+            :options="projectOptions"
+            allow-clear
+            placeholder="按项目筛选"
+            style="width: 200px"
+          />
+          <a-button v-if="canWrite" type="primary" @click="openCreate">
+            新增脚本
+          </a-button>
+        </div>
       </template>
       <a-table
         :data-source="filteredList"
@@ -247,7 +248,7 @@ async function onDelete(s: CronScript) {
           <CodeEditor
             v-model="form.content"
             :height="form.type === 'compose-run' ? '120px' : '300px'"
-            :language="form.type === 'python' ? 'python' : 'shellscript'"
+            :language="form.type === 'python' ? 'python' : 'shell'"
           />
         </a-form-item>
         <a-form-item label="备注">
