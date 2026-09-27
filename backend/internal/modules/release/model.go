@@ -24,6 +24,7 @@ type Release struct {
 	ReleaseBy    string         `gorm:"size:64" json:"releaseBy"`
 	DurationSecs int            `json:"durationSecs"`
 	Status       string         `gorm:"size:16;not null" json:"status"`
+	Color        string         `gorm:"size:8" json:"color"`     // 蓝绿发布落点颜色（blue|green；非 prod 为空）
 	Output       string         `gorm:"type:text" json:"output"` // 部署输出（失败原因）
 	RollbackOf   *uint          `json:"rollbackOf"`              // 回滚指向的原 release
 	CreatedAt    time.Time      `json:"createdAt"`
@@ -33,5 +34,14 @@ type Release struct {
 
 func (Release) TableName() string { return "releases" }
 
+// BGState 蓝绿状态：项目当前的活跃颜色（一项目一行）。无记录 = 未启用蓝绿。
+type BGState struct {
+	ProjectID   uint      `gorm:"primarykey" json:"projectId"`
+	ActiveColor string    `gorm:"size:8;not null" json:"activeColor"` // blue | green
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+func (BGState) TableName() string { return "blue_green_states" }
+
 // Models 返回本模块需要自动迁移的模型。
-func Models() []any { return []any{&Release{}} }
+func Models() []any { return []any{&Release{}, &BGState{}} }

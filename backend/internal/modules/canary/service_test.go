@@ -161,7 +161,7 @@ func TestRenderNginxMultiTrafficSum(t *testing.T) {
 	conf, err := renderNginx("demo", []Policy{
 		{Type: TypeTraffic, TrafficPercent: 10},
 		{Type: TypeTraffic, TrafficPercent: 20},
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,5 +184,30 @@ func TestSavePolicyInputBinding(t *testing.T) {
 		if err := c.ShouldBindJSON(&in); err != nil {
 			t.Fatalf("绑定失败 body=%s: %v", body, err)
 		}
+	}
+}
+
+// 蓝绿渲染：prod upstream 指向活跃颜色域；无策略也允许（纯蓝绿项目）。
+func TestRenderNginxBlueGreen(t *testing.T) {
+	conf, err := renderNginx("demo", nil, "green")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf, "server demo-prod-green-server-1:80;") {
+		t.Fatalf("prod upstream 应指向活跃色 green:\n%s", conf)
+	}
+	if strings.Contains(conf, "demo-prod-blue") {
+		t.Fatalf("非活跃色域名不能出现在 conf（nginx -t 会因解析失败报错）:\n%s", conf)
+	}
+	if strings.Contains(conf, "demo-canary-upstream") {
+		t.Fatalf("无策略时不应渲染 canary upstream:\n%s", conf)
+	}
+	// 有策略时 prod 引用活跃色、canary upstream 正常渲染
+	conf2, err := renderNginx("demo", []Policy{{Type: TypeHeader, HeaderKey: "x-canary", HeaderValue: "gh", BoundTag: "t"}}, "blue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(conf2, "server demo-prod-blue-server-1:80;") || !strings.Contains(conf2, "demo-canary-upstream") {
+		t.Fatalf("蓝绿+灰度并存渲染异常:\n%s", conf2)
 	}
 }

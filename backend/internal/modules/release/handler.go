@@ -24,6 +24,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	{
 		g.GET("", h.list)
 		g.GET("/passed-tags", h.passedTags)
+		g.GET("/active-color", h.activeColor)
 		g.POST("", h.execute)
 		g.POST("/:id/rollback", h.rollback)
 	}
@@ -64,6 +65,15 @@ func (h *Handler) passedTags(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, tags)
+}
+
+func (h *Handler) activeColor(c *gin.Context) {
+	projectID := uint(atoiDefault(c.Query("projectId"), 0))
+	if projectID == 0 {
+		httpx.FailBadRequest(c, "projectId 必填")
+		return
+	}
+	httpx.OK(c, gin.H{"color": h.svc.ActiveColor(c.Request.Context(), projectID)})
 }
 
 func (h *Handler) execute(c *gin.Context) {

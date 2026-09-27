@@ -24,7 +24,7 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&Release{}, &projectTbl{}, &targetTbl{}, &buildTbl{}); err != nil {
+	if err := db.AutoMigrate(&Release{}, &BGState{}, &projectTbl{}, &targetTbl{}, &buildTbl{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	return db
@@ -69,7 +69,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestExecuteRequiresPassedBuild(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db), nil)
+	svc := NewService(db, nil, nil, nil, realReader(db), nil, nil)
 	db.Create(&projectTbl{ID: 1, Name: "Demo App", RepoPath: "org/demo", ComposePath: "deploy/c.yml"})
 
 	// 无构建记录
@@ -109,7 +109,7 @@ func TestNormalizeName(t *testing.T) {
 
 func TestPassedTags(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, realReader(db), nil)
+	svc := NewService(db, nil, nil, nil, realReader(db), nil, nil)
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v1", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v2", Status: "success"})
 	db.Create(&buildTbl{ProjectID: 1, EnvType: "prod", Tag: "v3", Status: "failed"})

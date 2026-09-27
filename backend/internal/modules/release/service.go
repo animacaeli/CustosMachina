@@ -14,7 +14,6 @@ import (
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
-	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/strx"
 )
@@ -24,10 +23,11 @@ var ErrNotFound = errors.New("发布记录不存在")
 type Service struct {
 	db     *gorm.DB
 	ci     *ci.Service
-	res    *resources.Service
+	res    deployer // *resources.Service（接口化便于测试，见 bluegreen.go）
 	notify *notify.Service
 	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 	cipher *crypto.Cipher  // registry 凭据解密
+	canary confRenderer    // 整份 nginx conf 单写者（蓝绿切换时取整份配置；依赖单向：release→canary）
 }
 
 // registryCred 项目绑定的 registry 凭据（namespace 隔离：镜像路径里的
@@ -79,8 +79,8 @@ func (s *Service) decryptRegistryCred(enc string) ([]string, error) {
 	return parts, nil
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader, cipher *crypto.Cipher) *Service {
-	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj, cipher: cipher}
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc deployer, ntfy *notify.Service, proj projects.Reader, cipher *crypto.Cipher, canarySvc confRenderer) *Service {
+	return &Service{db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj, cipher: cipher, canary: canarySvc}
 }
 
 // projectRow 只读 projects 所需列（避免跨模块循环依赖）。
@@ -162,13 +162,6 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		return nil, err
 	}
 
-	rel := Release{
-		ProjectID: in.ProjectID, EnvType: in.EnvType, Tag: in.Tag,
-		ServerID: target.ServerID, Runtime: "compose",
-		ReleaseBy: operator, Status: ReleaseFailed,
-	}
-	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
-
 	// 私有 registry：部署前在目标机 docker login（namespace 隔离由镜像路径
 	// 中的 namespace 段保证——平台只按项目绑定的 registry 地址认证）
 	reg, err := s.registryFor(ctx, in.ProjectID)
@@ -181,6 +174,18 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		}
 		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)
 	}
+
+	// 正式环境走蓝绿链路（第四阶段 M2）：双隔离域 + 健康门禁 + 整份 conf 切换
+	if in.EnvType == "prod" {
+		return s.executeBlueGreen(ctx, p, target, in, operator, yamlContent)
+	}
+
+	rel := Release{
+		ProjectID: in.ProjectID, EnvType: in.EnvType, Tag: in.Tag,
+		ServerID: target.ServerID, Runtime: "compose",
+		ReleaseBy: operator, Status: ReleaseFailed,
+	}
+	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
 
 	startedAt := time.Now()
 	out, _, err := s.res.DeployComposeTo(ctx, target.ServerID, deployName, yamlContent)

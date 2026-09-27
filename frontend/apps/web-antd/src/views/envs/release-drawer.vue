@@ -7,6 +7,7 @@ import { message } from 'ant-design-vue';
 
 import {
   createReleaseApi,
+  getActiveColorApi,
   getPassedTagsApi,
   getReleasesApi,
 } from '#/api/release';
@@ -22,6 +23,21 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 const list = ref<ReleaseItem[]>([]);
+
+// 蓝绿：正式环境当前活跃色（空 = 尚未启用蓝绿/首次发布）
+const activeColor = ref('');
+async function loadActiveColor() {
+  if (props.env !== 'prod' || !props.projectId) {
+    activeColor.value = '';
+    return;
+  }
+  try {
+    const res = await getActiveColorApi(props.projectId);
+    activeColor.value = res.color ?? '';
+  } catch {
+    activeColor.value = '';
+  }
+}
 
 // test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
 function splitTag(tag: string): { branch: string; slot: string } {
@@ -47,6 +63,12 @@ const columns = computed(() => {
   }
   return [{ title: '标签', dataIndex: 'tag' }, ...base];
 });
+// 正式环境发布历史加"颜色"列（蓝绿落点）
+const columnsWithColor = computed(() =>
+  props.env === 'prod'
+    ? [{ title: '标签', dataIndex: 'tag' }, { title: '颜色', key: 'color', width: 80 }, ...columns.value.slice(1)]
+    : columns.value,
+);
 const total = ref(0);
 const page = ref(1);
 const size = ref(10);
@@ -132,7 +154,10 @@ watch(
   () => [props.open, props.projectId, page.value],
   async () => {
     if (!props.open || !props.projectId) return;
-    await load().catch((error) => console.warn('[load]', error));
+    await Promise.all([
+      load().catch((error) => console.warn('[load]', error)),
+      loadActiveColor(),
+    ]);
     try {
       passedTags.value = await getPassedTagsApi(props.projectId, props.env);
     } catch {
@@ -178,7 +203,7 @@ function fmtTime(v: string) {
     :width="860"
     @close="emit('close')"
   >
-    <div class="mb-4 flex gap-2">
+    <div class="mb-4 flex items-center gap-2">
       <a-select
         v-model:value="selectedTag"
         :options="passedTags.map((t) => ({ label: t, value: t }))"
@@ -199,9 +224,21 @@ function fmtTime(v: string) {
       >
         发布
       </a-button>
+      <a-tooltip
+        v-if="env === 'prod'"
+        :title="
+          activeColor
+            ? `当前承载流量的颜色域（本次发布将落到另一半颜色域，健康检查通过后才切换）`
+            : '尚未启用蓝绿：首次正式发布将创建蓝色域并切换流量'
+        "
+      >
+        <a-tag :color="activeColor === 'blue' ? 'blue' : 'green'">
+          活跃色：{{ activeColor || '未启用' }}
+        </a-tag>
+      </a-tooltip>
     </div>
     <a-table
-      :columns="columns"
+      :columns="columnsWithColor"
       :data-source="list"
       :loading="loading"
       :pagination="{
@@ -226,6 +263,12 @@ function fmtTime(v: string) {
         </template>
         <template v-else-if="column.key === 'duration'">
           {{ fmtDuration(record.durationSecs) }}
+        </template>
+        <template v-else-if="column.key === 'color'">
+          <a-tag v-if="record.color" :color="record.color === 'blue' ? 'blue' : 'green'">
+            {{ record.color === 'blue' ? '蓝' : '绿' }}
+          </a-tag>
+          <span v-else>—</span>
         </template>
         <template v-else-if="column.key === 'status'">
           <a-tag :color="record.status === 'success' ? 'green' : 'red'">

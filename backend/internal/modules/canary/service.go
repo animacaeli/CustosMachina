@@ -24,11 +24,18 @@ type SSHRunner interface {
 	DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error)
 }
 
+// ActiveColorGetter 蓝绿活跃色查询（release.Service 提供实现，单向下行依赖：
+// canary 不 import release）。返回 "" 表示项目未启用蓝绿（单域存量模式）。
+type ActiveColorGetter interface {
+	ActiveColor(ctx context.Context, projectID uint) string
+}
+
 type Service struct {
 	db     *gorm.DB
 	ssh    SSHRunner
 	notify *notify.Service
-	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
+	proj   projects.Reader   // 只读投影，替代 Table("projects") 直读
+	colors ActiveColorGetter // 可空：蓝绿活跃色（release.Service 提供；未接入时按单域渲染）
 
 	// mu 串行化策略写操作：流量总和校验与版本推进都是读-改-写，
 	// 并发会超 TrafficCap / 出现中间态（单实例部署下进程内锁足够）
@@ -37,6 +44,27 @@ type Service struct {
 
 func NewService(db *gorm.DB, ssh SSHRunner, ntfy *notify.Service, proj projects.Reader) *Service {
 	return &Service{db: db, ssh: ssh, notify: ntfy, proj: proj}
+}
+
+// SetColorGetter 注入蓝绿活跃色查询（release.Service 提供）。
+// 事后注入而非构造参数：release.Service 构造依赖本服务（取整份 conf 渲染），
+// 构造参数会成环——与 resources.AttachNotifier 同一处理方式。
+func (s *Service) SetColorGetter(g ActiveColorGetter) { s.colors = g }
+
+// FullConf 渲染项目整份 nginx conf（蓝绿切换与灰度发布共用的单写者入口，
+// release 模块经此获取整份配置后自行 DeployNginxConf）。
+func (s *Service) FullConf(ctx context.Context, projectID uint, activeColor string) (string, error) {
+	var ps []Policy
+	if err := s.db.WithContext(ctx).
+		Where("project_id = ? AND enabled = ?", projectID, true).
+		Order("id").Find(&ps).Error; err != nil {
+		return "", err
+	}
+	projView, err := s.proj.ViewByID(ctx, projectID)
+	if err != nil {
+		return "", errors.New("项目不存在")
+	}
+	return renderNginx(strx.NormalizeName(projView.Name), ps, activeColor)
 }
 
 // ---- 策略 CRUD ----
@@ -211,7 +239,11 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 	}
 
 	sort.Slice(ps, func(i, j int) bool { return ps[i].ID < ps[j].ID })
-	conf, err := renderNginx(strx.NormalizeName(proj.Name), ps)
+	active := ""
+	if s.colors != nil {
+		active = s.colors.ActiveColor(ctx, projectID)
+	}
+	conf, err := renderNginx(strx.NormalizeName(proj.Name), ps, active)
 	if err != nil {
 		return 0, "", err
 	}

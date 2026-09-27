@@ -434,6 +434,8 @@ func (s *Service) DeployNginxConf(ctx context.Context, serverID uint, projName, 
 	if err != nil {
 		return "", err
 	}
+	// 写前备份、nginx -t 失败还原备份（双保险：reload 失败本就不影响运行中配置，
+	// 但 -t 失败说明新 conf 有语法/解析问题，还原可保证下一次任意 reload 仍用旧配置）
 	const script = `set -e
 if command -v nginx >/dev/null 2>&1; then NG=$(command -v nginx)
 elif [ -x /usr/sbin/nginx ]; then NG=/usr/sbin/nginx
@@ -441,19 +443,44 @@ else NG=""
 fi
 if [ -n "$NG" ]; then
   DIR=/opt/custos-machina/canary
-  mkdir -p "$DIR"; cat > "$DIR/$PROJ.conf"
-  "$NG" -t 2>&1 && "$NG" -s reload 2>&1
+  mkdir -p "$DIR"
+  BAK="$DIR/$PROJ.conf.bak.$(date +%Y%m%d%H%M%S)"
+  [ -f "$DIR/$PROJ.conf" ] && cp "$DIR/$PROJ.conf" "$BAK" || true
+  cat > "$DIR/$PROJ.conf"
+  if "$NG" -t 2>&1; then
+    "$NG" -s reload 2>&1
+  else
+    echo "nginx -t failed, restoring backup" >&2
+    cp "$BAK" "$DIR/$PROJ.conf" 2>/dev/null || true
+    exit 1
+  fi
   exit 0
 fi
 CID=$(docker ps --format '{{.Names}}' | grep -x nginx | head -1)
 [ -n "$CID" ] || { echo "nginx not found (host or container)" >&2; exit 127; }
 HOSTDIR=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/conf.d"}}{{.Source}}{{end}}{{end}}')
 if [ -n "$HOSTDIR" ] && [ -d "$HOSTDIR" ]; then
+  BAK="$HOSTDIR/$PROJ.conf.bak.$(date +%Y%m%d%H%M%S)"
+  [ -f "$HOSTDIR/$PROJ.conf" ] && cp "$HOSTDIR/$PROJ.conf" "$BAK" || true
   cat > "$HOSTDIR/$PROJ.conf"
+  if docker exec "$CID" nginx -t 2>&1; then
+    docker exec "$CID" nginx -s reload 2>&1
+  else
+    echo "nginx -t failed, restoring backup" >&2
+    cp "$BAK" "$HOSTDIR/$PROJ.conf" 2>/dev/null || true
+    exit 1
+  fi
 else
+  docker exec "$CID" sh -c "cp /etc/nginx/conf.d/$PROJ.conf /etc/nginx/conf.d/$PROJ.conf.bak 2>/dev/null || true"
   docker exec -i "$CID" sh -c "cat > /etc/nginx/conf.d/$PROJ.conf"
+  if docker exec "$CID" nginx -t 2>&1; then
+    docker exec "$CID" nginx -s reload 2>&1
+  else
+    echo "nginx -t failed, restoring backup" >&2
+    docker exec "$CID" sh -c "cp /etc/nginx/conf.d/$PROJ.conf.bak /etc/nginx/conf.d/$PROJ.conf 2>/dev/null || true"
+    exit 1
+  fi
 fi
-docker exec "$CID" nginx -t 2>&1 && docker exec "$CID" nginx -s reload 2>&1
 `
 	cmd := fmt.Sprintf("PROJ=%s sh -c %s", shellQuote(projName), shellQuote(script))
 	out, err := sshRunOutputWithStdin(srv, cred, cmd, content, time.Minute)
@@ -507,6 +534,76 @@ func (s *Service) DestroyCompose(ctx context.Context, serverID uint, name string
 	s.recordSimpleEvent(ctx, serverID, "compose_destroy",
 		fmt.Sprintf("销毁 compose 项目 %s：%s", name, map[bool]string{true: "成功", false: "失败"}[err == nil]))
 	return out, err
+}
+
+// composePSItem docker compose ps --format json 的字段（跨版本兼容见 parseComposePS）。
+type composePSItem struct {
+	Name   string `json:"Name"`
+	State  string `json:"State"`
+	Health string `json:"Health"` // healthy | unhealthy | starting | ""（未定义 healthcheck）
+}
+
+// parseComposePS 兼容两种输出：v2.6+ 为 JSON 数组，更早版本为逐行 JSON 对象。
+func parseComposePS(out string) []composePSItem {
+	trimmed := strings.TrimSpace(out)
+	var items []composePSItem
+	if strings.HasPrefix(trimmed, "[") {
+		if json.Unmarshal([]byte(trimmed), &items) == nil {
+			return items
+		}
+	}
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var it composePSItem
+		if json.Unmarshal([]byte(line), &it) == nil && it.Name != "" {
+			items = append(items, it)
+		}
+	}
+	return items
+}
+
+// WaitComposeHealthy 蓝绿健康门禁：轮询目标机 compose 项目直至全部容器
+// running 且（定义了 healthcheck 的）healthy。超时返回最后一次输出。
+// 语义对齐 K8s Deployment readiness：任一 unhealthy/exited 即不通过。
+func (s *Service) WaitComposeHealthy(ctx context.Context, serverID uint, name string, timeout time.Duration) error {
+	if !deployNameRe.MatchString(name) {
+		return fmt.Errorf("非法的 compose 项目名")
+	}
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	cmd := fmt.Sprintf("docker compose -p %s ps --all --format json", shellQuote(name))
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		out, err := sshRunOutput(srv, cred, cmd, 30*time.Second)
+		last = out
+		if err == nil {
+			items := parseComposePS(out)
+			allOK := len(items) > 0
+			for _, it := range items {
+				if it.State != "running" || it.Health == "unhealthy" || it.Health == "starting" {
+					allOK = false
+					break
+				}
+			}
+			if allOK {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("健康门禁超时（%s），最后状态：\n%s", timeout, last)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // HostInfo 主机配置（环境探测时采集缓存；公网带宽是云厂商属性，机器内拿不到，

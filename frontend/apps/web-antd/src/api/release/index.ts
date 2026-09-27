@@ -1,6 +1,7 @@
 import { requestClient } from '#/api/request';
 
 export interface ReleaseItem {
+  color: '' | 'blue' | 'green';
   createdAt: string;
   durationSecs: number;
   envType: 'canary' | 'prod' | 'test';
@@ -33,6 +34,13 @@ export async function getReleasesApi(params: {
 export async function getPassedTagsApi(projectId: number, env: string) {
   return requestClient.get<string[]>('/releases/passed-tags', {
     params: { env, projectId },
+  });
+}
+
+/** 正式环境蓝绿活跃色（空 = 未启用蓝绿） */
+export async function getActiveColorApi(projectId: number) {
+  return requestClient.get<{ color: string }>('/releases/active-color', {
+    params: { projectId },
   });
 }
 

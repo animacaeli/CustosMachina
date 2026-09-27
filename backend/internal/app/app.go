@@ -72,11 +72,16 @@ func ProvideModules(
 	ciPoller *ci.Poller, // 拉起 ci:poll 状态轮询任务（哨兵依赖）
 	slotsSweeper *slots.Sweeper, // 拉起 slots:sweep 到期扫描任务（哨兵依赖）
 	notifySvc *notify.Service,
+	releaseSvc *release.Service,
+	canarySvc *canary.Service,
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
 	resources.AttachNotifier(notifySvc)
 	// 桥接：分支 push → 匹配占用该分支的测试槽位自动重建
 	ciSvc.BranchPushHook = slotsSvc.OnBranchPush
+	// 桥接：canary 渲染 conf 时取蓝绿活跃色（release→canary 单向依赖，
+	// color getter 事后注入避免构造环）
+	canarySvc.SetColorGetter(releaseSvc)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH}
 }
 
