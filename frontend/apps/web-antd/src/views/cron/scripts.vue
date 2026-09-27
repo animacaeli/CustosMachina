@@ -5,7 +5,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
 import {
   createScriptApi,
@@ -45,6 +45,7 @@ const typeText: Record<string, string> = {
 };
 
 const formOpen = ref(false);
+const editConfirmed = ref(false); // confirm 回调内二次进入放行
 const editingId = ref<null | number>(null);
 const form = reactive({
   content: '',
@@ -63,6 +64,19 @@ function openCreate() {
 }
 
 function openEdit(s: CronScript) {
+  if ((s.boundCount ?? 0) > 0 && !editConfirmed.value) {
+    Modal.confirm({
+      content: `该脚本被 ${s.boundCount} 个任务引用，保存后修改立即生效于全部任务。确认继续编辑？`,
+      okText: '继续编辑',
+      cancelText: '取消',
+      onOk: () => {
+        editConfirmed.value = true;
+        openEdit(s);
+        editConfirmed.value = false;
+      },
+    });
+    return;
+  }
   editingId.value = s.id;
   form.name = s.name;
   form.content = s.content;

@@ -27,6 +27,12 @@ type Runner interface {
 	RecordEvent(ctx context.Context, serverID uint, typ, msg string)
 }
 
+// OpsNotifier 运维群推送出口（notify.Service 实现，app 层注入）：
+// 任务失败/超时推运维群——定时任务半夜失败不能等第二天才发现。
+type OpsNotifier interface {
+	NotifyOps(ctx context.Context, title, detail string)
+}
+
 // DomainResolver 项目基础名 → 当前活跃隔离域名（release.Service 提供，
 // app 层 SetDomainResolver 事后注入）。蓝绿项目的 compose 载体任务跟随
 // 活跃颜色域执行（同版本同网络）；未启用蓝绿时返回原名。
@@ -35,10 +41,14 @@ type DomainResolver interface {
 }
 
 type Service struct {
-	db      *gorm.DB
-	ssh     Runner
-	domains DomainResolver // 可空：未注入时按原名执行
+	db       *gorm.DB
+	ssh      Runner
+	domains  DomainResolver // 可空：未注入时按原名执行
+	notifier OpsNotifier    // 可空：未注入时只落库不推送
 }
+
+// SetNotifier 注入运维群推送出口（notify.Service 提供）。
+func (s *Service) SetNotifier(n OpsNotifier) { s.notifier = n }
 
 func NewService(db *gorm.DB, ssh Runner) *Service { return &Service{db: db, ssh: ssh} }
 
@@ -62,10 +72,33 @@ type ScriptInput struct {
 	Remark  string `json:"remark" binding:"max=255"`
 }
 
-func (s *Service) ListScripts(ctx context.Context) ([]CronScript, error) {
+// ScriptWithBound 脚本 + 引用计数（编辑时提示"修改立即生效于 N 个任务"）。
+type ScriptWithBound struct {
+	CronScript
+	BoundCount int64 `json:"boundCount"`
+}
+
+func (s *Service) ListScripts(ctx context.Context) ([]ScriptWithBound, error) {
 	var list []CronScript
-	err := s.db.WithContext(ctx).Order("id DESC").Find(&list).Error
-	return list, err
+	if err := s.db.WithContext(ctx).Order("id DESC").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	type cnt struct {
+		ScriptID uint
+		N        int64
+	}
+	var counts []cnt
+	s.db.WithContext(ctx).Model(&CronJob{}).
+		Select("script_id, COUNT(*) AS n").Group("script_id").Scan(&counts)
+	bound := map[uint]int64{}
+	for _, c := range counts {
+		bound[c.ScriptID] = c.N
+	}
+	out := make([]ScriptWithBound, 0, len(list))
+	for _, sc := range list {
+		out = append(out, ScriptWithBound{CronScript: sc, BoundCount: bound[sc.ID]})
+	}
+	return out, nil
 }
 
 func (s *Service) SaveScript(ctx context.Context, id uint, in ScriptInput, operator string) (*CronScript, error) {
@@ -195,6 +228,7 @@ type JobInput struct {
 	Command     string `json:"command" binding:"omitempty,max=512"`
 	Network     string `json:"network" binding:"omitempty,max=64"` // carrier=run 可选：docker --network
 	TimeoutSecs int    `json:"timeoutSecs" binding:"omitempty,min=10,max=86400"`
+	Retry       int    `json:"retry" binding:"omitempty,min=0,max=3"` // 失败重试次数
 	Enabled     *bool  `json:"enabled"`
 }
 
@@ -232,6 +266,7 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	if in.TimeoutSecs > 0 {
 		job.TimeoutSecs = in.TimeoutSecs
 	}
+	job.Retry = in.Retry
 	if in.Enabled != nil {
 		job.Enabled = *in.Enabled
 	}
@@ -366,7 +401,7 @@ func (s *Service) startRun(job *CronJob, trigger string) (*CronRun, bool) {
 		return nil, false
 	}
 	now := time.Now()
-	run := &CronRun{JobID: job.ID, Trigger: trigger, Status: RunRunning, StartedAt: now}
+	run := &CronRun{JobID: job.ID, ServerID: job.ServerID, Trigger: trigger, Status: RunRunning, StartedAt: now}
 	if err := s.db.Create(run).Error; err != nil {
 		logger.Warnf("[cron] 创建运行记录失败 job=%d: %v", job.ID, err)
 		return nil, false
@@ -426,6 +461,8 @@ func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel, do
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
 
 // truncateUTF8 按字节截断但回退到 rune 边界（防止切碎多字节字符出非法 UTF-8）。
+func truncateRunes(s string, n int) string { return truncateUTF8(s, n) }
+
 func truncateUTF8(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -436,12 +473,19 @@ func truncateUTF8(s string, n int) string {
 	return s[:n] + "\n...（输出超 64KB 已截断）"
 }
 
-// execute 上传脚本 → 起一次性容器 → 超时强杀 → 落结果与审计。
+// execute 上传脚本 → 起一次性容器 → 超时强杀 → 全量输出落文件 → 落结果、
+// 失败推运维群、按 job.Retry 链式重试（间隔 5 分钟，Trigger=retry）。
 func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
+	s.executeWithRetry(ctx, job, run, 0)
+}
+
+const retryDelay = 5 * time.Minute
+
+func (s *Service) executeWithRetry(ctx context.Context, job *CronJob, run *CronRun, attempt int) {
 	start := time.Now()
 	var script CronScript
 	if err := s.db.First(&script, job.ScriptID).Error; err != nil {
-		s.finishRun(run, RunFailed, "脚本不存在（可能已被删除）", start)
+		s.finishAndMaybeRetry(ctx, job, run, attempt, RunFailed, "脚本不存在（可能已被删除）", start, "")
 		return
 	}
 	timeout := time.Duration(job.TimeoutSecs) * time.Second
@@ -454,7 +498,7 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 		hostScriptPath = fmt.Sprintf("/opt/custos-machina/cron/task-%d.%s", run.ID, ext)
 		mkdir := fmt.Sprintf("mkdir -p /opt/custos-machina/cron && cat > %s && chmod 644 %s", hostScriptPath, hostScriptPath)
 		if out, err := s.ssh.RunCommandOn(ctx, job.ServerID, mkdir, script.Content, 30*time.Second); err != nil {
-			s.finishRun(run, RunFailed, fmt.Sprintf("上传脚本失败: %v\n%s", err, out), start)
+			s.finishAndMaybeRetry(ctx, job, run, attempt, RunFailed, fmt.Sprintf("上传脚本失败: %v\n%s", err, out), start, "")
 			s.audit(ctx, job, run, false)
 			return
 		}
@@ -487,16 +531,62 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 			if hostScriptPath != "" {
 				_, _ = s.ssh.RunCommandOn(ctx, job.ServerID, "rm -f "+hostScriptPath, "", 15*time.Second)
 			}
-			s.finishRun(run, RunTimeout, fmt.Sprintf("执行超时（%s），容器已强制终止\n%s", timeout, out), start)
+			s.finishAndMaybeRetry(ctx, job, run, attempt, RunTimeout, fmt.Sprintf("执行超时（%s），容器已强制终止\n%s", timeout, out), start, out)
 			s.audit(ctx, job, run, false)
 			return
 		}
-		s.finishRun(run, RunFailed, fmt.Sprintf("%v\n%s", err, out), start)
+		s.finishAndMaybeRetry(ctx, job, run, attempt, RunFailed, fmt.Sprintf("%v\n%s", err, out), start, out)
 		s.audit(ctx, job, run, false)
 		return
 	}
-	s.finishRun(run, RunSuccess, out, start)
+	s.finishAndMaybeRetry(ctx, job, run, attempt, RunSuccess, out, start, out)
 	s.audit(ctx, job, run, true)
+}
+
+// finishAndMaybeRetry 落结果 + 全量输出落目标机文件 + 失败推运维群 + 重试链。
+func (s *Service) finishAndMaybeRetry(ctx context.Context, job *CronJob, run *CronRun, attempt int, status, output string, start time.Time, fullOut string) {
+	outputFile := s.writeFullOutput(ctx, job, run, fullOut)
+	s.finishRun(run, status, output, start)
+	if outputFile != "" {
+		s.db.Model(run).Update("output_file", outputFile)
+		run.OutputFile = outputFile
+	}
+	if status == RunFailed || status == RunTimeout {
+		// 失败推运维群（半夜失败不能等第二天）
+		if s.notifier != nil {
+			title := fmt.Sprintf("定时任务失败：%s", job.Name)
+			detail := fmt.Sprintf("状态：%s（第 %d 次尝试）\n触发：%s\n服务器 ID：%d\n\n%s",
+				status, attempt+1, run.Trigger, job.ServerID, truncateRunes(output, 500))
+			go func() { s.notifier.NotifyOps(context.WithoutCancel(ctx), title, detail) }()
+		}
+		// 重试链：间隔 5 分钟（Forbid 语义不变——重试前若有新调度触发会被它顶掉）
+		if attempt < job.Retry {
+			next := attempt + 1
+			logger.Infof("[cron] 任务 %s 失败，%s 后第 %d/%d 次重试", job.Name, retryDelay, next, job.Retry)
+			time.AfterFunc(retryDelay, func() {
+				var j CronJob
+				if err := s.db.First(&j, job.ID).Error; err != nil {
+					return // 任务已删：不再重试
+				}
+				if r2, ok := s.startRun(&j, TriggerRetry); ok {
+					s.executeWithRetry(context.Background(), &j, r2, next)
+				}
+			})
+		}
+	}
+}
+
+// writeFullOutput 全量输出落目标机（截断留痕的兜底：前端可下载完整日志）。
+func (s *Service) writeFullOutput(ctx context.Context, job *CronJob, run *CronRun, out string) string {
+	if strings.TrimSpace(out) == "" {
+		return ""
+	}
+	path := fmt.Sprintf("/opt/custos-machina/cron/output-%d.log", run.ID)
+	cmd := fmt.Sprintf("mkdir -p /opt/custos-machina/cron && cat > %s", path)
+	if _, err := s.ssh.RunCommandOn(ctx, job.ServerID, cmd, out, 30*time.Second); err != nil {
+		return ""
+	}
+	return path
 }
 
 func (s *Service) audit(ctx context.Context, job *CronJob, run *CronRun, success bool) {

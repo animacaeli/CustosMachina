@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // fakeDeployer 记录蓝绿链路的部署侧调用，可编程失败点。
@@ -60,17 +62,38 @@ func setupBG(t *testing.T) (*Service, *fakeDeployer, *fakeRenderer) {
 	return svc, d, r
 }
 
+// runBG 触发蓝绿并轮询至终态（异步执行，最长等 5s）。
+func runBG(t *testing.T, svc *Service, p *projectRow, in ReleaseInput) (*Release, error) {
+	t.Helper()
+	ctx := context.Background()
+	target := &EnvTargetRow{ServerID: 1, Runtime: "compose"}
+	rel, err := svc.startBlueGreen(ctx, p, target, in, "tester", "yaml: demo")
+	if err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var got Release
+		svc.db.First(&got, rel.ID)
+		if got.Status != ReleaseRunning {
+			rel = &got
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return rel, nil
+}
+
 // ---- 首次发布：落 blue 域，BGState 推进，不销毁任何域 ----
 
 func TestBlueGreenFirstRelease(t *testing.T) {
-	old := drainWindow
-	drainWindow = 10 * time.Millisecond
-	defer func() { drainWindow = old }()
+	old := drainWindowDefault
+	drainWindowDefault = 10 * time.Millisecond
+	defer func() { drainWindowDefault = old }()
 
 	svc, d, r := setupBG(t)
-	rel, err := svc.executeBlueGreen(context.Background(),
-		&projectRow{Name: "demo"}, &EnvTargetRow{ServerID: 1, Runtime: "compose"},
-		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v1"}, "tester", "yaml")
+	rel, err := runBG(t, svc, &projectRow{Name: "demo"},
+		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v1"})
 	if err != nil {
 		t.Fatalf("首发失败: %v", err)
 	}
@@ -97,18 +120,17 @@ func TestBlueGreenFirstRelease(t *testing.T) {
 // ---- 二次发布：落 green 域，drain 后销毁 blue ----
 
 func TestBlueGreenAlternatesAndDestroysOld(t *testing.T) {
-	old := drainWindow
-	drainWindow = 10 * time.Millisecond
-	defer func() { drainWindow = old }()
+	old := drainWindowDefault
+	drainWindowDefault = 10 * time.Millisecond
+	defer func() { drainWindowDefault = old }()
 
 	svc, d, _ := setupBG(t)
 	ctx := context.Background()
 	p := &projectRow{Name: "demo"}
-	target := &EnvTargetRow{ServerID: 1, Runtime: "compose"}
-	if _, err := svc.executeBlueGreen(ctx, p, target, ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v1"}, "t", "y"); err != nil {
+	if _, err := runBG(t, svc, p, ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.executeBlueGreen(ctx, p, target, ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}, "t", "y"); err != nil {
+	if _, err := runBG(t, svc, p, ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}); err != nil {
 		t.Fatal(err)
 	}
 	if d.deployed[len(d.deployed)-1] != "demo-prod-green" {
@@ -130,11 +152,10 @@ func TestBlueGreenHealthGateFailure(t *testing.T) {
 	d.waitErr = map[string]error{"demo-prod-green": errors.New("unhealthy")}
 	ctx := context.Background()
 
-	rel, err := svc.executeBlueGreen(ctx, &projectRow{Name: "demo"},
-		&EnvTargetRow{ServerID: 1, Runtime: "compose"},
-		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}, "t", "y")
-	if err == nil {
-		t.Fatal("门禁失败应返回错误")
+	rel, err := runBG(t, svc, &projectRow{Name: "demo"},
+		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"})
+	if err != nil {
+		// 异步化后 startBlueGreen 本身不报执行错误，终态在记录里
 	}
 	if rel.Status != ReleaseFailed {
 		t.Fatalf("应落 failed 记录, got %s", rel.Status)
@@ -155,24 +176,26 @@ func TestBlueGreenHealthGateFailure(t *testing.T) {
 func TestBlueGreenStateSaveFailureKeepsNewDomain(t *testing.T) {
 	svc, d, _ := setupBG(t)
 	svc.db.Save(&BGState{ProjectID: 1, ActiveColor: ColorBlue})
-	// 注入落库失败：删掉 blue_green_states 表使 Save 必败
-	if err := svc.db.Migrator().DropTable(&BGState{}); err != nil {
+	// 注入落库失败：更新回调里报错（表结构不动，语义只针对本次 Save）
+	svc.db.Callback().Update().Before("gorm:update").Register("test-inject-fail", func(tx *gorm.DB) {
+		if tx.Statement.Table == "blue_green_states" {
+			_ = tx.AddError(errors.New("injected save failure"))
+		}
+	})
+	defer svc.db.Callback().Update().Remove("test-inject-fail")
+	rel, err := runBG(t, svc, &projectRow{Name: "demo"},
+		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	rel, err := svc.executeBlueGreen(ctx, &projectRow{Name: "demo"},
-		&EnvTargetRow{ServerID: 1, Runtime: "compose"},
-		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}, "t", "y")
-	if err == nil {
-		t.Fatal("落库失败应返回错误")
+	if rel.Status != ReleaseFailed {
+		t.Fatalf("BGState 落库失败终态应为 failed, got %s", rel.Status)
 	}
-	_ = rel
 	if len(d.destroyed) != 0 {
 		t.Errorf("conf 已切换后绝不能销毁新域, got %v", d.destroyed)
 	}
-	// 恢复表供后续断言
-	if err := svc.db.AutoMigrate(&BGState{}); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(rel.Output, "保留运行") {
+		t.Errorf("输出应注明新域保留运行:\n%s", rel.Output)
 	}
 }
 
@@ -184,10 +207,13 @@ func TestBlueGreenConfFailureNoImpact(t *testing.T) {
 	d.confErr = errors.New("nginx -t failed")
 	ctx := context.Background()
 
-	if _, err := svc.executeBlueGreen(ctx, &projectRow{Name: "demo"},
-		&EnvTargetRow{ServerID: 1, Runtime: "compose"},
-		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"}, "t", "y"); err == nil {
-		t.Fatal("conf 失败应返回错误")
+	rel, err := runBG(t, svc, &projectRow{Name: "demo"},
+		ReleaseInput{ProjectID: 1, EnvType: "prod", Tag: "v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Status != ReleaseFailed {
+		t.Fatalf("conf 失败终态应为 failed, got %s", rel.Status)
 	}
 	if c := svc.ActiveColor(ctx, 1); c != ColorBlue {
 		t.Errorf("活跃色不应变化, got %q", c)

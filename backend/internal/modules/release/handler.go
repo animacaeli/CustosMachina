@@ -26,6 +26,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.GET("", h.list)
 		g.GET("/passed-tags", h.passedTags)
 		g.GET("/active-color", h.activeColor)
+		g.GET("/:id", h.detail)
 		g.POST("", h.execute)
 		g.POST("/:id/rollback", h.rollback)
 	}
@@ -66,6 +67,20 @@ func (h *Handler) passedTags(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, tags)
+}
+
+// detail 单条发布记录（蓝绿异步执行时前端轮询进度：status running + output 阶段日志）。
+func (h *Handler) detail(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	var rel Release
+	if err := h.svc.DB().WithContext(c.Request.Context()).First(&rel, id).Error; err != nil {
+		httpx.FailNotFound(c, ErrNotFound.Error())
+		return
+	}
+	httpx.OK(c, rel)
 }
 
 func (h *Handler) activeColor(c *gin.Context) {

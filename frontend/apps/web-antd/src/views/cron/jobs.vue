@@ -9,6 +9,7 @@ import { message } from 'ant-design-vue';
 
 import {
   createJobApi,
+  createScriptApi,
   deleteJobApi,
   getJobsApi,
   getScriptsApi,
@@ -65,6 +66,72 @@ const statusText: Record<string, string> = {
   unknown: '结果未知',
 };
 
+// ---- 快速执行（一次性脚本：内联写脚本 → 自动建脚本+手动任务 → 触发 → 看实时日志） ----
+const quickOpen = ref(false);
+const quickRunning = ref(false);
+const quick = reactive({
+  carrier: 'run' as CronJob['carrier'],
+  content: '',
+  image: 'alpine:3',
+  projectName: '',
+  serverId: undefined as number | undefined,
+  service: '',
+  timeoutSecs: 300,
+  type: 'shell' as 'python' | 'shell',
+});
+
+async function quickExecute() {
+  if (!quick.content.trim() || !quick.serverId) {
+    message.warning('请填写脚本内容与目标主机');
+    return;
+  }
+  if (quick.carrier === 'run' && !quick.image) {
+    message.warning('docker run 载体需填写镜像');
+    return;
+  }
+  if (quick.carrier === 'compose-run' && (!quick.projectName || !quick.service)) {
+    message.warning('compose 载体需填写项目名与服务名');
+    return;
+  }
+  quickRunning.value = true;
+  try {
+    const ts = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const script = await createScriptApi({
+      content: quick.content,
+      name: `快速执行 ${ts}`,
+      remark: '快速执行入口创建',
+      type: quick.type,
+    });
+    const job = await createJobApi({
+      carrier: quick.carrier,
+      enabled: false,
+      image: quick.image,
+      name: `快速执行 ${ts}`,
+      projectName: quick.projectName,
+      retry: 0,
+      schedule: '',
+      scriptId: script.id,
+      serverId: quick.serverId,
+      service: quick.service,
+      timeoutSecs: quick.timeoutSecs,
+    });
+    const run = await triggerJobApi(job.id);
+    message.success('已执行，实时日志查看中');
+    quickOpen.value = false;
+    quick.content = '';
+    await load();
+    runsJobId.value = job.id;
+    runsJobName.value = job.name;
+    runsNonce.value += 1;
+    runsAutoOpenRun.value = run.id;
+    runsOpen.value = true;
+  } catch {
+    // 业务错误由拦截器提示
+  } finally {
+    quickRunning.value = false;
+  }
+}
+
 function fmtTime(v?: null | string) {
   if (!v) return '—';
   return new Date(v).toLocaleString();
@@ -74,6 +141,7 @@ function fmtTime(v?: null | string) {
 const runsOpen = ref(false);
 const runsJobId = ref<number | undefined>();
 const runsJobName = ref<string>();
+const runsAutoOpenRun = ref<number>();
 
 function showRuns(item?: CronJobItem) {
   runsJobId.value = item?.job.id;
@@ -94,6 +162,7 @@ const form = reactive({
   name: '',
   network: '',
   projectName: '',
+  retry: 0,
   schedule: '',
   scriptId: undefined as number | undefined,
   serverId: undefined as number | undefined,
@@ -115,6 +184,7 @@ function openCreate() {
     mode: 'schedule',
     name: '',
     network: '',
+    retry: 0,
     projectName: '',
     schedule: '0 3 * * *',
     scriptId: undefined,
@@ -168,6 +238,7 @@ function openEdit(item: CronJobItem) {
     mode: j.schedule ? 'schedule' : 'manual',
     name: j.name,
     network: j.network ?? '',
+    retry: j.retry ?? 0,
     projectName: j.projectName,
     schedule: j.schedule || '0 3 * * *',
     scriptId: j.scriptId,
@@ -234,6 +305,7 @@ async function onTrigger(item: CronJobItem) {
   <div class="p-4">
     <a-card title="定时任务">
       <template #extra>
+        <a-button class="mr-2" @click="quickOpen = true">快速执行</a-button>
         <a-button class="mr-2" @click="showRuns(undefined)">
           全部运行历史
         </a-button>
@@ -437,6 +509,9 @@ async function onTrigger(item: CronJobItem) {
         <a-form-item label="附加参数（可选，追加到命令后）">
           <a-input v-model:value="form.command" placeholder="如 --dry-run" />
         </a-form-item>
+        <a-form-item label="失败重试次数（0-3，间隔 5 分钟）">
+          <a-input-number v-model:value="form.retry" :min="0" :max="3" />
+        </a-form-item>
         <a-form-item label="超时（秒，超时强杀容器）">
           <a-input-number
             v-model:value="form.timeoutSecs"
@@ -452,8 +527,57 @@ async function onTrigger(item: CronJobItem) {
 
     <RunsDrawer
       v-model:open="runsOpen"
+      :auto-open-run="runsAutoOpenRun"
       :job-id="runsJobId"
       :job-name="runsJobName"
+      :nonce="runsNonce"
     />
+
+    <a-modal
+      v-model:open="quickOpen"
+      title="快速执行（一次性脚本）"
+      :width="640"
+      :confirm-loading="quickRunning"
+      ok-text="执行"
+      @ok="quickExecute"
+    >
+      <a-form layout="vertical" style="padding-top: 0.5rem">
+        <a-form-item label="目标主机" required>
+          <a-select
+            v-model:value="quick.serverId"
+            :options="
+              servers.map((s) => ({
+                label: `${s.name}（${s.host}）`,
+                value: s.id,
+              }))
+            "
+            placeholder="选择执行主机"
+          />
+        </a-form-item>
+        <a-form-item label="执行载体" required>
+          <a-radio-group v-model:value="quick.carrier">
+            <a-radio value="run">docker run（独立镜像）</a-radio>
+            <a-radio value="compose-run">docker compose run（业务项目服务）</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item v-if="quick.carrier === 'run'" label="镜像" required>
+          <a-input v-model:value="quick.image" placeholder="如 alpine:3 / python:3.12" />
+        </a-form-item>
+        <template v-else>
+          <a-form-item label="项目名（蓝绿项目填基础名）" required>
+            <a-input v-model:value="quick.projectName" />
+          </a-form-item>
+          <a-form-item label="compose 服务名" required>
+            <a-input v-model:value="quick.service" />
+          </a-form-item>
+        </template>
+        <a-form-item label="脚本内容" required>
+          <a-textarea v-model:value="quick.content" :rows="10" />
+        </a-form-item>
+        <a-form-item label="超时（秒）">
+          <a-input-number v-model:value="quick.timeoutSecs" :min="10" :max="86400" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>

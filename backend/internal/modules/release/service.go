@@ -130,6 +130,8 @@ type ReleaseInput struct {
 	ProjectID uint   `json:"projectId" binding:"required"`
 	EnvType   string `json:"envType" binding:"required,oneof=prod canary test"`
 	Tag       string `json:"tag" binding:"required,max=128"`
+	// drainSecs 蓝绿 drain 窗口（默认 30s，5~600；长连接多的业务调大）
+	DrainSecs int `json:"drainSecs" binding:"omitempty,min=5,max=600"`
 }
 
 // Execute 校验"已通过 CI"→ 取 compose 文件 → 部署 → 落发布历史 + 通知。
@@ -175,9 +177,10 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)
 	}
 
-	// 正式环境走蓝绿链路（第四阶段 M2）：双隔离域 + 健康门禁 + 整份 conf 切换
+	// 正式环境走蓝绿链路（第四阶段 M2，任务化）：双隔离域 + 健康门禁 + 整份 conf
+	// 切换；立即返回 running 记录，后台执行、阶段日志轮询可见
 	if in.EnvType == "prod" {
-		return s.executeBlueGreen(ctx, p, target, in, operator, yamlContent)
+		return s.startBlueGreen(ctx, p, target, in, operator, yamlContent)
 	}
 
 	rel := Release{
@@ -255,6 +258,9 @@ func (s *Service) Rollback(ctx context.Context, releaseID uint, operator string)
 }
 
 // List 分页发布历史。
+// DB 暴露只读查询入口（handler 单条查询用；写操作仍收在 service 内）。
+func (s *Service) DB() *gorm.DB { return s.db }
+
 func (s *Service) List(ctx context.Context, projectID uint, env string, page, size int) ([]Release, int64, error) {
 	tx := s.db.WithContext(ctx).Model(&Release{})
 	if projectID > 0 {

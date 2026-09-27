@@ -2,6 +2,7 @@ import { requestClient } from '#/api/request';
 
 export interface ReleaseItem {
   color: '' | 'blue' | 'green';
+  drainSecs?: number;
   createdAt: string;
   durationSecs: number;
   envType: 'canary' | 'prod' | 'test';
@@ -12,7 +13,7 @@ export interface ReleaseItem {
   rollbackOf: null | number;
   runtime: string;
   serverId: number;
-  status: 'failed' | 'success';
+  status: 'failed' | 'running' | 'success';
   tag: string;
 }
 
@@ -37,6 +38,11 @@ export async function getPassedTagsApi(projectId: number, env: string) {
   });
 }
 
+/** 单条发布记录（蓝绿异步执行进度轮询：running + output 阶段日志） */
+export async function getReleaseApi(id: number) {
+  return requestClient.get<ReleaseItem>(`/releases/${id}`);
+}
+
 /** 正式环境蓝绿活跃色（空 = 未启用蓝绿） */
 export async function getActiveColorApi(projectId: number) {
   return requestClient.get<{ color: string }>('/releases/active-color', {
@@ -45,6 +51,7 @@ export async function getActiveColorApi(projectId: number) {
 }
 
 export async function createReleaseApi(data: {
+  drainSecs?: number;
   envType: string;
   projectId: number;
   tag: string;

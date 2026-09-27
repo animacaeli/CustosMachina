@@ -30,6 +30,13 @@ const canWrite = computed(() => {
 });
 
 const cwd = ref('/');
+const quickPaths = [
+  { label: '部署目录', path: '/opt/custos-machina/compose' },
+  { label: 'nginx 配置', path: '/root/docker-linux/nginx/conf/conf.d' },
+  { label: 'cron 任务文件', path: '/opt/custos-machina/cron' },
+  { label: '系统日志', path: '/var/log' },
+  { label: 'root 主目录', path: '/root' },
+];
 const entries = ref<FileEntry[]>([]);
 const loading = ref(false);
 
@@ -215,6 +222,19 @@ async function onRemove(e: FileEntry) {
         </a-breadcrumb-item>
       </a-breadcrumb>
       <span class="flex-1"></span>
+      <a-select
+        :value="undefined"
+        :options="quickPaths.map((p) => ({ label: p.label, value: p.path }))"
+        placeholder="常用路径"
+        size="small"
+        style="width: 190px"
+        @change="
+          (v: string) => {
+            cwd = v;
+            load();
+          }
+        "
+      />
       <template v-if="canWrite">
         <input ref="uploadInput" type="file" hidden @change="onUpload" />
         <a-button size="small" :loading="uploading" @click="uploadInput?.click()">

@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	ReleaseRunning = "running" // 蓝绿异步执行中（前端轮询进度）
 	ReleaseSuccess = "success"
 	ReleaseFailed  = "failed"
 )

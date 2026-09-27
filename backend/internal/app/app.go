@@ -76,6 +76,7 @@ func ProvideModules(
 	notifySvc *notify.Service,
 	releaseSvc *release.Service,
 	canarySvc *canary.Service,
+	observSvc *observ.Service,
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
 	resources.AttachNotifier(notifySvc)
@@ -86,6 +87,9 @@ func ProvideModules(
 	canarySvc.SetColorGetter(releaseSvc)
 	// 桥接：cron 的 compose 载体任务跟随蓝绿活跃颜色域（同注入模式解构造环）
 	cronSvc.SetDomainResolver(releaseSvc)
+	// 桥接：cron 任务失败 / observ 部署失败推运维群（横切通知能力）
+	cronSvc.SetNotifier(notifySvc)
+	observSvc.SetNotifier(notifySvc)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH}
 }
 

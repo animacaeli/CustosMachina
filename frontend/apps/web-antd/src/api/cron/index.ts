@@ -1,6 +1,7 @@
 import { requestClient } from '#/api/request';
 
 export interface CronScript {
+  boundCount?: number;
   content: string;
   createdAt: string;
   createdBy: string;
@@ -16,6 +17,7 @@ export interface CronJob {
   command: string;
   enabled: boolean;
   network: string;
+  retry: number;
   id: number;
   image: string;
   lastRunAt: null | string;
@@ -43,9 +45,13 @@ export interface CronRun {
   jobId: number;
   output: string;
   startedAt: string;
+  /** 全量日志文件（目标机路径，超 64KB 截断时的下载兜底） */
+  outputFile: string;
+  /** 下载全量日志用（SFTP ticket） */
+  serverId: number;
   /** running | success | failed | timeout | skipped | unknown */
   status: string;
-  /** schedule | manual */
+  /** schedule | manual | retry */
   trigger: string;
 }
 

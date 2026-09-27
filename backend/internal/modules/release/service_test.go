@@ -24,6 +24,10 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
+	// 蓝绿异步 goroutine 与测试共用一库：:memory: 每连接独立，限单连接保证同库
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := db.AutoMigrate(&Release{}, &BGState{}, &projectTbl{}, &targetTbl{}, &buildTbl{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}

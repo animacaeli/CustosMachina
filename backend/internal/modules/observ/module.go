@@ -133,13 +133,38 @@ func deployName(component string) string { return "custos-observ-" + component }
 
 // ---- Service ----
 
+// OpsNotifier 运维群推送出口（notify.Service 实现，app 层注入）：
+// 观测组件部署/卸载失败不能静默。
+type OpsNotifier interface {
+	NotifyOps(ctx context.Context, title, detail string)
+}
+
 type Service struct {
-	db  *gorm.DB
-	res *resources.Service
+	db       *gorm.DB
+	res      *resources.Service
+	notifier OpsNotifier // 可空
 }
 
 func NewService(db *gorm.DB, res *resources.Service) *Service {
 	return &Service{db: db, res: res}
+}
+
+// SetNotifier 注入运维群推送出口。
+func (s *Service) SetNotifier(n OpsNotifier) { s.notifier = n }
+
+func (s *Service) notifyFailure(ctx context.Context, serverID uint, action string, err error, out string) {
+	if s.notifier == nil {
+		return
+	}
+	detail := fmt.Sprintf("服务器 ID：%d\n操作：%s\n错误：%v\n\n%s", serverID, action, err, truncateStr(out, 500))
+	go func() { s.notifier.NotifyOps(context.WithoutCancel(ctx), "观测组件"+action+"失败", detail) }()
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "...（截断）"
 }
 
 func (s *Service) setting(ctx context.Context, key string) (string, error) {
@@ -209,6 +234,9 @@ func (s *Service) Deploy(ctx context.Context, serverID uint, component string) (
 	s.res.RecordEvent(ctx, serverID, "observ_deploy",
 		fmt.Sprintf("观测组件 %s 部署/升级（%s）：%s", component, comp.Image,
 			map[bool]string{true: "成功", false: "失败"}[err == nil]))
+	if err != nil {
+		s.notifyFailure(ctx, serverID, "部署/"+component, err, out)
+	}
 	return out, err
 }
 
@@ -221,6 +249,9 @@ func (s *Service) Uninstall(ctx context.Context, serverID uint, component string
 	s.res.RecordEvent(ctx, serverID, "observ_deploy",
 		fmt.Sprintf("观测组件 %s 卸载：%s", component,
 			map[bool]string{true: "成功", false: "失败"}[err == nil]))
+	if err != nil {
+		s.notifyFailure(ctx, serverID, "卸载/"+component, err, out)
+	}
 	return out, err
 }
 

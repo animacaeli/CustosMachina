@@ -4,10 +4,13 @@ import type { CronRun } from '#/api/cron';
 import { onBeforeUnmount, ref, watch } from 'vue';
 
 import { getRunApi, getRunsApi } from '#/api/cron';
+import { fileDownloadUrl } from '#/api/resources/files';
 
 defineOptions({ name: 'CronRunsDrawer' });
 
 const props = defineProps<{
+  /** 快速执行后自动展开该运行的实时日志 */
+  autoOpenRun?: number;
   jobId?: number;
   jobName?: string;
   /** 递增即强制刷新（抽屉已开且 jobId 不变时 watch 不触发） */
@@ -50,6 +53,22 @@ watch(
   },
 );
 
+// 快速执行链路：抽屉打开后自动展开指定运行的实时日志
+watch(
+  () => [props.open, props.autoOpenRun],
+  async () => {
+    if (props.open && props.autoOpenRun) {
+      try {
+        const r = await getRunApi(props.autoOpenRun);
+        showDetail(r);
+      } catch {
+        // 记录尚未可见时忽略
+      }
+    }
+  },
+  { immediate: true },
+);
+
 const statusColor: Record<string, string> = {
   failed: 'red',
   running: 'processing',
@@ -90,6 +109,21 @@ function pollRunning(id: number) {
       stopPoll();
     }
   }, 2000);
+}
+
+const downloadingLog = ref(false);
+async function downloadFullLog() {
+  const r = activeRun.value;
+  if (!r?.outputFile || !r.serverId || downloadingLog.value) return;
+  downloadingLog.value = true;
+  try {
+    const url = await fileDownloadUrl(r.serverId, r.outputFile);
+    window.open(url, '_blank');
+  } catch {
+    // ticket 签发失败由拦截器提示
+  } finally {
+    downloadingLog.value = false;
+  }
 }
 
 function showDetail(r: CronRun) {
@@ -167,11 +201,19 @@ function fmtDuration(r: CronRun) {
       :width="720"
       @cancel="stopPoll"
     >
-      <div class="mb-1 text-xs">
+      <div class="mb-1 flex items-center justify-between text-xs">
         <a-badge
           :status="activeRun?.status === 'running' ? 'processing' : undefined"
           :text="activeRun?.status === 'running' ? '执行中（实时输出，2 秒刷新）' : ''"
         />
+        <a-button
+          v-if="activeRun?.outputFile"
+          size="small"
+          type="link"
+          @click="downloadFullLog"
+        >
+          下载全量日志
+        </a-button>
       </div>
       <pre
         class="max-h-96 overflow-auto rounded bg-black/90 p-3 text-xs text-green-300"

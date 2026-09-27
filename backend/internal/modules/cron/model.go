@@ -37,6 +37,7 @@ const (
 const (
 	TriggerSchedule = "schedule"
 	TriggerManual   = "manual"
+	TriggerRetry    = "retry"
 )
 
 // CronScript 脚本库：仅 admin 可建可改。
@@ -68,6 +69,7 @@ type CronJob struct {
 	Command     string         `gorm:"size:512" json:"command"`         // 附加参数（shell/python 追加到解释器后）
 	Network     string         `gorm:"size:64" json:"network"`          // carrier=run 可选：docker --network（连业务网络查数据用）
 	TimeoutSecs int            `gorm:"not null;default:600" json:"timeoutSecs"`
+	Retry       int            `gorm:"not null;default:0" json:"retry"` // 失败后重试次数（0-3，间隔 5 分钟）
 	Enabled     bool           `gorm:"not null;default:true" json:"enabled"`
 	NextRunAt   *time.Time     `gorm:"index" json:"nextRunAt"`
 	LastStatus  string         `gorm:"size:16" json:"lastStatus"`
@@ -84,9 +86,11 @@ func (CronJob) TableName() string { return "cron_jobs" }
 type CronRun struct {
 	ID           uint       `gorm:"primarykey" json:"id"`
 	JobID        uint       `gorm:"index;not null" json:"jobId"`
-	Trigger      string     `gorm:"size:16;not null" json:"trigger"` // schedule | manual
+	ServerID     uint       `gorm:"not null" json:"serverId"`        // 下载全量日志（SFTP ticket）用
+	Trigger      string     `gorm:"size:16;not null" json:"trigger"` // schedule | manual | retry
 	Status       string     `gorm:"size:16;index;not null" json:"status"`
 	Output       string     `gorm:"type:text" json:"output"`
+	OutputFile   string     `gorm:"size:255" json:"outputFile"` // 目标机全量日志路径（64KB 截断的兜底）
 	DurationSecs int        `json:"durationSecs"`
 	StartedAt    time.Time  `gorm:"not null" json:"startedAt"`
 	FinishedAt   *time.Time `json:"finishedAt"`

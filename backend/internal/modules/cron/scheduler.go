@@ -24,11 +24,37 @@ type Scheduler struct{}
 // 并按运行标签清扫目标机上可能残留的一次性容器与脚本文件。
 func NewScheduler(svc *Service) (*Scheduler, func(), error) {
 	svc.recoverDangling()
-	g := jobs.NewGroup(jobs.Job{
-		Name: "cron:sched", Interval: 30 * time.Second, Fn: svc.scanDue,
-	})
+	g := jobs.NewGroup(
+		jobs.Job{Name: "cron:sched", Interval: 30 * time.Second, Fn: svc.scanDue},
+		jobs.Job{Name: "cron:purge", Interval: 24 * time.Hour, Fn: svc.purgeOldRuns},
+	)
 	g.Start()
 	return &Scheduler{}, g.Stop, nil
+}
+
+// cronRunRetention 运行记录保留期：输出含 64KB 文本，无限增长会拖垮列表查询。
+const cronRunRetention = 90 * 24 * time.Hour
+
+// purgeOldRuns 清理过期运行记录，顺带清目标机上的全量输出文件（best-effort：
+// 任务已删的记录查不到主机，文件留给目录级清理）。
+func (s *Service) purgeOldRuns(ctx context.Context) error {
+	cutoff := time.Now().Add(-cronRunRetention)
+	var old []CronRun
+	if err := s.db.WithContext(ctx).
+		Where("created_at < ? AND output_file <> ''", cutoff).
+		Limit(500).Find(&old).Error; err != nil {
+		return err
+	}
+	byServer := map[uint][]string{}
+	for _, r := range old {
+		byServer[r.ServerID] = append(byServer[r.ServerID], r.OutputFile)
+	}
+	for serverID, files := range byServer {
+		_, _ = s.ssh.RunCommandOn(ctx, serverID, "rm -f "+strings.Join(files, " "), "", 30*time.Second)
+	}
+	return s.db.WithContext(ctx).
+		Where("created_at < ?", cutoff).
+		Delete(&CronRun{}).Error
 }
 
 // recoverDangling 平台重启恢复：上次进程发起、结果未知的 running 记录标 unknown

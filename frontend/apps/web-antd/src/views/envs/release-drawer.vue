@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { ReleaseItem } from '#/api/release';
 
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { message } from 'ant-design-vue';
 
@@ -9,6 +9,7 @@ import {
   createReleaseApi,
   getActiveColorApi,
   getPassedTagsApi,
+  getReleaseApi,
   getReleasesApi,
 } from '#/api/release';
 
@@ -26,6 +27,7 @@ const list = ref<ReleaseItem[]>([]);
 
 // 蓝绿：正式环境当前活跃色（空 = 尚未启用蓝绿/首次发布）
 const activeColor = ref('');
+const drainSecs = ref(30); // 蓝绿 drain 窗口（秒）
 async function loadActiveColor() {
   if (props.env !== 'prod' || !props.projectId) {
     activeColor.value = '';
@@ -90,11 +92,42 @@ function fmtDuration(secs: number) {
 const logOpen = ref(false);
 const logText = ref('');
 const logTitle = ref('');
+// 发布进行中的记录：日志弹窗每 3s 轮询单条（阶段日志增量刷库）
+let releasePollTimer: ReturnType<typeof setInterval> | undefined;
+function stopReleasePoll() {
+  if (releasePollTimer) {
+    clearInterval(releasePollTimer);
+    releasePollTimer = undefined;
+  }
+}
+
 function openLog(record: ReleaseItem) {
   logTitle.value = `${record.tag} 部署日志`;
   logText.value = record.output || '（无输出）';
   logOpen.value = true;
+  stopReleasePoll();
+  if (record.status === 'running') {
+    releasePollTimer = setInterval(async () => {
+      try {
+        const r = await getReleaseApi(record.id);
+        logText.value = r.output || '（无输出）';
+        logTitle.value = `${r.tag} 部署日志（${
+          r.status === 'running' ? '进行中' : r.status === 'success' ? '成功' : '失败'
+        }）`;
+        if (r.status !== 'running') {
+          stopReleasePoll();
+          page.value = 1;
+          await load().catch((error) => console.warn('[load]', error));
+          await loadActiveColor();
+        }
+      } catch {
+        stopReleasePoll();
+      }
+    }, 3000);
+  }
 }
+
+onBeforeUnmount(stopReleasePoll);
 
 // 行内"部署"：对任意历史标签重新执行部署（含当前标签）——回滚即部署旧版本
 async function doDeploy(rel: ReleaseItem) {
@@ -107,13 +140,17 @@ async function doDeploy(rel: ReleaseItem) {
       projectId: props.projectId,
       tag: rel.tag,
     });
-    if (nr.status === 'success') {
-      message.success(`已部署 ${rel.tag}`);
+    page.value = 1;
+    await load().catch((error) => console.warn('[load]', error));
+    if (nr.status === 'running') {
+      message.info('发布进行中（蓝绿），日志中查看实时进度');
+      openLog(nr);
+    } else if (nr.status === 'success') {
+      message.success(`已部署 ${nr.tag}`);
+      await loadActiveColor();
     } else {
       message.error(`部署失败：${(nr.output ?? '').slice(0, 200)}`);
     }
-    page.value = 1;
-    await load().catch((error) => console.warn('[load]', error));
   } catch {
     // 部署错误由拦截器提示
   } finally {
@@ -176,18 +213,23 @@ async function doRelease() {
   releasing.value = true;
   try {
     const rel = await createReleaseApi({
+      drainSecs: drainSecs.value || undefined,
       envType: props.env,
       projectId: props.projectId,
       tag: selectedTag.value,
     });
-    if (rel.status === 'success') {
-      message.success(`已发布 ${selectedTag.value}`);
-    } else {
-      message.error(`发布失败：${(rel.output ?? '').slice(0, 200)}`);
-    }
     selectedTag.value = undefined;
     page.value = 1;
     await load().catch((error) => console.warn('[load]', error));
+    if (rel.status === 'running') {
+      message.info('发布进行中（蓝绿），日志中查看实时进度');
+      openLog(rel);
+    } else if (rel.status === 'success') {
+      message.success(`已发布 ${rel.tag}`);
+      await loadActiveColor();
+    } else {
+      message.error(`发布失败：${(rel.output ?? '').slice(0, 200)}`);
+    }
   } catch {
     // 发布错误由拦截器提示
   } finally {
@@ -240,6 +282,15 @@ function fmtTime(v: string) {
           活跃色：{{ activeColor || '未启用' }}
         </a-tag>
       </a-tooltip>
+      <a-tooltip v-if="env === 'prod'" title="蓝绿 drain 窗口（秒）：存量连接在旧颜色上跑完的等待时间">
+        <a-input-number
+          v-model:value="drainSecs"
+          :min="5"
+          :max="600"
+          size="small"
+          style="width: 90px"
+        />
+      </a-tooltip>
     </div>
     <a-table
       :columns="columnsWithColor"
@@ -275,8 +326,22 @@ function fmtTime(v: string) {
           <span v-else>—</span>
         </template>
         <template v-else-if="column.key === 'status'">
-          <a-tag :color="record.status === 'success' ? 'green' : 'red'">
-            {{ record.status === 'success' ? '成功' : '失败' }}
+          <a-tag
+            :color="
+              record.status === 'success'
+                ? 'green'
+                : record.status === 'running'
+                  ? 'processing'
+                  : 'red'
+            "
+          >
+            {{
+              record.status === 'success'
+                ? '成功'
+                : record.status === 'running'
+                  ? '进行中'
+                  : '失败'
+            }}
           </a-tag>
         </template>
         <template v-else-if="column.key === 'action'">
@@ -299,7 +364,13 @@ function fmtTime(v: string) {
       </template>
     </a-table>
 
-    <a-modal v-model:open="logOpen" :title="logTitle" :width="820" footer="">
+    <a-modal
+      v-model:open="logOpen"
+      :title="logTitle"
+      :width="820"
+      footer=""
+      @cancel="stopReleasePoll"
+    >
       <pre
         class="max-h-[65vh] overflow-auto rounded p-3 text-xs leading-5"
         style="color: #c9d1d9; background: #0b0e14"
