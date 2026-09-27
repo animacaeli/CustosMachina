@@ -26,6 +26,7 @@ import {
 } from '#/api/resources/server';
 
 import ContainersDrawer from './containers-drawer.vue';
+import FilesDrawer from './files-drawer.vue';
 import MetricsDrawer from './metrics-drawer.vue';
 import Sparkline from './sparkline.vue';
 import TerminalModal from './terminal-modal.vue';
@@ -179,6 +180,15 @@ const terminalServer = ref<ManagedServer | null>(null);
 function openTerminal(s: (typeof list.value)[number]) {
   terminalServer.value = s;
   terminalOpen.value = true;
+}
+
+// --- 文件管理（第四阶段 M4，SFTP）---
+const filesOpen = ref(false);
+const filesServerId = ref<null | number>(null);
+
+function openFiles(s: (typeof list.value)[number]) {
+  filesServerId.value = s.id;
+  filesOpen.value = true;
 }
 
 // --- 容器管理（M4；compose 部署/编辑收在容器抽屉内） ---
@@ -467,6 +477,9 @@ async function onDelete(id: number, name: string) {
             <a-button size="small" type="link" @click="openContainers(record)">
               容器
             </a-button>
+            <a-button size="small" type="link" @click="openFiles(record)">
+              文件
+            </a-button>
             <a-button
               size="small"
               type="link"
@@ -614,5 +627,6 @@ async function onDelete(id: number, name: string) {
       v-model:open="containersOpen"
       :server-id="containersServerId"
     />
+    <FilesDrawer v-model:open="filesOpen" :server-id="filesServerId" />
   </div>
 </template>

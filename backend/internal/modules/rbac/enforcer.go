@@ -160,6 +160,13 @@ var defaultPolicies = [][]string{
 	{"ops", "/observ/*", "GET|POST|PUT"},
 	{"dev", "/observ", "GET"},
 	{"dev", "/observ/*", "GET"},
+	// v6（M4）：SFTP 文件管理。admin/ops 可写，dev 只读浏览
+	{"admin", "/server-files", "GET|POST"},
+	{"admin", "/server-files/*", "GET|POST"},
+	{"ops", "/server-files", "GET|POST"},
+	{"ops", "/server-files/*", "GET|POST"},
+	{"dev", "/server-files", "GET"},
+	{"dev", "/server-files/*", "GET"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
