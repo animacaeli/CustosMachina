@@ -44,6 +44,7 @@ const (
 type CronScript struct {
 	ID        uint           `gorm:"primarykey" json:"id"`
 	Name      string         `gorm:"size:128;not null" json:"name"`
+	Project   string         `gorm:"size:64" json:"project"`       // 所属项目（可选，筛选用）
 	Type      string         `gorm:"size:16;not null" json:"type"` // shell | python | compose-run
 	Content   string         `gorm:"type:text" json:"content"`     // 脚本内容 / 子命令 / 备注（compose-run 仅备注）
 	Remark    string         `gorm:"size:255" json:"remark"`
@@ -61,7 +62,7 @@ type CronJob struct {
 	Name        string         `gorm:"size:128;not null" json:"name"`
 	ScriptID    uint           `gorm:"index;not null" json:"scriptId"`
 	Schedule    string         `gorm:"size:64;not null" json:"schedule"` // 5 段式 cron 或 @every 1h
-	ServerID    uint           `gorm:"not null" json:"serverId"`
+	ServerID    uint           `gorm:"not null;default:0" json:"serverId"`
 	Carrier     string         `gorm:"size:16;not null" json:"carrier"` // run | compose-run
 	Image       string         `gorm:"size:255" json:"image"`           // carrier=run 必填
 	ProjectName string         `gorm:"size:64" json:"projectName"`      // carrier=compose-run 必填（部署目录名）
@@ -86,8 +87,8 @@ func (CronJob) TableName() string { return "cron_jobs" }
 type CronRun struct {
 	ID           uint       `gorm:"primarykey" json:"id"`
 	JobID        uint       `gorm:"index;not null" json:"jobId"`
-	ServerID     uint       `gorm:"not null" json:"serverId"`        // 下载全量日志（SFTP ticket）用
-	Trigger      string     `gorm:"size:16;not null" json:"trigger"` // schedule | manual | retry
+	ServerID     uint       `gorm:"not null;default:0" json:"serverId"` // 下载全量日志（SFTP ticket）用
+	Trigger      string     `gorm:"size:16;not null" json:"trigger"`    // schedule | manual | retry
 	Status       string     `gorm:"size:16;index;not null" json:"status"`
 	Output       string     `gorm:"type:text" json:"output"`
 	OutputFile   string     `gorm:"size:255" json:"outputFile"` // 目标机全量日志路径（64KB 截断的兜底）

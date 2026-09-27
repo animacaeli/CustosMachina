@@ -32,6 +32,22 @@ const canWrite = computed(() => {
 
 const loading = ref(false);
 const list = ref<CronJobItem[]>([]);
+const projectFilter = ref<string | undefined>();
+
+// 项目筛选（compose 载体任务的 projectName；client-side，列表量级小）
+const projectOptions = computed(() => {
+  const names = new Set(
+    list.value
+      .map((i) => i.job.projectName)
+      .filter((n): n is string => !!n),
+  );
+  return [...names].sort().map((n) => ({ label: n, value: n }));
+});
+const filteredList = computed(() =>
+  projectFilter.value
+    ? list.value.filter((i) => i.job.projectName === projectFilter.value)
+    : list.value,
+);
 const scripts = ref<CronScript[]>([]);
 const servers = ref<{ host: string; id: number; name: string }[]>([]);
 
@@ -305,6 +321,15 @@ async function onTrigger(item: CronJobItem) {
   <div class="p-4">
     <a-card title="定时任务">
       <template #extra>
+        <a-select
+          v-model:value="projectFilter"
+          :options="projectOptions"
+          allow-clear
+          placeholder="按项目筛选"
+          size="small"
+          style="width: 180px"
+          class="mr-2"
+        />
         <a-button class="mr-2" @click="quickOpen = true">快速执行</a-button>
         <a-button class="mr-2" @click="showRuns(undefined)">
           全部运行历史
@@ -314,7 +339,7 @@ async function onTrigger(item: CronJobItem) {
         </a-button>
       </template>
       <a-table
-        :data-source="list"
+        :data-source="filteredList"
         :loading="loading"
         :pagination="false"
         row-key="job.id"

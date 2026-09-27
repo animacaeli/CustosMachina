@@ -13,6 +13,7 @@ import {
   getScriptsApi,
   updateScriptApi,
 } from '#/api/cron';
+import { getProjectsApi } from '#/api/projects';
 
 defineOptions({ name: 'CronScripts' });
 
@@ -25,12 +26,35 @@ const canWrite = computed(() => {
 
 const loading = ref(false);
 const list = ref<CronScript[]>([]);
+const projectFilter = ref<string | undefined>();
+const projects = ref<{ name: string }[]>([]);
+
+const projectOptions = computed(() => {
+  const names = new Set(
+    [
+      ...projects.value.map((p) => p.name),
+      ...list.value.map((sc) => sc.project),
+    ].filter(Boolean),
+  );
+  return [...names].sort().map((n) => ({ label: n, value: n }));
+});
+const filteredList = computed(() =>
+  projectFilter.value
+    ? list.value.filter((sc) => sc.project === projectFilter.value)
+    : list.value,
+);
 
 async function load() {
   loading.value = true;
   try {
-    const res = await getScriptsApi();
+    const [res, projRes] = await Promise.all([
+      getScriptsApi(),
+      getProjectsApi(),
+    ]);
     list.value = res.items ?? [];
+    projects.value = (projRes ?? []) as { name: string }[];
+  } catch {
+    // 项目列表失败不阻塞脚本列表
   } finally {
     loading.value = false;
   }
@@ -50,6 +74,7 @@ const editingId = ref<null | number>(null);
 const form = reactive({
   content: '',
   name: '',
+  project: undefined as string | undefined,
   remark: '',
   type: 'shell' as CronScript['type'],
 });
@@ -58,6 +83,7 @@ function openCreate() {
   editingId.value = null;
   form.name = '';
   form.content = '';
+  form.project = undefined;
   form.remark = '';
   form.type = 'shell';
   formOpen.value = true;
@@ -80,6 +106,7 @@ function openEdit(s: CronScript) {
   editingId.value = s.id;
   form.name = s.name;
   form.content = s.content;
+  form.project = s.project || undefined;
   form.remark = s.remark;
   form.type = s.type;
   formOpen.value = true;
@@ -120,12 +147,21 @@ async function onDelete(s: CronScript) {
   <div class="p-4">
     <a-card title="脚本库">
       <template #extra>
+        <a-select
+          v-model:value="projectFilter"
+          :options="projectOptions"
+          allow-clear
+          placeholder="按项目筛选"
+          size="small"
+          style="width: 180px"
+          class="mr-2"
+        />
         <a-button v-if="canWrite" type="primary" @click="openCreate">
           新增脚本
         </a-button>
       </template>
       <a-table
-        :data-source="list"
+        :data-source="filteredList"
         :loading="loading"
         :pagination="false"
         row-key="id"
@@ -170,6 +206,15 @@ async function onDelete(s: CronScript) {
       <a-form layout="vertical" style="padding-top: 0.5rem">
         <a-form-item label="名称" required>
           <a-input v-model:value="form.name" placeholder="如：数据库清理" />
+        </a-form-item>
+        <a-form-item label="所属项目（可选，筛选用）">
+          <a-select
+            v-model:value="form.project"
+            :options="projectOptions"
+            allow-clear
+            placeholder="不关联项目"
+            show-search
+          />
         </a-form-item>
         <a-form-item label="类型" required>
           <a-radio-group v-model:value="form.type">

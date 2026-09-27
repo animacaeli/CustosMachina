@@ -3,6 +3,7 @@ import { requestClient } from '#/api/request';
 export interface CronScript {
   boundCount?: number;
   content: string;
+  project: string;
   createdAt: string;
   createdBy: string;
   id: number;

@@ -28,6 +28,24 @@ const list = ref<ReleaseItem[]>([]);
 // 蓝绿：正式环境当前活跃色（空 = 尚未启用蓝绿/首次发布）
 const activeColor = ref('');
 const drainSecs = ref(30); // 蓝绿 drain 窗口（秒）
+
+// 发布进行中的记录：行内部署按钮转圈、发布按钮互斥；列表 3s 轮询至终态
+const anyRunning = computed(() => list.value.some((r) => r.status === 'running'));
+let listPoll: ReturnType<typeof setInterval> | undefined;
+watch(anyRunning, (running) => {
+  if (running && !listPoll) {
+    listPoll = setInterval(() => {
+      load().catch((error) => console.warn('[load]', error));
+    }, 3000);
+  } else if (!running) {
+    if (listPoll) clearInterval(listPoll);
+    listPoll = undefined;
+  }
+});
+onBeforeUnmount(() => {
+  if (listPoll) clearInterval(listPoll);
+  stopReleasePoll();
+});
 async function loadActiveColor() {
   if (props.env !== 'prod' || !props.projectId) {
     activeColor.value = '';
@@ -262,13 +280,13 @@ function fmtTime(v: string) {
         style="width: 320px"
       />
       <a-button
-        :loading="releasing"
-        :disabled="!selectedTag"
+        :disabled="!selectedTag || anyRunning"
+        :loading="releasing || anyRunning"
         danger
         type="primary"
         @click="doRelease"
       >
-        发布
+        {{ anyRunning ? '发布中…' : '发布' }}
       </a-button>
       <a-tooltip
         v-if="env === 'prod'"
@@ -350,7 +368,8 @@ function fmtTime(v: string) {
             @confirm="doDeploy(record)"
           >
             <a-button
-              :loading="deployingTag === record.tag"
+              :disabled="record.status === 'running' || anyRunning"
+              :loading="record.status === 'running' || deployingTag === record.tag"
               size="small"
               type="link"
             >

@@ -67,6 +67,7 @@ func (s *Service) composeDomain(ctx context.Context, job *CronJob) string {
 
 type ScriptInput struct {
 	Name    string `json:"name" binding:"required,max=128"`
+	Project string `json:"project" binding:"omitempty,max=64"` // 所属项目（筛选用，可选）
 	Type    string `json:"type" binding:"required,oneof=shell python compose-run"`
 	Content string `json:"content" binding:"max=65536"`
 	Remark  string `json:"remark" binding:"max=255"`
@@ -110,7 +111,7 @@ func (s *Service) SaveScript(ctx context.Context, id uint, in ScriptInput, opera
 			return nil, ErrNotFound
 		}
 	}
-	sc.Name, sc.Type, sc.Content, sc.Remark = in.Name, in.Type, in.Content, in.Remark
+	sc.Name, sc.Type, sc.Content, sc.Remark, sc.Project = in.Name, in.Type, in.Content, in.Remark, in.Project
 	if err := s.db.WithContext(ctx).Save(sc).Error; err != nil {
 		return nil, err
 	}

@@ -1,10 +1,11 @@
 <script lang="ts" setup>
 import type { Project } from '#/api/projects';
 
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 import { message } from 'ant-design-vue';
 
+import { getBuildsApi } from '#/api/ci';
 import {
   createProjectApi,
   deleteProjectApi,
@@ -83,6 +84,29 @@ const currentId = ref<number | undefined>();
 const currentProject = computed(() =>
   projects.value.find((p) => p.id === currentId.value),
 );
+// 构建进行中的项目（构建按钮转圈）：轮询本环境 builds 的 running/pending
+const buildingProjectIds = ref<number[]>([]);
+let buildPoll: ReturnType<typeof setInterval> | undefined;
+
+async function pollRunningBuilds() {
+  try {
+    const res = await getBuildsApi({ env: props.env, page: 1, projectId: 0, size: 100 });
+    buildingProjectIds.value = (res.items ?? [])
+      .filter((b) => b.status === 'running' || b.status === 'pending')
+      .map((b) => b.projectId);
+  } catch {
+    // 查询失败不影响页面
+  }
+}
+
+onMounted(() => {
+  pollRunningBuilds();
+  buildPoll = setInterval(pollRunningBuilds, 5000);
+});
+onBeforeUnmount(() => {
+  if (buildPoll) clearInterval(buildPoll);
+});
+
 const openDrawer = ref<'' | 'build' | 'detail' | 'policy' | 'release' | 'slot'>(
   '',
 );
@@ -199,6 +223,10 @@ async function onDelete(p: Project) {
               <a-button
                 v-for="act in meta.actions"
                 :key="act"
+                :loading="
+                  act === 'build' &&
+                  buildingProjectIds.includes(record.id)
+                "
                 :type="act === 'release' ? 'primary' : 'default'"
                 size="small"
                 @click="open(act, record)"
