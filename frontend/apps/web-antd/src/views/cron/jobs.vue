@@ -139,7 +139,10 @@ async function loadPreview() {
       new Date(t).toLocaleString('zh-CN', { hour12: false }),
     );
   } catch (e: any) {
-    previewError.value = e?.message ?? '表达式不合法';
+    // 优先取后端 message（HTTP 400 时 axios 的 e.message 只有
+    // "Request failed with status code 400"，真正的语法错误在 response.data.message）
+    previewError.value =
+      e?.response?.data?.message ?? e?.message ?? '表达式不合法';
     previewTimes.value = [];
   } finally {
     previewLoading.value = false;
