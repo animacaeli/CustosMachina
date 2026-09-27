@@ -1,8 +1,16 @@
 import { requestClient } from '#/api/request';
 
+export interface ObservConfigFile {
+  content: string;
+  filename: string;
+}
+
 export interface ObservComponent {
+  category: 'logs' | 'metrics';
+  compose: string;
+  configFiles: ObservConfigFile[];
   image: string;
-  name: 'cadvisor' | 'vector';
+  name: string;
   needsO2Url: boolean;
   remark: string;
 }
@@ -24,15 +32,17 @@ export async function getObservStatusApi(serverId: number) {
   });
 }
 
-export async function deployObservApi(serverId: number, component: string) {
-  return requestClient.post<{ output: string }>('/observ/deploy', {
-    component,
-    serverId,
-  });
+export async function deployObservApi(data: {
+  compose?: string;
+  component: string;
+  configFiles?: Record<string, string>;
+  serverId: number;
+}) {
+  return requestClient.post<{ output: string }>('/observ/deploy', data);
 }
 
 export async function uninstallObservApi(serverId: number, component: string) {
-  return requestClient.post<{ output: string }>('/observ/uninstall', {
+  return requestClient.post('/observ/uninstall', {
     component,
     serverId,
   });

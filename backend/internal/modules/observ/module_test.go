@@ -22,19 +22,29 @@ func testDB(t *testing.T) *gorm.DB {
 }
 
 func TestRenderTemplates(t *testing.T) {
-	c := renderCadvisor()
+	byName := map[string]*Component{}
+	for _, c := range components {
+		byName[c.Name] = c
+	}
+	c := byName["cadvisor"].Compose
 	for _, want := range []string{cadvisorImage, "custos-cadvisor", "/var/run:ro", "/dev/kmsg"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("cadvisor 模板缺 %q:\n%s", want, c)
 		}
 	}
-
-	composeYAML, vectorYAML := renderVector("http://10.0.0.1:5080/api/default/custos/_json")
+	vectorYAML := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json")
 	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
 		t.Errorf("vector 配置应指向 O2 地址:\n%s", vectorYAML)
 	}
-	if !strings.Contains(composeYAML, "./vector.yaml:/etc/vector/vector.yaml:ro") {
-		t.Errorf("vector compose 应相对路径挂载同目录配置:\n%s", composeYAML)
+	if !strings.Contains(byName["vector"].Compose, "./vector.yaml:/etc/vector/vector.yaml:ro") {
+		t.Errorf("vector compose 应相对路径挂载同目录配置")
+	}
+	fb := renderFluentBitConf("http://u:p@10.0.0.1:5080/api/x/_json")
+	if !strings.Contains(fb, "http_User u") || !strings.Contains(fb, "http_Passwd p") {
+		t.Errorf("fluent-bit basic auth 渲染缺失:\n%s", fb)
+	}
+	if !strings.Contains(fb, "URI http://10.0.0.1:5080/api/x/_json") {
+		t.Errorf("fluent-bit URI 应去凭据:\n%s", fb)
 	}
 }
 
@@ -61,17 +71,22 @@ func TestO2URLSetting(t *testing.T) {
 }
 
 func TestComponentLookup(t *testing.T) {
-	if componentOf("cadvisor") == nil || componentOf("vector") == nil {
-		t.Fatal("内置组件应可查到")
+	for _, n := range []string{"cadvisor", "node-exporter", "vector", "fluent-bit"} {
+		if componentOf(n) == nil {
+			t.Fatalf("内置组件 %s 应可查到", n)
+		}
 	}
 	if componentOf("nope") != nil {
 		t.Fatal("未知组件应返回 nil")
+	}
+	if !safeFilename("vector.yaml") || safeFilename("a;rm") || safeFilename("../x") {
+		t.Fatal("配置文件名白名单失效")
 	}
 }
 
 // O2 地址内嵌 basic auth 时拆出渲染 sink auth 块。
 func TestRenderVectorAuth(t *testing.T) {
-	_, vectorYAML := renderVector("http://foo:bar@10.0.0.1:5080/api/default/custos/_json")
+	vectorYAML := renderVectorYAML("http://foo:bar@10.0.0.1:5080/api/default/custos/_json")
 	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
 		t.Errorf("uri 应去掉 userinfo:\n%s", vectorYAML)
 	}
@@ -79,7 +94,7 @@ func TestRenderVectorAuth(t *testing.T) {
 		t.Errorf("basic auth 块缺失:\n%s", vectorYAML)
 	}
 	// 无凭据时不渲染 auth 块
-	_, plain := renderVector("http://10.0.0.1:5080/api/default/custos/_json")
+	plain := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json")
 	if strings.Contains(plain, "strategy: basic") {
 		t.Errorf("无凭据不应渲染 auth 块:\n%s", plain)
 	}

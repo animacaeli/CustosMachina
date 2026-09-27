@@ -14,6 +14,7 @@ import {
   updateScriptApi,
 } from '#/api/cron';
 import { getProjectsApi } from '#/api/projects';
+import CodeEditor from '#/components/yaml-editor.vue';
 
 defineOptions({ name: 'CronScripts' });
 
@@ -70,6 +71,18 @@ const typeText: Record<string, string> = {
 
 const formOpen = ref(false);
 const editConfirmed = ref(false); // confirm 回调内二次进入放行
+const viewOpen = ref(false);
+const viewScript = ref<CronScript | null>(null);
+
+function openView(s: CronScript) {
+  viewScript.value = s;
+  viewOpen.value = true;
+}
+
+function scriptLanguage(type?: string) {
+  if (type === 'python') return 'python';
+  return 'shellscript';
+}
 const editingId = ref<null | number>(null);
 const form = reactive({
   content: '',
@@ -152,9 +165,8 @@ async function onDelete(s: CronScript) {
           :options="projectOptions"
           allow-clear
           placeholder="按项目筛选"
-          size="small"
-          style="width: 180px"
-          class="mr-2"
+          style="width: 200px"
+          class="mr-3"
         />
         <a-button v-if="canWrite" type="primary" @click="openCreate">
           新增脚本
@@ -173,9 +185,13 @@ async function onDelete(s: CronScript) {
             <a-tag>{{ typeText[record.type] ?? record.type }}</a-tag>
           </template>
         </a-table-column>
-        <a-table-column title="内容" data-index="content" :ellipsis="true">
-          <template #default="{ text }">
-            <code>{{ (text || '—').slice(0, 80) }}</code>
+        <a-table-column title="内容" :width="80">
+          <template #default="{ record }">
+            <a
+              v-if="record.content"
+              @click="openView(record)"
+            >查看</a>
+            <span v-else>—</span>
           </template>
         </a-table-column>
         <a-table-column title="备注" data-index="remark">
@@ -228,20 +244,30 @@ async function onDelete(s: CronScript) {
         <a-form-item
           :label="form.type === 'compose-run' ? '备注 / 命令说明' : '脚本内容'"
         >
-          <a-textarea
-            v-model:value="form.content"
-            :rows="10"
-            :placeholder="
-              form.type === 'compose-run'
-                ? '仅作说明留档，实际命令由 compose 服务定义'
-                : '如：#!/bin/sh\necho cleanup'
-            "
+          <CodeEditor
+            v-model="form.content"
+            :height="form.type === 'compose-run' ? '120px' : '300px'"
+            :language="form.type === 'python' ? 'python' : 'shellscript'"
           />
         </a-form-item>
         <a-form-item label="备注">
           <a-input v-model:value="form.remark" />
         </a-form-item>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="viewOpen"
+      :footer="null"
+      :title="`脚本：${viewScript?.name ?? ''}（只读）`"
+      :width="760"
+    >
+      <CodeEditor
+        height="420px"
+        :language="scriptLanguage(viewScript?.type)"
+        :model-value="viewScript?.content ?? ''"
+        read-only
+      />
     </a-modal>
   </div>
 </template>

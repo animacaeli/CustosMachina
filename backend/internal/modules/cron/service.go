@@ -221,7 +221,7 @@ type JobInput struct {
 	Name        string `json:"name" binding:"required,max=128"`
 	ScriptID    uint   `json:"scriptId" binding:"required"`
 	Schedule    string `json:"schedule" binding:"omitempty,max=64"` // 空 = 仅手动执行（一次性脚本）
-	ServerID    uint   `json:"serverId" binding:"required"`
+	ServerID    uint   `json:"serverId"`                            // run 载体必填；compose 载体留空 = 按项目正式环境部署目标解析
 	Carrier     string `json:"carrier" binding:"required,oneof=run compose-run"`
 	Image       string `json:"image" binding:"omitempty,max=255"`
 	ProjectName string `json:"projectName" binding:"omitempty,max=64"`
@@ -245,6 +245,9 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 		if _, err := parseSchedule(in.Schedule, time.Now()); err != nil {
 			return nil, err
 		}
+	}
+	if in.Carrier == CarrierRun && in.ServerID == 0 {
+		return nil, fmt.Errorf("run 载体需指定目标主机（compose 载体留空则按项目部署目标执行）")
 	}
 	if in.Network != "" && !svcRe.MatchString(in.Network) {
 		return nil, fmt.Errorf("网络名含非法字符")
@@ -376,6 +379,11 @@ func (s *Service) Trigger(ctx context.Context, jobID uint) (*CronRun, error) {
 	if err := s.db.WithContext(ctx).First(&job, jobID).Error; err != nil {
 		return nil, ErrNotFound
 	}
+	serverID, err := s.resolveServer(ctx, &job)
+	if err != nil {
+		return nil, err
+	}
+	job.ServerID = serverID // 内存内填充（不回写：部署目标变更后下次执行重新解析）
 	run, ok := s.startRun(&job, TriggerManual)
 	if !ok {
 		return nil, fmt.Errorf("上一次执行仍在进行中（Forbid），请稍后再试")
@@ -388,6 +396,33 @@ func (s *Service) Trigger(ctx context.Context, jobID uint) (*CronRun, error) {
 // 双方都数到 0 各起一条 running（Forbid 失效双跑）。进程内锁足够（平台单实例，
 // 与 pkg/jobs 的假设一致）。
 var runMu sync.Mutex
+
+// resolveServer 解析任务的执行主机：显式绑定 > 项目正式环境部署目标
+// （compose 载体的业务任务与项目同机——用户反馈：任务应与项目绑定，
+// 只有备份/清理类主机任务才需要手动选主机）。查表先例同 release.envTarget。
+func (s *Service) resolveServer(ctx context.Context, job *CronJob) (uint, error) {
+	if job.ServerID > 0 {
+		return job.ServerID, nil
+	}
+	if job.Carrier != CarrierCompose || job.ProjectName == "" {
+		return 0, fmt.Errorf("任务未绑定执行主机（run 载体须选主机，compose 载体须填项目名）")
+	}
+	domain := s.composeDomain(ctx, job) // 蓝绿项目解析活跃色后取项目基础名
+	base := strings.TrimSuffix(strings.TrimSuffix(domain, "-blue"), "-green")
+	var pid uint
+	if err := s.db.WithContext(ctx).Table("projects").
+		Select("id").Where("name IN ?", []string{base, job.ProjectName}).
+		Scan(&pid).Error; err != nil || pid == 0 {
+		return 0, fmt.Errorf("项目 %q 不存在，无法解析执行主机", job.ProjectName)
+	}
+	var sid uint
+	if err := s.db.WithContext(ctx).Table("project_env_targets").
+		Select("server_id").Where("project_id = ? AND env_type = ?", pid, "prod").
+		Scan(&sid).Error; err != nil || sid == 0 {
+		return 0, fmt.Errorf("项目 %q 未配置正式环境部署目标", job.ProjectName)
+	}
+	return sid, nil
+}
 
 // startRun 落一条 running 记录；并发策略 Forbid：已有 running 则拒绝。
 func (s *Service) startRun(job *CronJob, trigger string) (*CronRun, bool) {

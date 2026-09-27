@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 /**
- * 通用 YAML 编辑器（Monaco + monaco-yaml）：
- * compose 部署文件、未来的配置中心共用。按需 chunk 加载，不进首屏。
- * schema 为内置 vendored 副本（离线可用），不带远程 $ref。
+ * 通用代码编辑器（Monaco + monaco-yaml）：
+ * language 支持 yaml/json/shellscript/python/ini(toml 近似)/plaintext，
+ * compose 部署文件、脚本编辑、配置中心、SFTP 在线编辑共用。
+ * 按需 chunk 加载，不进首屏；schema 为内置 vendored 副本（离线可用）。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -19,13 +20,15 @@ import composeSchema from '#/schemas/compose-spec.json';
 
 const props = withDefaults(
   defineProps<{
+    /** monaco 语言 id：yaml/json/shellscript/python/ini/plaintext（toml 用 ini 近似高亮） */
+    language?: string;
     modelValue: string;
     readOnly?: boolean;
-    /** 传 "compose" 启用 compose-spec 补全；不传则仅语法校验 */
+    /** 传 "compose" 启用 compose-spec 补全（仅 yaml）；不传则仅语法校验 */
     schema?: 'compose';
     height?: string;
   }>(),
-  { readOnly: false, schema: undefined, height: '420px' },
+  { language: 'yaml', readOnly: false, schema: undefined, height: '420px' },
 );
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
@@ -44,19 +47,22 @@ globalThis.MonacoEnvironment = {
 };
 
 // monaco-yaml v5：configureMonacoYaml 单实例配置，schema 用内置 vendored 副本
+// monaco-yaml v5：configureMonacoYaml 单实例配置，schema 用内置 vendored 副本
+// （仅 yaml 语言且显式要求 compose schema 时挂补全，其他语言不受影响）
 configureMonacoYaml(monaco, {
   completion: true,
   hover: true,
   validate: true,
-  schemas: props.schema
-    ? [
-        {
-          fileMatch: ['*'],
-          schema: composeSchema as any,
-          uri: 'https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json',
-        },
-      ]
-    : [],
+  schemas:
+    props.schema && props.language === 'yaml'
+      ? [
+          {
+            fileMatch: ['*'],
+            schema: composeSchema as any,
+            uri: 'https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json',
+          },
+        ]
+      : [],
 });
 
 // 跟随应用主题切换明暗
@@ -66,7 +72,7 @@ onMounted(() => {
   if (!containerRef.value) return;
   editor = monaco.editor.create(containerRef.value, {
     value: props.modelValue,
-    language: 'yaml',
+    language: props.language,
     readOnly: props.readOnly,
     theme: isDark.value ? 'vs-dark' : 'vs',
     minimap: { enabled: false },

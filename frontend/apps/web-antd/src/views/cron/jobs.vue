@@ -18,6 +18,7 @@ import {
   updateJobApi,
 } from '#/api/cron';
 import { getServerListApi } from '#/api/resources/server';
+import CodeEditor from '#/components/yaml-editor.vue';
 
 import RunsDrawer from './runs-drawer.vue';
 
@@ -326,9 +327,8 @@ async function onTrigger(item: CronJobItem) {
           :options="projectOptions"
           allow-clear
           placeholder="按项目筛选"
-          size="small"
-          style="width: 180px"
-          class="mr-2"
+          style="width: 200px"
+          class="mr-3"
         />
         <a-button class="mr-2" @click="quickOpen = true">快速执行</a-button>
         <a-button class="mr-2" @click="showRuns(undefined)">
@@ -485,18 +485,30 @@ async function onTrigger(item: CronJobItem) {
             </a-popover>
           </div>
         </a-form-item>
-        <a-form-item label="目标主机" required>
-          <a-select
-            v-model:value="form.serverId"
-            :options="
-              servers.map((s) => ({
-                label: `${s.name}（${s.host}）`,
-                value: s.id,
-              }))
-            "
-            placeholder="选择执行主机"
-          />
-        </a-form-item>
+        <template v-if="form.carrier === 'run'">
+          <a-form-item
+            label="目标主机（服务器级任务：备份/清理等）"
+            required
+          >
+            <a-select
+              v-model:value="form.serverId"
+              :options="
+                servers.map((s) => ({
+                  label: `${s.name}（${s.host}）`,
+                  value: s.id,
+                }))
+              "
+              placeholder="选择执行主机"
+            />
+          </a-form-item>
+        </template>
+        <a-alert
+          v-else
+          class="mb-4"
+          type="info"
+          show-icon
+          message="业务任务与项目绑定：执行主机由项目正式环境的部署目标自动决定，蓝绿项目自动跟随活跃颜色域。"
+        />
         <a-form-item label="执行载体" required>
           <a-radio-group v-model:value="form.carrier">
             <a-radio value="run">docker run（独立镜像）</a-radio>
@@ -567,7 +579,11 @@ async function onTrigger(item: CronJobItem) {
       @ok="quickExecute"
     >
       <a-form layout="vertical" style="padding-top: 0.5rem">
-        <a-form-item label="目标主机" required>
+        <a-form-item
+          v-if="quick.carrier === 'run'"
+          label="目标主机"
+          required
+        >
           <a-select
             v-model:value="quick.serverId"
             :options="
@@ -579,6 +595,13 @@ async function onTrigger(item: CronJobItem) {
             placeholder="选择执行主机"
           />
         </a-form-item>
+        <a-alert
+          v-else
+          class="mb-4"
+          type="info"
+          show-icon
+          message="执行主机由项目正式环境的部署目标自动决定。"
+        />
         <a-form-item label="执行载体" required>
           <a-radio-group v-model:value="quick.carrier">
             <a-radio value="run">docker run（独立镜像）</a-radio>
@@ -597,7 +620,11 @@ async function onTrigger(item: CronJobItem) {
           </a-form-item>
         </template>
         <a-form-item label="脚本内容" required>
-          <a-textarea v-model:value="quick.content" :rows="10" />
+          <CodeEditor
+            v-model="quick.content"
+            :language="quick.type === 'python' ? 'python' : 'shellscript'"
+            height="260px"
+          />
         </a-form-item>
         <a-form-item label="超时（秒）">
           <a-input-number v-model:value="quick.timeoutSecs" :min="10" :max="86400" />

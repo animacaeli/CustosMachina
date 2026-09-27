@@ -17,6 +17,7 @@ import {
   uploadFileApi,
   writeFileApi,
 } from '#/api/resources/files';
+import CodeEditor from '#/components/yaml-editor.vue';
 
 defineOptions({ name: 'FilesDrawer' });
 
@@ -91,6 +92,17 @@ function fmtTime(unix: number) {
 const editOpen = ref(false);
 const editPath = ref('');
 const editContent = ref('');
+// 按扩展名选编辑器语言（toml/conf 用 ini 近似高亮）
+const editLanguage = computed(() => {
+  const n = (editPath.value || '').toLowerCase();
+  if (n.endsWith('.json')) return 'json';
+  if (n.endsWith('.yml') || n.endsWith('.yaml')) return 'yaml';
+  if (n.endsWith('.sh') || n.endsWith('.bash')) return 'shellscript';
+  if (n.endsWith('.py')) return 'python';
+  if (n.endsWith('.toml') || n.endsWith('.ini') || n.endsWith('.conf') || n.endsWith('.properties')) return 'ini';
+  if (n.endsWith('.xml') || n.endsWith('.html')) return 'xml';
+  return 'plaintext';
+});
 const editSaving = ref(false);
 
 async function openEdit(e: FileEntry) {
@@ -310,7 +322,11 @@ async function onRemove(e: FileEntry) {
       ok-text="保存"
       @ok="saveEdit"
     >
-      <a-textarea v-model:value="editContent" :rows="20" class="font-mono" />
+      <CodeEditor
+        v-model="editContent"
+        :language="editLanguage"
+        height="480px"
+      />
     </a-modal>
 
     <a-modal v-model:open="mkdirOpen" title="新建目录" @ok="doMkdir">

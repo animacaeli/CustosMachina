@@ -185,11 +185,11 @@ function fmtDuration(r: CronRun) {
       <a-table-column title="耗时" :width="70">
         <template #default="{ record }">{{ fmtDuration(record) }}</template>
       </a-table-column>
-      <a-table-column title="输出" :ellipsis="true">
+      <a-table-column title="日志" :width="80">
         <template #default="{ record }">
-          <a @click="showDetail(record)">{{
-            (record.output || '—').slice(0, 60)
-          }}</a>
+          <a-button size="small" type="link" @click="showDetail(record)">
+            日志
+          </a-button>
         </template>
       </a-table-column>
     </a-table>

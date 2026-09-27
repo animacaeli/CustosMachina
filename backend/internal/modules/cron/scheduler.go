@@ -129,6 +129,16 @@ func (s *Service) scanDue(ctx context.Context) error {
 		}
 		// 先推进 next_run_at 再分发（单实例调度权威，无并发扫描）
 		s.db.Model(job).Update("next_run_at", next)
+		serverID, rerr := s.resolveServer(ctx, job)
+		if rerr != nil {
+			s.db.Create(&CronRun{
+				JobID: job.ID, Trigger: TriggerSchedule, Status: RunSkipped, StartedAt: now,
+				Output: "执行主机解析失败：" + rerr.Error(),
+			})
+			s.db.Model(&CronJob{}).Where("id = ?", job.ID).Update("last_status", RunSkipped)
+			continue
+		}
+		job.ServerID = serverID
 		run, ok := s.startRun(job, TriggerSchedule)
 		if !ok { // Forbid：上次未结束
 			s.db.Create(&CronRun{

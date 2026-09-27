@@ -1,7 +1,7 @@
-// Package observ 观测组件一键部署（第四阶段 M3，docs/plan-phase4-runtime.md 第三节第 3 项）：
-// 内置 cadvisor / vector 两个 compose 模板，选目标主机一键部署/升级/卸载。
+// Package observ 观测组件一键部署（第四阶段 M3 + 2026-09-28 UI 反馈增强）：
+// 多采集器可选（指标：cadvisor/node-exporter；日志：vector/fluent-bit），
+// compose 与采集器配置均可编辑覆盖（Monaco 编辑器编辑后随部署下发）。
 // 语义对齐 K8s DaemonSet 的手动版：k3s 期把模板翻译成 DaemonSet 即可。
-// cadvisor 已半弃维护（版本固定）：k3s 期被 kubelet 内置 cAdvisor 淘汰，届时只保 vector。
 package observ
 
 import (
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,58 +20,51 @@ import (
 
 var ErrBadComponent = errors.New("未知组件")
 
-// ---- 组件模板（配置化下发，版本升级 = 换模板重部署）----
-
 const (
-	CompCadvisor = "cadvisor"
-	CompVector   = "vector"
+	CategoryMetrics = "metrics"
+	CategoryLogs    = "logs"
 
-	settingO2URL = "observ.o2_url" // platform_settings 键：vector 的日志输出目标
+	settingO2URL = "observ.o2_url" // platform_settings 键：日志采集的输出目标
 
-	cadvisorImage = "gcr.m.daocloud.io/cadvisor/cadvisor:v0.49.1" // gcr.io 的 daocloud 代理（gcr.io 与 docker hub 非热门镜像国内均不可达，真机实测）；固定版本：上游半弃维护，不追新
-	vectorImage   = "timberio/vector:0.46.1-alpine"
+	cadvisorImage     = "gcr.m.daocloud.io/cadvisor/cadvisor:v0.49.1" // gcr.io 的 daocloud 代理（真机实测 gcr/docker hub 直连均不可达）
+	nodeExporterImage = "prom/node-exporter:v1.8.2"                   // docker hub 热门镜像，mirror 可拉（真机实测同档镜像可达）
+	vectorImage       = "timberio/vector:0.46.1-alpine"
+	fluentBitImage    = "fluent/fluent-bit:3.1.4"
 )
 
+// ConfigFile 采集器的伴随配置文件（部署时写到隔离域目录，compose 相对路径挂载）。
+type ConfigFile struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+}
+
+// Component 可部署的采集器。
 type Component struct {
-	Name       string `json:"name"`
-	Image      string `json:"image"`
-	Remark     string `json:"remark"`
-	NeedsO2URL bool   `json:"needsO2Url"` // vector 的输出指向平台配置的 O2 地址
+	Name        string       `json:"name"`
+	Category    string       `json:"category"` // metrics | logs
+	Image       string       `json:"image"`
+	Remark      string       `json:"remark"`
+	NeedsO2URL  bool         `json:"needsO2Url"`  // 日志类：输出指向平台配置的 O2 地址
+	ConfigFiles []ConfigFile `json:"configFiles"` // 默认伴随配置（可编辑覆盖）
+	Compose     string       `json:"compose"`     // 默认 compose 模板（可编辑覆盖）
 }
 
-var components = []Component{
+// 各组件默认模板。vector 管线参考 self-hosted 实践（/deploy/self-hosted）。
+var components = []*Component{
 	{
-		Name: CompCadvisor, Image: cadvisorImage,
-		Remark: "容器指标采集（半弃维护，k3s 期被 kubelet cAdvisor 淘汰；宿主端口 8081）",
-	},
-	{
-		Name: CompVector, Image: vectorImage,
-		Remark:     "容器日志采集（docker.sock），输出指向平台配置的 OpenObserve 地址",
-		NeedsO2URL: true,
-	},
-}
-
-func component(name string) *Component {
-	for i := range components {
-		if components[i].Name == name {
-			return &components[i]
-		}
-	}
-	return nil
-}
-
-var urlRe = regexp.MustCompile(`^https?://[a-zA-Z0-9.:@/?=&_-]+$`) // 允许 user:pass@ 与查询串（O2 basic auth）
-
-// renderCadvisor cadvisor compose（挂载只读系统路径 + kmsg 设备）。
-func renderCadvisor() string {
-	return fmt.Sprintf(`services:
+		Name:     "cadvisor",
+		Category: CategoryMetrics,
+		Image:    cadvisorImage,
+		Remark: "容器指标采集（半弃维护，k3s 期被 kubelet cAdvisor 淘汰）；\n" +
+			"宿主端口 8081 仅本机可抓取",
+		Compose: fmt.Sprintf(`services:
   cadvisor:
     image: %s
     container_name: custos-cadvisor
     restart: unless-stopped
     privileged: true
     ports:
-      - "127.0.0.1:8081:8080" # 仅本机可抓取（O2 跨机抓取时自行改绑）
+      - "127.0.0.1:8081:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -79,14 +73,71 @@ func renderCadvisor() string {
       - /dev/disk/:/dev/disk:ro
     devices:
       - /dev/kmsg
-`, cadvisorImage)
+`, cadvisorImage),
+	},
+	{
+		Name:     "node-exporter",
+		Category: CategoryMetrics,
+		Image:    nodeExporterImage,
+		Remark: "主机指标采集（CPU/内存/磁盘/网络；与 cadvisor 互补：\n" +
+			"一个看容器层、一个看宿主机层）；宿主端口 9100 仅本机可抓取",
+		Compose: fmt.Sprintf(`services:
+  node-exporter:
+    image: %s
+    container_name: custos-node-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+`, nodeExporterImage),
+	},
+	{
+		Name: "vector", Category: CategoryLogs, Image: vectorImage,
+		Remark: "容器日志采集（docker.sock），输出指向平台配置的 OpenObserve 地址\n" +
+			"（O2 地址支持 http://user:pass@host 内嵌 basic auth）；\n" +
+			"vector.yaml 可自由定制管线（transform 路由、多源多出口等，参考 self-hosted 实践）",
+		NeedsO2URL:  true,
+		ConfigFiles: []ConfigFile{{Filename: "vector.yaml"}}, // 内容渲染时填充
+		Compose: fmt.Sprintf(`services:
+  vector:
+    image: %s
+    container_name: custos-vector
+    restart: unless-stopped
+    environment:
+      VECTOR_LOG: warn
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+`, vectorImage),
+	},
+	{
+		Name: "fluent-bit", Category: CategoryLogs, Image: fluentBitImage,
+		Remark: "容器日志采集（轻量替代 vector：内存占用更小）；\n" +
+			"fluent-bit.conf 可自由定制（多输入/过滤器等）",
+		NeedsO2URL:  true,
+		ConfigFiles: []ConfigFile{{Filename: "fluent-bit.conf"}},
+		Compose: fmt.Sprintf(`services:
+  fluent-bit:
+    image: %s
+    container_name: custos-fluent-bit
+    restart: unless-stopped
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+`, fluentBitImage),
+	},
 }
 
-// renderVector vector compose + 采集配置（docker_logs 源 → O2 http sink）。
-// vector.yaml 与 compose 同目录（部署固定目录），以相对路径挂载。
-// O2 地址可内嵌 basic auth（http://user:pass@host/...），拆出后渲染进 sink 的
-// auth 块（OpenObserve 默认开启 basic auth，无凭据会静默 401 丢日志）。
-func renderVector(o2URL string) (composeYAML, vectorYAML string) {
+// renderVectorYAML vector.yaml 默认模板（docker_logs 源 → O2 http sink；
+// O2 地址可内嵌 basic auth，拆出渲染进 auth 块）。
+func renderVectorYAML(o2URL string) string {
 	uri, authBlock := o2URL, ""
 	if at := strings.LastIndex(o2URL, "@"); at > len("https://") && strings.Contains(o2URL[:at], ":") {
 		schemeEnd := strings.Index(o2URL, "://") + 3
@@ -100,7 +151,7 @@ func renderVector(o2URL string) (composeYAML, vectorYAML string) {
 `, creds[:sep], creds[sep+1:])
 		}
 	}
-	vectorYAML = fmt.Sprintf(`sources:
+	return fmt.Sprintf(`sources:
   docker_logs:
     type: docker_logs
 sinks:
@@ -114,18 +165,68 @@ sinks:
     healthcheck:
       enabled: true
 %s`, uri, authBlock)
-	composeYAML = fmt.Sprintf(`services:
-  vector:
-    image: %s
-    container_name: custos-vector
-    restart: unless-stopped
-    environment:
-      VECTOR_LOG: warn
-    volumes:
-      - ./vector.yaml:/etc/vector/vector.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-`, vectorImage)
-	return composeYAML, vectorYAML
+}
+
+// renderFluentBitConf fluent-bit.conf 默认模板（docker 输入 → O2 http json_lines 输出）。
+func renderFluentBitConf(o2URL string) string {
+	uri, user, pass := o2URL, "", ""
+	if at := strings.LastIndex(o2URL, "@"); at > len("https://") && strings.Contains(o2URL[:at], ":") {
+		schemeEnd := strings.Index(o2URL, "://") + 3
+		creds := o2URL[schemeEnd:at]
+		if sep := strings.Index(creds, ":"); sep > 0 {
+			uri = o2URL[:schemeEnd] + o2URL[at+1:]
+			user, pass = creds[:sep], creds[sep+1:]
+		}
+	}
+	auth := ""
+	if user != "" {
+		auth = fmt.Sprintf("    http_User %s\n    http_Passwd %s\n", user, pass)
+	}
+	return fmt.Sprintf(`[SERVICE]
+    Flush 5
+    Daemon Off
+    Log_Level warn
+
+[INPUT]
+    Name docker
+    Dockerd unix:///var/run/docker.sock
+
+[OUTPUT]
+    Name http
+    Match *
+    URI %s
+    Format json_lines
+    json_date_key timestamp
+    json_date_format iso8601
+%s    Retry_Limit 3
+`, uri, auth)
+}
+
+// componentDefaults 填充组件默认配置内容（日志类按当前 O2 地址渲染）。
+func componentDefaults(ctx context.Context, s *Service, c *Component) {
+	for i, cf := range c.ConfigFiles {
+		switch {
+		case c.Name == "vector" && cf.Filename == "vector.yaml":
+			c.ConfigFiles[i].Content = renderVectorYAML(s.O2URL(ctx))
+		case c.Name == "fluent-bit" && cf.Filename == "fluent-bit.conf":
+			c.ConfigFiles[i].Content = renderFluentBitConf(s.O2URL(ctx))
+		}
+	}
+}
+
+// containerName 各组件的固定容器名（状态探测/命名约定）。
+func containerName(component string) string {
+	switch component {
+	case "cadvisor":
+		return "custos-cadvisor"
+	case "node-exporter":
+		return "custos-node-exporter"
+	case "vector":
+		return "custos-vector"
+	case "fluent-bit":
+		return "custos-fluent-bit"
+	}
+	return "custos-" + component
 }
 
 // deployName 观测组件的隔离域名（resources.DeployComposeTo 落盘目录同名）。
@@ -192,52 +293,98 @@ func (s *Service) O2URL(ctx context.Context) string {
 	return v
 }
 
-// List 组件清单 + O2 地址（前端页面一次性拉取）。
+// List 组件清单（含默认模板，前端预填编辑器）+ O2 地址，按类别分组排序。
 func (s *Service) List(ctx context.Context) (map[string]any, error) {
+	out := make([]*Component, 0, len(components))
+	for _, c := range components {
+		cc := *c
+		cc.ConfigFiles = append([]ConfigFile(nil), c.ConfigFiles...)
+		componentDefaults(ctx, s, &cc)
+		out = append(out, &cc)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Category != out[j].Category {
+			return out[i].Category == CategoryMetrics
+		}
+		return out[i].Name < out[j].Name
+	})
 	return map[string]any{
-		"components": components,
+		"components": out,
 		"o2Url":      s.O2URL(ctx),
 	}, nil
 }
 
-// Deploy 部署/升级（换模板重部署即升级；先写 vector.yaml 再 up -d）。
-func (s *Service) Deploy(ctx context.Context, serverID uint, component string) (string, error) {
-	comp := componentOf(component)
+var urlRe = regexp.MustCompile(`^https?://[a-zA-Z0-9.:@/?=&_-]+$`) // 允许 user:pass@ 与查询串（O2 basic auth）
+
+// DeployInput 部署入参：模板均可覆盖（前端 Monaco 编辑后回传；空 = 用默认）。
+type DeployInput struct {
+	ServerID    uint              `json:"serverId" binding:"required"`
+	Component   string            `json:"component" binding:"required"`
+	Compose     string            `json:"compose"`     // 覆盖 compose（空 = 默认模板）
+	ConfigFiles map[string]string `json:"configFiles"` // 覆盖伴随配置（filename → content）
+}
+
+func componentOf(name string) *Component {
+	for _, c := range components {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// Deploy 部署/升级（换模板重部署即升级；先写伴随配置再 up -d）。
+func (s *Service) Deploy(ctx context.Context, in DeployInput) (string, error) {
+	comp := componentOf(in.Component)
 	if comp == nil {
 		return "", ErrBadComponent
 	}
-	var composeYAML, extraFile string
-	switch component {
-	case CompCadvisor:
-		composeYAML = renderCadvisor()
-	case CompVector:
-		o2 := s.O2URL(ctx)
-		if o2 == "" {
-			return "", errors.New("请先配置 OpenObserve 日志接收地址（vector 输出目标）")
-		}
-		var vectorYAML string
-		composeYAML, vectorYAML = renderVector(o2)
-		extraFile = vectorYAML
-	default:
-		return "", ErrBadComponent
+	composeYAML := in.Compose
+	if strings.TrimSpace(composeYAML) == "" {
+		composeYAML = comp.Compose
 	}
-	name := deployName(component)
-	// vector.yaml 与 compose 同目录，先落盘（mkdir -p：首次部署时目录尚不存在）
-	if extraFile != "" {
-		cmd := fmt.Sprintf("mkdir -p %s/%s && cat > %s/%s/vector.yaml",
-			"/opt/custos-machina/compose", name, "/opt/custos-machina/compose", name)
-		if out, err := s.res.RunCommandOn(ctx, serverID, cmd, extraFile, 30*time.Second); err != nil {
-			return out, fmt.Errorf("写入 vector 配置失败: %w", err)
+	if comp.NeedsO2URL && s.O2URL(ctx) == "" {
+		return "", errors.New("请先配置 OpenObserve 日志接收地址（日志采集的输出目标）")
+	}
+	// 伴随配置：默认模板 + 用户覆盖合并
+	files := map[string]string{}
+	var defaults Component = *comp
+	componentDefaults(ctx, s, &defaults)
+	for _, cf := range defaults.ConfigFiles {
+		files[cf.Filename] = cf.Content
+	}
+	for name, content := range in.ConfigFiles {
+		if strings.TrimSpace(content) != "" {
+			if !safeFilename(name) {
+				return "", fmt.Errorf("非法的配置文件名 %q", name)
+			}
+			files[name] = content
 		}
 	}
-	out, _, err := s.res.DeployComposeTo(ctx, serverID, name, composeYAML)
-	s.res.RecordEvent(ctx, serverID, "observ_deploy",
-		fmt.Sprintf("观测组件 %s 部署/升级（%s）：%s", component, comp.Image,
+	name := deployName(in.Component)
+	// 配置文件与 compose 同目录（相对路径挂载依赖部署固定目录约定）
+	for fname, content := range files {
+		cmd := fmt.Sprintf("mkdir -p /opt/custos-machina/compose/%s && cat > /opt/custos-machina/compose/%s/%s",
+			name, name, fname)
+		if out, err := s.res.RunCommandOn(ctx, in.ServerID, cmd, content, 30*time.Second); err != nil {
+			return out, fmt.Errorf("写入 %s 失败: %w", fname, err)
+		}
+	}
+	out, _, err := s.res.DeployComposeTo(ctx, in.ServerID, name, composeYAML)
+	s.res.RecordEvent(ctx, in.ServerID, "observ_deploy",
+		fmt.Sprintf("观测组件 %s 部署/升级（%s）：%s", in.Component, comp.Image,
 			map[bool]string{true: "成功", false: "失败"}[err == nil]))
 	if err != nil {
-		s.notifyFailure(ctx, serverID, "部署/"+component, err, out)
+		s.notifyFailure(ctx, in.ServerID, "部署/"+in.Component, err, out)
 	}
 	return out, err
+}
+
+// safeFilename 伴随配置文件名白名单（拼进 shell 前防注入）。
+var filenameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+func safeFilename(name string) bool {
+	return filenameRe.MatchString(name) && !strings.Contains(name, "..")
 }
 
 // Uninstall 下线组件（down --remove-orphans；部署文件保留便于重装）。
@@ -262,29 +409,22 @@ func (s *Service) Status(ctx context.Context, serverID uint) (map[string]string,
 	if err != nil {
 		return nil, fmt.Errorf("探测失败: %w\n%s", err, out)
 	}
-	status := map[string]string{CompCadvisor: "absent", CompVector: "absent"}
-	for _, comp := range components {
-		// 容器名固定为 custos-<component>（模板里 container_name 显式声明）
-		needle := "custos-" + comp.Name + " "
+	status := map[string]string{}
+	for _, c := range components {
+		status[c.Name] = "absent"
+	}
+	for _, c := range components {
+		needle := containerName(c.Name) + " "
 		for _, line := range strings.Split(out, "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, needle) {
 				if strings.Contains(line, "Up ") {
-					status[comp.Name] = "running"
+					status[c.Name] = "running"
 				} else {
-					status[comp.Name] = "stopped"
+					status[c.Name] = "stopped"
 				}
 			}
 		}
 	}
 	return status, nil
-}
-
-func componentOf(name string) *Component {
-	for i := range components {
-		if components[i].Name == name {
-			return &components[i]
-		}
-	}
-	return nil
 }

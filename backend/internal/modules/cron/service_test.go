@@ -594,3 +594,52 @@ func TestManualJobAndNetwork(t *testing.T) {
 		t.Errorf("未设 network 不应加 --network: %q", cmd2)
 	}
 }
+
+// compose 载体 serverId 留空：按项目正式环境部署目标解析；run 载体留空被拒。
+type projTbl struct {
+	ID   uint
+	Name string
+}
+
+func (projTbl) TableName() string { return "projects" }
+
+type envTargetTbl struct {
+	ProjectID uint
+	EnvType   string
+	ServerID  uint
+}
+
+func (envTargetTbl) TableName() string { return "project_env_targets" }
+
+func TestResolveServerByProject(t *testing.T) {
+	svc, _ := newSvc(t)
+	if err := svc.db.AutoMigrate(&projTbl{}, &envTargetTbl{}); err != nil {
+		t.Fatal(err)
+	}
+	svc.db.Create(&projTbl{ID: 2, Name: "demo"})
+	svc.db.Create(&envTargetTbl{ProjectID: 2, EnvType: "prod", ServerID: 7})
+	ctx := context.Background()
+
+	// 显式绑定优先
+	got, err := svc.resolveServer(ctx, &CronJob{ServerID: 3})
+	if err != nil || got != 3 {
+		t.Fatalf("显式绑定应优先, got %d err %v", got, err)
+	}
+	// compose 载体按项目解析
+	got, err = svc.resolveServer(ctx, &CronJob{Carrier: CarrierCompose, ProjectName: "demo"})
+	if err != nil || got != 7 {
+		t.Fatalf("项目解析应得 7, got %d err %v", got, err)
+	}
+	// 项目不存在
+	if _, err := svc.resolveServer(ctx, &CronJob{Carrier: CarrierCompose, ProjectName: "nope"}); err == nil {
+		t.Error("项目不存在应报错")
+	}
+	// run 载体不选主机：保存被拒
+	sc := mustScript(t, svc, ScriptShell)
+	if _, err := svc.SaveJob(ctx, 0, JobInput{
+		Name: "j", ScriptID: sc.ID, Schedule: "", ServerID: 0,
+		Carrier: CarrierRun, Image: "alpine:3",
+	}, "t"); err == nil {
+		t.Error("run 载体缺主机应被拒绝")
+	}
+}

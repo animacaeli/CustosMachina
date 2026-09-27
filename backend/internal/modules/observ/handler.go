@@ -67,15 +67,12 @@ func (h *Handler) status(c *gin.Context) {
 }
 
 func (h *Handler) deploy(c *gin.Context) {
-	var in struct {
-		ServerID  uint   `json:"serverId" binding:"required"`
-		Component string `json:"component" binding:"required"`
-	}
+	var in DeployInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	out, err := h.svc.Deploy(c.Request.Context(), in.ServerID, in.Component)
+	out, err := h.svc.Deploy(c.Request.Context(), in)
 	if err != nil {
 		httpx.FailUpstream(c, err.Error()+"\n"+out)
 		return
