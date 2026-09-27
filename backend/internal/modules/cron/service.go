@@ -203,7 +203,23 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	} else {
 		job.NextRunAt = nil
 	}
-	if err := s.db.WithContext(ctx).Save(job).Error; err != nil {
+	if id == 0 {
+		// GORM 坑：Create 跳过带 default 标签的零值字段且会把 default 回填进结构体
+		// ——enabled=false 落库吃 default true 且 job.Enabled 被改回 true（禁用任务
+		// 变启用、next_run_at 为 NULL 被调度器立即扫到，真机测试实测踩中）。
+		// 先记期望值，创建后按期望回写。
+		wantEnabled := job.Enabled
+		if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+			return nil, err
+		}
+		if job.Enabled != wantEnabled {
+			if err := s.db.WithContext(ctx).Model(job).
+				Update("enabled", wantEnabled).Error; err != nil {
+				return nil, err
+			}
+			job.Enabled = wantEnabled
+		}
+	} else if err := s.db.WithContext(ctx).Save(job).Error; err != nil {
 		return nil, err
 	}
 	return job, nil
@@ -408,6 +424,10 @@ func (s *Service) execute(ctx context.Context, job *CronJob, run *CronRun) {
 			// SSH 会话已杀，容器可能还在跑：按运行标签强杀
 			if killOut, killErr := s.ssh.RunCommandOn(ctx, job.ServerID, killCmd, "", 30*time.Second); killErr != nil {
 				out += fmt.Sprintf("\n[超时强杀失败: %v\n%s]", killErr, killOut)
+			}
+			// 超时时 sh -c 尾部的 rm 没执行到：补删宿主脚本文件（含敏感内容的脚本不能留）
+			if hostScriptPath != "" {
+				_, _ = s.ssh.RunCommandOn(ctx, job.ServerID, "rm -f "+hostScriptPath, "", 15*time.Second)
 			}
 			s.finishRun(run, RunTimeout, fmt.Sprintf("执行超时（%s），容器已强制终止\n%s", timeout, out), start)
 			s.audit(ctx, job, run, false)

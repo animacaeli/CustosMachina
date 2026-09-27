@@ -27,7 +27,7 @@ const (
 
 	settingO2URL = "observ.o2_url" // platform_settings 键：vector 的日志输出目标
 
-	cadvisorImage = "gcr.io/cadvisor/cadvisor:v0.49.1" // 固定版本：上游半弃维护，不追新
+	cadvisorImage = "gcr.m.daocloud.io/cadvisor/cadvisor:v0.49.1" // gcr.io 的 daocloud 代理（gcr.io 与 docker hub 非热门镜像国内均不可达，真机实测）；固定版本：上游半弃维护，不追新
 	vectorImage   = "timberio/vector:0.46.1-alpine"
 )
 

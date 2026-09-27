@@ -446,3 +446,25 @@ func TestDeleteJobBlockedWhileRunning(t *testing.T) {
 		t.Error("运行中的任务删除应被拒绝")
 	}
 }
+
+// GORM 坑回归：Create 跳过带 default 标签的零值字段——禁用任务建出来必须还是禁用
+// （真机测试实测：enabled=false 落库变 true，next_run_at 为 NULL 被调度器立即扫到）。
+func TestSaveJobDisabledCreate(t *testing.T) {
+	svc, _ := newSvc(t)
+	sc := mustScript(t, svc, ScriptShell)
+	job, err := svc.SaveJob(context.Background(), 0, JobInput{
+		Name: "off", ScriptID: sc.ID, Schedule: "@every 1h", ServerID: 1,
+		Carrier: CarrierRun, Image: "alpine:3", Enabled: boolPtr(false),
+	}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got CronJob
+	svc.db.First(&got, job.ID)
+	if got.Enabled {
+		t.Fatal("禁用任务落库后变启用（GORM default 零值跳过）")
+	}
+	if got.NextRunAt != nil {
+		t.Fatalf("禁用任务不应推进 next_run_at: %v", got.NextRunAt)
+	}
+}
