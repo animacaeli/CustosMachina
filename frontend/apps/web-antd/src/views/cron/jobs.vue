@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { CronJob, CronJobItem, CronScript } from '#/api/cron';
 
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
@@ -120,29 +120,34 @@ function openCreate() {
   formOpen.value = true;
 }
 
-// 表达式预览：输入停 500ms 后请求未来 5 次触发时间（标准 5 段 crontab）
+// 表达式预览：点击 ⏱ 才请求（不做输入实时校验——合规性在保存时统一检查），
+// 预览结果顺带暴露表达式是否合规
 const previewTimes = ref<string[]>([]);
 const previewError = ref('');
-let previewTimer: ReturnType<typeof setTimeout> | undefined;
-watch(
-  () => form.schedule,
-  (expr) => {
+const previewLoading = ref(false);
+async function loadPreview() {
+  if (!form.schedule) {
+    previewError.value = '请先填写表达式';
     previewTimes.value = [];
-    previewError.value = '';
-    if (previewTimer) clearTimeout(previewTimer);
-    if (!expr || !formOpen.value) return;
-    previewTimer = setTimeout(async () => {
-      try {
-        const res = await previewScheduleApi(expr);
-        previewTimes.value = (res.times ?? []).map((t) =>
-          new Date(t).toLocaleString('zh-CN', { hour12: false }),
-        );
-      } catch (e: any) {
-        previewError.value = e?.message ?? '表达式不合法';
-      }
-    }, 500);
-  },
-);
+    return;
+  }
+  previewLoading.value = true;
+  previewError.value = '';
+  try {
+    const res = await previewScheduleApi(form.schedule);
+    previewTimes.value = (res.times ?? []).map((t) =>
+      new Date(t).toLocaleString('zh-CN', { hour12: false }),
+    );
+  } catch (e: any) {
+    previewError.value = e?.message ?? '表达式不合法';
+    previewTimes.value = [];
+  } finally {
+    previewLoading.value = false;
+  }
+}
+function onPreviewOpenChange(open: boolean) {
+  if (open) loadPreview();
+}
 
 function openEdit(item: CronJobItem) {
   const j = item.job;
@@ -328,11 +333,34 @@ async function onTrigger(item: CronJobItem) {
             placeholder="选择脚本库中的脚本"
           />
         </a-form-item>
-        <a-form-item label="调度表达式" required>
-          <a-input
-            v-model:value="form.schedule"
-            placeholder="如 0 3 * * *（每日 3 点）或 @every 1h"
-          />
+        <a-form-item label="调度表达式（标准 crontab：分 时 日 月 周）" required>
+          <div class="flex gap-1">
+            <a-input
+              v-model:value="form.schedule"
+              placeholder="如 0 3 * * *（每日 3 点）/ 30 8 * * 1-5（工作日 8:30）"
+            />
+            <a-popover
+              trigger="click"
+              placement="right"
+              @open-change="onPreviewOpenChange"
+            >
+              <template #content>
+                <div style="min-width: 220px">
+                  <div v-if="previewLoading">计算中…</div>
+                  <div v-else-if="previewError" class="text-xs text-red-500">
+                    {{ previewError }}
+                  </div>
+                  <template v-else>
+                    <div class="mb-1 text-xs text-gray-500">未来 5 次执行：</div>
+                    <div v-for="t in previewTimes" :key="t" class="text-xs">
+                      · {{ t }}
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <a-button title="查看未来 5 次执行时间">⏱</a-button>
+            </a-popover>
+          </div>
         </a-form-item>
         <a-form-item label="目标主机" required>
           <a-select
