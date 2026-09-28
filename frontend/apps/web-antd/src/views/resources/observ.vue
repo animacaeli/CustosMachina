@@ -159,7 +159,7 @@ async function doDeploy() {
       try {
         await deployObservApi({
           compose: deployForm.compose,
-          component: deployTarget.value!.name,
+          component: deployTarget.value?.name ?? '',
           configFiles: deployForm.configs,
           serverId: sid,
         });
@@ -216,7 +216,7 @@ function detailText(comp: ObservComponent) {
   return servers.value
     .filter((srv) => srv.id in d)
     .map((srv) => {
-      const v = d[srv.id]!;
+      const v = d[srv.id] ?? 'absent';
       const label = statusMeta[v]?.text ?? v;
       return `${srv.name}：${label}`;
     })
@@ -270,10 +270,8 @@ function configLanguage(filename: string) {
             <template #title>
               {{ comp.name }}
               <a-tag class="ml-2">
-{{
-                categoryMeta[comp.category]?.text
-              }}
-</a-tag>
+                {{ categoryMeta[comp.category]?.text }}
+              </a-tag>
             </template>
             <template #extra>
               <a-tooltip :title="detailText(comp)">

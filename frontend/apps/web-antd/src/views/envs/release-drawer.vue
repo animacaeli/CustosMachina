@@ -136,13 +136,9 @@ function openLog(record: ReleaseItem) {
       try {
         const r = await getReleaseApi(record.id);
         logText.value = r.output || '（无输出）';
-        logTitle.value = `${r.tag} 部署日志（${
-          r.status === 'running'
-            ? '进行中'
-            : r.status === 'success'
-              ? '成功'
-              : '失败'
-        }）`;
+        const stLabel =
+          r.status === 'running' ? '进行中' : r.status === 'success' ? '成功' : '失败';
+        logTitle.value = `${r.tag} 部署日志（${stLabel}）`;
         if (r.status !== 'running') {
           stopReleasePoll();
           page.value = 1;

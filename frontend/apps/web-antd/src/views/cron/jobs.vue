@@ -41,7 +41,7 @@ const projectOptions = computed(() => {
   const names = new Set(
     list.value.map((i) => i.job.projectName).filter((n): n is string => !!n),
   );
-  return [...names].sort().map((n) => ({ label: n, value: n }));
+  return [...names].toSorted().map((n) => ({ label: n, value: n }));
 });
 const filteredList = computed(() =>
   projectFilter.value
@@ -611,8 +611,8 @@ async function onTrigger(item: CronJobItem) {
           <a-radio-group v-model:value="quick.carrier">
             <a-radio value="run">docker run（独立镜像）</a-radio>
             <a-radio value="compose-run">
-docker compose run（业务项目服务）
-</a-radio>
+              docker compose run（业务项目服务）
+            </a-radio>
           </a-radio-group>
         </a-form-item>
         <a-form-item v-if="quick.carrier === 'run'" label="镜像" required>

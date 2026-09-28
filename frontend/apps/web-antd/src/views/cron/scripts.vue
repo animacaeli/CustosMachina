@@ -37,7 +37,7 @@ const projectOptions = computed(() => {
       ...list.value.map((sc) => sc.project),
     ].filter(Boolean),
   );
-  return [...names].sort().map((n) => ({ label: n, value: n }));
+  return [...names].toSorted().map((n) => ({ label: n, value: n }));
 });
 const filteredList = computed(() =>
   projectFilter.value
