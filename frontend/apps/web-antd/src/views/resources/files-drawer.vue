@@ -77,6 +77,11 @@ const crumbs = computed(() => {
   ];
 });
 
+function goTo(path: string) {
+  cwd.value = path;
+  load();
+}
+
 function enter(e: FileEntry) {
   if (!e.isDir) return;
   cwd.value = cwd.value === '/' ? `/${e.name}` : `${cwd.value}/${e.name}`;
@@ -247,12 +252,7 @@ async function onRemove(e: FileEntry) {
     <div class="mb-3 flex flex-wrap items-center gap-1">
       <a-breadcrumb>
         <a-breadcrumb-item v-for="c in crumbs" :key="c.path">
-          <a
-            @click="
-              cwd = c.path;
-              load();
-            "
-            >{{ c.name }}</a>
+          <a @click="goTo(c.path)">{{ c.name }}</a>
         </a-breadcrumb-item>
       </a-breadcrumb>
       <span class="flex-1"></span>
