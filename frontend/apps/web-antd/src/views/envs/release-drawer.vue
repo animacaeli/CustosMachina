@@ -136,8 +136,12 @@ function openLog(record: ReleaseItem) {
       try {
         const r = await getReleaseApi(record.id);
         logText.value = r.output || '（无输出）';
-        const stLabel =
-          r.status === 'running' ? '进行中' : r.status === 'success' ? '成功' : '失败';
+        const stMap: Record<string, string> = {
+          failed: '失败',
+          running: '进行中',
+          success: '成功',
+        };
+        const stLabel = stMap[r.status] ?? r.status;
         logTitle.value = `${r.tag} 部署日志（${stLabel}）`;
         if (r.status !== 'running') {
           stopReleasePoll();
