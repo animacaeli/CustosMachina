@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -31,7 +32,10 @@ func testDB(t *testing.T) *gorm.DB {
 }
 
 // fakeRunner 记录命令调用，可编程返回结果。
+// mu：Trigger 起 execute 后台 goroutine，测试 goroutine 轮询后读记录——
+// append/读取跨 goroutine，-race（pre-push 门禁）下必须加锁。
 type fakeRunner struct {
+	mu        sync.Mutex
 	commands  []string
 	stdins    []string
 	out       string
@@ -41,9 +45,24 @@ type fakeRunner struct {
 	blockRuns map[string]bool // 命中关键词的命令直接模拟"仍卡着"（不返回）
 }
 
+// snapshotCommands/snapshotEvents 拷贝读取（测试断言用）。
+func (f *fakeRunner) snapshotCommands() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.commands...)
+}
+
+func (f *fakeRunner) snapshotEvents() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.events...)
+}
+
 func (f *fakeRunner) RunCommandOn(_ context.Context, _ uint, cmd, stdin string, _ time.Duration) (string, error) {
+	f.mu.Lock()
 	f.commands = append(f.commands, cmd)
 	f.stdins = append(f.stdins, stdin)
+	f.mu.Unlock()
 	for kw := range f.blockRuns {
 		if strings.Contains(cmd, kw) {
 			time.Sleep(2 * time.Second)
@@ -60,7 +79,9 @@ func (f *fakeRunner) RunCommandOn(_ context.Context, _ uint, cmd, stdin string, 
 }
 
 func (f *fakeRunner) RecordEvent(_ context.Context, _ uint, typ, msg string) {
+	f.mu.Lock()
 	f.events = append(f.events, typ+":"+msg)
+	f.mu.Unlock()
 }
 
 func (f *fakeRunner) RunCommandStreamOn(_ context.Context, _ uint, cmd, stdin string, _ time.Duration, onChunk func(string)) (string, error) {
@@ -266,22 +287,22 @@ func TestTriggerExecutesAndAudits(t *testing.T) {
 	if got.Status != RunSuccess {
 		t.Fatalf("期望 success, got %s output=%s", got.Status, got.Output)
 	}
-	if len(r.commands) < 2 {
-		t.Fatalf("应有上传脚本+执行两条命令, got %d: %v", len(r.commands), r.commands)
+	if len(r.snapshotCommands()) < 2 {
+		t.Fatalf("应有上传脚本+执行两条命令, got %d: %v", len(r.snapshotCommands()), r.commands)
 	}
-	if !strings.Contains(r.commands[0], "cat > /opt/custos-machina/cron/task-") {
-		t.Errorf("第一条命令应是上传脚本, got %q", r.commands[0])
+	if !strings.Contains(r.snapshotCommands()[0], "cat > /opt/custos-machina/cron/task-") {
+		t.Errorf("第一条命令应是上传脚本, got %q", r.snapshotCommands()[0])
 	}
 	if r.stdins[0] != "echo hi" {
 		t.Errorf("脚本内容应经 stdin 上传, got %q", r.stdins[0])
 	}
-	if !strings.Contains(r.commands[1], "docker run --rm --label custos.cron.run=") ||
-		!strings.Contains(r.commands[1], "alpine:3") ||
-		!strings.Contains(r.commands[1], "sh /tmp/cron-task") ||
-		!strings.Contains(r.commands[1], "--dry-run") {
-		t.Errorf("执行命令不符合预期: %q", r.commands[1])
+	if !strings.Contains(r.snapshotCommands()[1], "docker run --rm --label custos.cron.run=") ||
+		!strings.Contains(r.snapshotCommands()[1], "alpine:3") ||
+		!strings.Contains(r.snapshotCommands()[1], "sh /tmp/cron-task") ||
+		!strings.Contains(r.snapshotCommands()[1], "--dry-run") {
+		t.Errorf("执行命令不符合预期: %q", r.snapshotCommands()[1])
 	}
-	if len(r.events) == 0 || !strings.Contains(r.events[0], "cron_run") {
+	if len(r.snapshotEvents()) == 0 || !strings.Contains(r.snapshotEvents()[0], "cron_run") {
 		t.Errorf("应落审计事件, got %v", r.events)
 	}
 }
@@ -328,7 +349,7 @@ func TestScanDueDispatchAndMissed(t *testing.T) {
 	if job.NextRunAt.Before(time.Now()) {
 		t.Errorf("missed 后 next_run_at 应推进到未来, got %v", job.NextRunAt)
 	}
-	if len(r.commands) != 0 {
+	if len(r.snapshotCommands()) != 0 {
 		t.Errorf("missed 不应有执行命令, got %v", r.commands)
 	}
 
@@ -390,7 +411,7 @@ func TestExecuteTimeoutKills(t *testing.T) {
 		t.Fatalf("期望 timeout, got %s out=%s", got.Status, got.Output)
 	}
 	// 强杀命令应已发出（按 label 过滤）
-	joined := strings.Join(r.commands, "\n")
+	joined := strings.Join(r.snapshotCommands(), "\n")
 	if !strings.Contains(joined, "docker ps -q --filter label=custos.cron.run=") {
 		t.Errorf("超时后应按标签强杀, commands=%v", r.commands)
 	}

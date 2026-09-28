@@ -212,7 +212,11 @@ function fmtDuration(r: CronRun) {
       <div class="mb-1 flex items-center justify-between text-xs">
         <a-badge
           :status="activeRun?.status === 'running' ? 'processing' : undefined"
-          :text="activeRun?.status === 'running' ? '执行中（实时输出，2 秒刷新）' : ''"
+          :text="
+            activeRun?.status === 'running'
+              ? '执行中（实时输出，2 秒刷新）'
+              : ''
+          "
         />
         <a-button
           v-if="activeRun?.outputFile"

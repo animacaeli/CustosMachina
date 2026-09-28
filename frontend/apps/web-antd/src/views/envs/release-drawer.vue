@@ -31,7 +31,9 @@ const activeColor = ref('');
 const drainSecs = ref(30); // 蓝绿 drain 窗口（秒）
 
 // 发布进行中的记录：行内部署按钮转圈、发布按钮互斥；列表 3s 轮询至终态
-const anyRunning = computed(() => list.value.some((r) => r.status === 'running'));
+const anyRunning = computed(() =>
+  list.value.some((r) => r.status === 'running'),
+);
 let listPoll: ReturnType<typeof setInterval> | undefined;
 watch(anyRunning, (running) => {
   if (running && !listPoll) {
@@ -87,7 +89,11 @@ const columns = computed(() => {
 // 正式环境发布历史加"颜色"列（蓝绿落点）
 const columnsWithColor = computed(() =>
   props.env === 'prod'
-    ? [{ title: '标签', dataIndex: 'tag' }, { title: '颜色', key: 'color', width: 80 }, ...columns.value.slice(1)]
+    ? [
+        { title: '标签', dataIndex: 'tag' },
+        { title: '颜色', key: 'color', width: 80 },
+        ...columns.value.slice(1),
+      ]
     : columns.value,
 );
 const total = ref(0);
@@ -131,7 +137,11 @@ function openLog(record: ReleaseItem) {
         const r = await getReleaseApi(record.id);
         logText.value = r.output || '（无输出）';
         logTitle.value = `${r.tag} 部署日志（${
-          r.status === 'running' ? '进行中' : r.status === 'success' ? '成功' : '失败'
+          r.status === 'running'
+            ? '进行中'
+            : r.status === 'success'
+              ? '成功'
+              : '失败'
         }）`;
         if (r.status !== 'running') {
           stopReleasePoll();
@@ -301,7 +311,10 @@ function fmtTime(v: string) {
           活跃色：{{ activeColor || '未启用' }}
         </a-tag>
       </a-tooltip>
-      <a-tooltip v-if="env === 'prod'" title="蓝绿 drain 窗口（秒）：存量连接在旧颜色上跑完的等待时间">
+      <a-tooltip
+        v-if="env === 'prod'"
+        title="蓝绿 drain 窗口（秒）：存量连接在旧颜色上跑完的等待时间"
+      >
         <a-input-number
           v-model:value="drainSecs"
           :min="5"
@@ -339,7 +352,10 @@ function fmtTime(v: string) {
           {{ fmtDuration(record.durationSecs) }}
         </template>
         <template v-else-if="column.key === 'color'">
-          <a-tag v-if="record.color" :color="record.color === 'blue' ? 'blue' : 'green'">
+          <a-tag
+            v-if="record.color"
+            :color="record.color === 'blue' ? 'blue' : 'green'"
+          >
             {{ record.color === 'blue' ? '蓝' : '绿' }}
           </a-tag>
           <span v-else>—</span>
@@ -350,10 +366,7 @@ function fmtTime(v: string) {
             class="mr-1"
             spin
           />
-          <a-tag
-            v-else
-            :color="record.status === 'success' ? 'green' : 'red'"
-          >
+          <a-tag v-else :color="record.status === 'success' ? 'green' : 'red'">
             {{
               record.status === 'success'
                 ? '成功'
@@ -370,7 +383,9 @@ function fmtTime(v: string) {
           >
             <a-button
               :disabled="record.status === 'running' || anyRunning"
-              :loading="record.status === 'running' || deployingTag === record.tag"
+              :loading="
+                record.status === 'running' || deployingTag === record.tag
+              "
               size="small"
               type="link"
             >

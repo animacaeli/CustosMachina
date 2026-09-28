@@ -27,7 +27,11 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>();
 const userStore = useUserStore();
 const canWrite = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
-  return roles.includes('superadmin') || roles.includes('admin') || roles.includes('ops');
+  return (
+    roles.includes('superadmin') ||
+    roles.includes('admin') ||
+    roles.includes('ops')
+  );
 });
 
 const cwd = ref('/');
@@ -68,7 +72,7 @@ const crumbs = computed(() => {
     { name: '/', path: '/' },
     ...parts.map((p, i) => ({
       name: p,
-      path: '/' + parts.slice(0, i + 1).join('/'),
+      path: `/${parts.slice(0, i + 1).join('/')}`,
     })),
   ];
 });
@@ -99,7 +103,13 @@ const editLanguage = computed(() => {
   if (n.endsWith('.yml') || n.endsWith('.yaml')) return 'yaml';
   if (n.endsWith('.sh') || n.endsWith('.bash')) return 'shell';
   if (n.endsWith('.py')) return 'python';
-  if (n.endsWith('.toml') || n.endsWith('.ini') || n.endsWith('.conf') || n.endsWith('.properties')) return 'ini';
+  if (
+    n.endsWith('.toml') ||
+    n.endsWith('.ini') ||
+    n.endsWith('.conf') ||
+    n.endsWith('.properties')
+  )
+    return 'ini';
   if (n.endsWith('.xml') || n.endsWith('.html')) return 'xml';
   return 'plaintext';
 });
@@ -158,7 +168,10 @@ const mkdirOpen = ref(false);
 const mkdirName = ref('');
 async function doMkdir() {
   if (!props.serverId || !mkdirName.value) return;
-  const p = cwd.value === '/' ? `/${mkdirName.value}` : `${cwd.value}/${mkdirName.value}`;
+  const p =
+    cwd.value === '/'
+      ? `/${mkdirName.value}`
+      : `${cwd.value}/${mkdirName.value}`;
   try {
     await mkdirApi(props.serverId, p);
     message.success('已创建');
@@ -180,8 +193,12 @@ function openRename(e: FileEntry) {
 }
 async function doRename() {
   if (!props.serverId || !renameTarget.value) return;
-  const from = cwd.value === '/' ? `/${renameTarget.value.name}` : `${cwd.value}/${renameTarget.value.name}`;
-  const to = cwd.value === '/' ? `/${renameTo.value}` : `${cwd.value}/${renameTo.value}`;
+  const from =
+    cwd.value === '/'
+      ? `/${renameTarget.value.name}`
+      : `${cwd.value}/${renameTarget.value.name}`;
+  const to =
+    cwd.value === '/' ? `/${renameTo.value}` : `${cwd.value}/${renameTo.value}`;
   try {
     await renameApi(props.serverId, from, to);
     message.success('已重命名');
@@ -230,7 +247,12 @@ async function onRemove(e: FileEntry) {
     <div class="mb-3 flex flex-wrap items-center gap-1">
       <a-breadcrumb>
         <a-breadcrumb-item v-for="c in crumbs" :key="c.path">
-          <a @click="cwd = c.path; load()">{{ c.name }}</a>
+          <a
+            @click="
+              cwd = c.path;
+              load();
+            "
+            >{{ c.name }}</a>
         </a-breadcrumb-item>
       </a-breadcrumb>
       <span class="flex-1"></span>
@@ -249,7 +271,11 @@ async function onRemove(e: FileEntry) {
       />
       <template v-if="canWrite">
         <input ref="uploadInput" type="file" hidden @change="onUpload" />
-        <a-button size="small" :loading="uploading" @click="uploadInput?.click()">
+        <a-button
+          size="small"
+          :loading="uploading"
+          @click="uploadInput?.click()"
+        >
           上传
         </a-button>
         <a-button size="small" @click="mkdirOpen = true">新建目录</a-button>
@@ -304,7 +330,11 @@ async function onRemove(e: FileEntry) {
               重命名
             </a-button>
             <a-popconfirm
-              :title="record.isDir ? `删除空目录 ${record.name}？` : `确认删除 ${record.name}？`"
+              :title="
+                record.isDir
+                  ? `删除空目录 ${record.name}？`
+                  : `确认删除 ${record.name}？`
+              "
               @confirm="onRemove(record)"
             >
               <a-button size="small" type="link" danger>删除</a-button>

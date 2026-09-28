@@ -15,9 +15,12 @@ export async function listFilesApi(serverId: number, path: string) {
 }
 
 export async function readFileApi(serverId: number, path: string) {
-  return requestClient.get<{ content: string }>(`/server-files/${serverId}/read`, {
-    params: { path },
-  });
+  return requestClient.get<{ content: string }>(
+    `/server-files/${serverId}/read`,
+    {
+      params: { path },
+    },
+  );
 }
 
 /**
@@ -31,7 +34,11 @@ export async function fileDownloadUrl(serverId: number, path: string) {
   return `/api/server-files/${serverId}/download?path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(ticket)}`;
 }
 
-export async function writeFileApi(serverId: number, path: string, content: string) {
+export async function writeFileApi(
+  serverId: number,
+  path: string,
+  content: string,
+) {
   return requestClient.post(`/server-files/${serverId}/write`, {
     content,
     path,
@@ -60,6 +67,13 @@ export async function renameApi(serverId: number, from: string, to: string) {
   return requestClient.post(`/server-files/${serverId}/rename`, { from, to });
 }
 
-export async function removeApi(serverId: number, path: string, isDir: boolean) {
-  return requestClient.post(`/server-files/${serverId}/remove`, { isDir, path });
+export async function removeApi(
+  serverId: number,
+  path: string,
+  isDir: boolean,
+) {
+  return requestClient.post(`/server-files/${serverId}/remove`, {
+    isDir,
+    path,
+  });
 }

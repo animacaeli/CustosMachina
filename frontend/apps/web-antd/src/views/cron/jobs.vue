@@ -39,9 +39,7 @@ const projectFilter = ref<string | undefined>();
 // 项目筛选（compose 载体任务的 projectName；client-side，列表量级小）
 const projectOptions = computed(() => {
   const names = new Set(
-    list.value
-      .map((i) => i.job.projectName)
-      .filter((n): n is string => !!n),
+    list.value.map((i) => i.job.projectName).filter((n): n is string => !!n),
   );
   return [...names].sort().map((n) => ({ label: n, value: n }));
 });
@@ -107,7 +105,10 @@ async function quickExecute() {
     message.warning('docker run 载体需填写镜像');
     return;
   }
-  if (quick.carrier === 'compose-run' && (!quick.projectName || !quick.service)) {
+  if (
+    quick.carrier === 'compose-run' &&
+    (!quick.projectName || !quick.service)
+  ) {
     message.warning('compose 载体需填写项目名与服务名');
     return;
   }
@@ -231,11 +232,11 @@ async function loadPreview() {
     previewTimes.value = (res.times ?? []).map((t) =>
       new Date(t).toLocaleString('zh-CN', { hour12: false }),
     );
-  } catch (e: any) {
+  } catch (error: any) {
     // 优先取后端 message（HTTP 400 时 axios 的 e.message 只有
     // "Request failed with status code 400"，真正的语法错误在 response.data.message）
     previewError.value =
-      e?.response?.data?.message ?? e?.message ?? '表达式不合法';
+      error?.response?.data?.message ?? error?.message ?? '表达式不合法';
     previewTimes.value = [];
   } finally {
     previewLoading.value = false;
@@ -277,7 +278,10 @@ async function submitForm() {
     return;
   }
   try {
-    const data = { ...form, schedule: form.mode === 'manual' ? '' : form.schedule };
+    const data = {
+      ...form,
+      schedule: form.mode === 'manual' ? '' : form.schedule,
+    };
     if (editingId.value) {
       await updateJobApi(editingId.value, data);
       message.success('已更新');
@@ -332,9 +336,7 @@ async function onTrigger(item: CronJobItem) {
             style="width: 200px"
           />
           <a-button @click="quickOpen = true">快速执行</a-button>
-          <a-button @click="showRuns(undefined)">
-            全部运行历史
-          </a-button>
+          <a-button @click="showRuns(undefined)"> 全部运行历史 </a-button>
           <a-button v-if="canWrite" type="primary" @click="openCreate">
             新增任务
           </a-button>
@@ -482,7 +484,9 @@ async function onTrigger(item: CronJobItem) {
                     {{ previewError }}
                   </div>
                   <template v-else>
-                    <div class="mb-1 text-xs text-gray-500">未来 5 次执行：</div>
+                    <div class="mb-1 text-xs text-gray-500">
+                      未来 5 次执行：
+                    </div>
                     <div v-for="t in previewTimes" :key="t" class="text-xs">
                       · {{ t }}
                     </div>
@@ -494,10 +498,7 @@ async function onTrigger(item: CronJobItem) {
           </div>
         </a-form-item>
         <template v-if="form.carrier === 'run'">
-          <a-form-item
-            label="目标主机（服务器级任务：备份/清理等）"
-            required
-          >
+          <a-form-item label="目标主机（服务器级任务：备份/清理等）" required>
             <a-select
               v-model:value="form.serverId"
               :options="
@@ -587,11 +588,7 @@ async function onTrigger(item: CronJobItem) {
       @ok="quickExecute"
     >
       <a-form layout="vertical" style="padding-top: 0.5rem">
-        <a-form-item
-          v-if="quick.carrier === 'run'"
-          label="目标主机"
-          required
-        >
+        <a-form-item v-if="quick.carrier === 'run'" label="目标主机" required>
           <a-select
             v-model:value="quick.serverId"
             :options="
@@ -613,11 +610,16 @@ async function onTrigger(item: CronJobItem) {
         <a-form-item label="执行载体" required>
           <a-radio-group v-model:value="quick.carrier">
             <a-radio value="run">docker run（独立镜像）</a-radio>
-            <a-radio value="compose-run">docker compose run（业务项目服务）</a-radio>
+            <a-radio value="compose-run">
+docker compose run（业务项目服务）
+</a-radio>
           </a-radio-group>
         </a-form-item>
         <a-form-item v-if="quick.carrier === 'run'" label="镜像" required>
-          <a-input v-model:value="quick.image" placeholder="如 alpine:3 / python:3.12" />
+          <a-input
+            v-model:value="quick.image"
+            placeholder="如 alpine:3 / python:3.12"
+          />
         </a-form-item>
         <template v-else>
           <a-form-item label="项目名（蓝绿项目填基础名）" required>
@@ -635,7 +637,11 @@ async function onTrigger(item: CronJobItem) {
           />
         </a-form-item>
         <a-form-item label="超时（秒）">
-          <a-input-number v-model:value="quick.timeoutSecs" :min="10" :max="86400" />
+          <a-input-number
+            v-model:value="quick.timeoutSecs"
+            :min="10"
+            :max="86400"
+          />
         </a-form-item>
       </a-form>
     </a-modal>

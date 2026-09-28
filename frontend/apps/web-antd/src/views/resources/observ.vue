@@ -22,7 +22,11 @@ defineOptions({ name: 'ResourcesObserv' });
 const userStore = useUserStore();
 const canWrite = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
-  return roles.includes('superadmin') || roles.includes('admin') || roles.includes('ops');
+  return (
+    roles.includes('superadmin') ||
+    roles.includes('admin') ||
+    roles.includes('ops')
+  );
 });
 
 const loading = ref(false);
@@ -96,7 +100,8 @@ async function loadStatus() {
     const vals = Object.values(detail[n] ?? {});
     const running = vals.filter((v) => v === 'running').length;
     if (vals.length > 0 && running === vals.length) agg[n] = 'running';
-    else if (running === 0 && vals.every((v) => v === 'absent')) agg[n] = 'absent';
+    else if (running === 0 && vals.every((v) => v === 'absent'))
+      agg[n] = 'absent';
     else agg[n] = `partial:${running}/${vals.length}`;
   }
   statusDetail.value = detail;
@@ -158,7 +163,9 @@ async function doDeploy() {
           configFiles: deployForm.configs,
           serverId: sid,
         });
-        message.success(`${deployTarget.value.name} → ${host?.name ?? sid} 完成`);
+        message.success(
+          `${deployTarget.value.name} → ${host?.name ?? sid} 完成`,
+        );
       } catch {
         failed.push(sid); // 失败详情由拦截器 toast
       }
@@ -166,7 +173,9 @@ async function doDeploy() {
     if (failed.length === 0) {
       deployOpen.value = false;
     } else {
-      message.warning(`${failed.length} 台主机部署失败（可重试，成功的不受影响）`);
+      message.warning(
+        `${failed.length} 台主机部署失败（可重试，成功的不受影响）`,
+      );
     }
     await loadStatus();
   } finally {
@@ -229,7 +238,10 @@ function configLanguage(filename: string) {
         <a-select
           v-model:value="serverIds"
           :options="
-            servers.map((s) => ({ label: `${s.name}（${s.host}）`, value: s.id }))
+            servers.map((s) => ({
+              label: `${s.name}（${s.host}）`,
+              value: s.id,
+            }))
           "
           mode="multiple"
           placeholder="选择主机（部署对全部选中主机执行）"
@@ -257,11 +269,17 @@ function configLanguage(filename: string) {
           <a-card size="small" :loading="loading">
             <template #title>
               {{ comp.name }}
-              <a-tag class="ml-2">{{ categoryMeta[comp.category]?.text }}</a-tag>
+              <a-tag class="ml-2">
+{{
+                categoryMeta[comp.category]?.text
+              }}
+</a-tag>
             </template>
             <template #extra>
               <a-tooltip :title="detailText(comp)">
-                <a-tag :color="statusTagMeta(status[comp.name] ?? 'absent').color">
+                <a-tag
+                  :color="statusTagMeta(status[comp.name] ?? 'absent').color"
+                >
                   {{ statusTagMeta(status[comp.name] ?? 'absent').text }}
                 </a-tag>
               </a-tooltip>

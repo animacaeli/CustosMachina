@@ -90,7 +90,12 @@ let buildPoll: ReturnType<typeof setInterval> | undefined;
 
 async function pollRunningBuilds() {
   try {
-    const res = await getBuildsApi({ env: props.env, page: 1, projectId: 0, size: 100 });
+    const res = await getBuildsApi({
+      env: props.env,
+      page: 1,
+      projectId: 0,
+      size: 100,
+    });
     buildingProjectIds.value = (res.items ?? [])
       .filter((b) => b.status === 'running' || b.status === 'pending')
       .map((b) => b.projectId);
@@ -224,8 +229,7 @@ async function onDelete(p: Project) {
                 v-for="act in meta.actions"
                 :key="act"
                 :loading="
-                  act === 'build' &&
-                  buildingProjectIds.includes(record.id)
+                  act === 'build' && buildingProjectIds.includes(record.id)
                 "
                 :type="act === 'release' ? 'primary' : 'default'"
                 size="small"

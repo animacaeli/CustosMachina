@@ -188,10 +188,7 @@ async function onDelete(s: CronScript) {
         </a-table-column>
         <a-table-column title="内容" :width="80">
           <template #default="{ record }">
-            <a
-              v-if="record.content"
-              @click="openView(record)"
-            >查看</a>
+            <a v-if="record.content" @click="openView(record)">查看</a>
             <span v-else>—</span>
           </template>
         </a-table-column>
