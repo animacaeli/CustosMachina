@@ -59,6 +59,21 @@ func (w *WeComProvider) AuthorizeURL(redirectURI, state string) (string, error) 
 	return "https://login.work.weixin.qq.com/wwlogin/sso/login?" + q.Encode(), nil
 }
 
+// LoginPanel 前端 @wecom/jssdk createWWLoginPanel 入参（扫码直达确认页，
+// 免二次扫码——sso/login 整页版扫码后会先落到网页授权页）。
+func (w *WeComProvider) LoginPanel(redirectURI, state string) (*LoginPanelParams, error) {
+	if w.cfg.CorpID == "" || w.cfg.AgentID == "" {
+		return nil, errors.New("企微配置不完整（缺少 corpid / agentid）")
+	}
+	return &LoginPanelParams{
+		WwLoginType: "CorpApp",
+		AppID:       w.cfg.CorpID,
+		AgentID:     w.cfg.AgentID,
+		RedirectURI: redirectURI,
+		State:       state,
+	}, nil
+}
+
 // getAccessToken 应用 access_token，进程内缓存至过期前 5 分钟。
 func (w *WeComProvider) getAccessToken(ctx context.Context) (string, error) {
 	w.mu.Lock()

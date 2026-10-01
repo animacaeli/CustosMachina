@@ -17,9 +17,10 @@ type IMUser struct {
 }
 
 // IdentityProvider IM 身份提供商插件契约。
-// AuthorizeURL 返回扫码授权页地址：提供商标准做法是返回"内嵌二维码页"，
-// 前端用 iframe 加载；用户 IM 扫页内二维码后确认，iframe 被重定向到
-// redirect_uri 携带 code+state（企微 wwlogin/sso/login 等）。
+// AuthorizeURL 返回扫码授权页地址：前端用 iframe 加载，用户 IM 扫页内
+// 二维码后确认，iframe 被重定向到 redirect_uri 携带 code+state。
+// 可选接口 LoginPaneler：企微等支持前端 SDK 内嵌面板的提供商改走
+// 前端组件回调 code（避免整页授权页扫码后先落网页的二次扫码问题）。
 // ExchangeCode 用回调 code 换 IM 用户身份；
 // Verify 凭证连通性测试（setup 向导 / 配置页用）。
 type IdentityProvider interface {
@@ -27,6 +28,21 @@ type IdentityProvider interface {
 	AuthorizeURL(redirectURI, state string) (string, error)
 	ExchangeCode(ctx context.Context, code string) (*IMUser, error)
 	Verify(ctx context.Context) error
+}
+
+// LoginPanelParams 企微 @wecom/jssdk createWWLoginPanel 的入参
+// （login_type 固定为 code：授权成功由组件回调 code，不走 302）。
+type LoginPanelParams struct {
+	WwLoginType string `json:"wwLoginType"` // CorpApp / ServiceApp
+	AppID       string `json:"appid"`
+	AgentID     string `json:"agentid,omitempty"`
+	RedirectURI string `json:"redirectUri"`
+	State       string `json:"state"`
+}
+
+// LoginPaneler 提供商可选实现：返回前端内嵌登录面板初始化参数。
+type LoginPaneler interface {
+	LoginPanel(redirectURI, state string) (*LoginPanelParams, error)
 }
 
 // ProviderConfig 一个提供商的已解密配置。

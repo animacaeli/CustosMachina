@@ -74,11 +74,11 @@ func TestQRCallback_JITRegisterThenRelogin(t *testing.T) {
 	ctx := context.Background()
 
 	// 拿授权地址，从中取 state
-	urlStr, err := svc.QRLoginURL(ctx)
+	r0, err := svc.QRLoginURL(ctx)
 	if err != nil {
 		t.Fatalf("生成授权地址失败: %v", err)
 	}
-	state := urlStr[len(urlStr)-32:] // mock provider 的 state 是 16 字节 hex
+	state := r0.URL[len(r0.URL)-32:] // mock provider 的 state 是 16 字节 hex
 
 	// 首次扫码：JIT 注册 guest 用户
 	r1, err := svc.HandleQRCallback(ctx, "zhangsan", state)
@@ -101,8 +101,8 @@ func TestQRCallback_JITRegisterThenRelogin(t *testing.T) {
 	}
 
 	// 二次登录：复用绑定，不新建用户
-	urlStr2, _ := svc.QRLoginURL(ctx)
-	state2 := urlStr2[len(urlStr2)-32:]
+	r0b, _ := svc.QRLoginURL(ctx)
+	state2 := r0b.URL[len(r0b.URL)-32:]
 	r2, err := svc.HandleQRCallback(ctx, "zhangsan", state2)
 	if err != nil {
 		t.Fatalf("二次回调失败: %v", err)
@@ -118,8 +118,8 @@ func TestQRLoginURL_MockShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := svc.cfg.IM.PublicURL + "/api/auth/qrlogin/callback?provider=mock&code=mock-user&state="; len(u) < len(want) || u[:len(want)] != want {
-		t.Errorf("mock 授权地址形态不符: %s", u)
+	if want := svc.cfg.IM.PublicURL + "/api/auth/qrlogin/callback?provider=mock&code=mock-user&state="; u.URL == "" || len(u.URL) < len(want) || u.URL[:len(want)] != want {
+		t.Errorf("mock 授权地址形态不符: %s", u.URL)
 	}
 }
 

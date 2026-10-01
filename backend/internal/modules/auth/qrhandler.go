@@ -14,6 +14,7 @@ import (
 func (h *Handler) registerQRLoginRoutes(r server.Router) {
 	r.Public.GET("/auth/qrlogin/url", h.qrLoginURL)
 	r.Public.GET("/auth/qrlogin/callback", h.qrCallback)
+	r.Public.POST("/auth/qrlogin/exchange", h.qrExchange)
 	r.Public.POST("/auth/refresh", h.refresh)
 	r.Authed.POST("/auth/logout", h.logout)
 
@@ -34,12 +35,33 @@ func (h *Handler) registerQRLoginRoutes(r server.Router) {
 }
 
 func (h *Handler) qrLoginURL(c *gin.Context) {
-	url, err := h.svc.QRLoginURL(c.Request.Context())
+	result, err := h.svc.QRLoginURL(c.Request.Context())
 	if err != nil {
 		httpx.Fail(c, http.StatusServiceUnavailable, 503, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"url": url})
+	httpx.OK(c, result)
+}
+
+// qrExchange 内嵌登录面板（企微 JSSDK login_type=code）回调 code 换 token，
+// 走 AJAX 而非 iframe 302，前端直接落会话。
+func (h *Handler) qrExchange(c *gin.Context) {
+	var in struct {
+		Code  string `json:"code" binding:"required"`
+		State string `json:"state" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	result, err := h.svc.HandleQRCallback(c.Request.Context(), in.Code, in.State)
+	if err != nil {
+		httpx.Fail(c, http.StatusUnauthorized, 401, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{
+		"accessToken": result.AccessToken, "refreshToken": result.RefreshToken,
+	})
 }
 
 func (h *Handler) qrCallback(c *gin.Context) {

@@ -43,6 +43,7 @@
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
     "@vueuse/integrations": "catalog:",
+    "@wecom/jssdk": "^2.4.4",
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "ant-design-vue": "catalog:",

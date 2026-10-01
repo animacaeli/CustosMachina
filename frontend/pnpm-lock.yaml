@@ -658,6 +658,9 @@ importers:
       '@vueuse/integrations':
         specifier: 'catalog:'
         version: 14.4.0(async-validator@4.2.5)(axios@1.19.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2))(focus-trap@8.2.2)(nprogress@0.2.0)(qrcode@1.5.4)(sortablejs@1.15.7)(vue@3.5.41(typescript@6.0.3))
+      '@wecom/jssdk':
+        specifier: ^2.4.4
+        version: 2.4.4
       '@xterm/addon-fit':
         specifier: 'catalog:'
         version: 0.11.0
@@ -5463,6 +5466,9 @@ packages:
     resolution: {integrity: sha512-PYsssySS4cK3M2nahIRGcIRjQvnsDA/AB9Ie1fu5zAFRaUGTpyHh62sSRi1qNSsqpDiABEYquOSrexZ/NG6akw==}
     peerDependencies:
       vue: 3.5.41
+
+  '@wecom/jssdk@2.4.4':
+    resolution: {integrity: sha512-CoMxyTvlpR2sz+KC+0kfnbdJj19EjJg7HAU/52LUW6dPUDEvW3NV40LNhWUnvqFg49y3zJswyGVFeraDcKc0Kw==}
 
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
@@ -13994,6 +14000,8 @@ snapshots:
       dom-zindex: 1.0.7
       vue: 3.5.41(typescript@6.0.3)
       xe-utils: 4.0.12
+
+  '@wecom/jssdk@2.4.4': {}
 
   '@xterm/addon-fit@0.11.0': {}
 

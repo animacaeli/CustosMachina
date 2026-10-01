@@ -132,23 +132,41 @@ func (s *AuthService) redirectURI() (string, error) {
 	return strings.TrimRight(s.cfg.IM.PublicURL, "/") + "/api/auth/qrlogin/callback", nil
 }
 
-// QRLoginURL 生成扫码授权页地址 + 一次性 state。
-func (s *AuthService) QRLoginURL(ctx context.Context) (string, error) {
+// QRLoginResult 扫码登录入口：url 供 iframe/自绘二维码（钉钉/飞书/mock），
+// panel 非空时前端改用 SDK 内嵌登录面板（企微，免二次扫码）。
+type QRLoginResult struct {
+	URL   string            `json:"url,omitempty"`
+	Panel *LoginPanelParams `json:"panel,omitempty"`
+}
+
+// QRLoginURL 生成扫码登录入口 + 一次性 state。
+func (s *AuthService) QRLoginURL(ctx context.Context) (*QRLoginResult, error) {
 	p, err := s.activeProvider(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	uri, err := s.redirectURI()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	state := make([]byte, 16)
 	if _, err := rand.Read(state); err != nil {
-		return "", err
+		return nil, err
 	}
 	stateStr := hex.EncodeToString(state)
 	s.qrStates.Store(stateStr, time.Now().Add(qrStateTTL))
-	return p.AuthorizeURL(uri, stateStr)
+	if lp, ok := p.(LoginPaneler); ok {
+		panel, err := lp.LoginPanel(uri, stateStr)
+		if err != nil {
+			return nil, err
+		}
+		return &QRLoginResult{Panel: panel}, nil
+	}
+	url, err := p.AuthorizeURL(uri, stateStr)
+	if err != nil {
+		return nil, err
+	}
+	return &QRLoginResult{URL: url}, nil
 }
 
 func (s *AuthService) consumeState(state string) bool {
