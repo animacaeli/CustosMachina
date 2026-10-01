@@ -22,7 +22,7 @@ const accessStore = useAccessStore();
 const qrText = ref('');
 const qrSrc = useQRCode(qrText, { margin: 1, width: 220 });
 const loading = ref(true);
-const error = ref('');
+const err = ref('');
 const isMock = ref(false);
 // 企微走官方 JSSDK 内嵌登录面板（createWWLoginPanel，login_type=code）：
 // 扫码直达确认页，避免整页授权页"扫码后先落网页再识别二维码"的二次扫码。
@@ -53,7 +53,7 @@ async function enterHome(accessToken: string, refreshToken?: string) {
     const home = preferences.app.defaultHomePath;
     await router.push({ path: home, replace: true });
   } catch {
-    error.value = '登录信息获取失败，请重试';
+    err.value = '登录信息获取失败，请重试';
     loading.value = false;
   }
 }
@@ -67,16 +67,16 @@ async function exchangeCode(code: string, state: string) {
       refreshToken: string;
     }>('/auth/qrlogin/exchange', { code, state });
     await enterHome(result.accessToken, result.refreshToken);
-  } catch (e) {
-    const err = e as any;
-    error.value = err?.response?.data?.message || '登录失败，请重试';
+  } catch (error: any) {
+    // 优先取后端 message（axios 泛化文案在 response.data.message）
+    err.value = error?.response?.data?.message || '登录失败，请重试';
     loading.value = false;
   }
 }
 
 async function loadQR() {
   loading.value = true;
-  error.value = '';
+  err.value = '';
   panelParams.value = null;
   try {
     const result = await requestClient.get<{
@@ -97,7 +97,7 @@ async function loadQR() {
       isMock.value = result.url.includes('provider=mock');
     }
   } catch {
-    error.value = '获取二维码失败，请稍后重试';
+    err.value = '获取二维码失败，请稍后重试';
   } finally {
     loading.value = false;
   }
@@ -114,7 +114,7 @@ onMounted(async () => {
   // 回调失败重定向带回的 error（落在授权 iframe 内，顶层刷新二维码）
   const errParam = route.query.error;
   if (typeof errParam === 'string' && errParam) {
-    error.value = errParam;
+    err.value = errParam;
     if (window.self !== window.top) {
       window.top?.location.reload();
       return;
@@ -142,7 +142,7 @@ watchEffect(() => {
       panel_size: ww.WWLoginPanelSizeType.small,
     },
     onLoginFail: (res) => {
-      error.value = `登录失败（${res?.errMsg || res?.errCode}），请重试`;
+      err.value = `登录失败（${res?.errMsg || res?.errCode}），请重试`;
     },
     onLoginSuccess: ({ code }) => {
       if (code) exchangeCode(code, state);
@@ -158,11 +158,11 @@ onBeforeUnmount(() => panelDestroy?.());
   <div class="flex w-full flex-col items-center">
     <a-spin v-if="loading" size="large" style="margin: 4rem 0" />
 
-    <template v-else-if="error">
+    <template v-else-if="err">
       <a-result
         class="p-0"
         status="warning"
-        :sub-title="error"
+        :sub-title="err"
         style="padding: 0"
       >
         <template #extra>
