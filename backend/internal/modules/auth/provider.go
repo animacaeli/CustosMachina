@@ -19,7 +19,7 @@ type IMUser struct {
 // IdentityProvider IM 身份提供商插件契约。
 // AuthorizeURL 返回扫码授权页地址：提供商标准做法是返回"内嵌二维码页"，
 // 前端用 iframe 加载；用户 IM 扫页内二维码后确认，iframe 被重定向到
-// redirect_uri 携带 code+state（企微 wwlogin/sso/qrConnect 等）。
+// redirect_uri 携带 code+state（企微 wwlogin/sso/login 等）。
 // ExchangeCode 用回调 code 换 IM 用户身份；
 // Verify 凭证连通性测试（setup 向导 / 配置页用）。
 type IdentityProvider interface {

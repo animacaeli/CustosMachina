@@ -23,7 +23,7 @@ const qrSrc = useQRCode(qrText, { margin: 1, width: 220 });
 const loading = ref(true);
 const error = ref('');
 const isMock = ref(false);
-// 企微授权地址是官方内嵌二维码页（wwlogin/sso/qrConnect），用 iframe 而非自绘二维码
+// 企微授权地址是官方登录页（wwlogin/sso/login），用 iframe 而非自绘二维码
 const isWecom = computed(() => qrText.value.includes('wwlogin'));
 
 /** 回调落地：?token=access + #refresh=refresh → 保存会话并进入首页。
@@ -119,13 +119,14 @@ onMounted(async () => {
     </template>
 
     <template v-else>
-      <!-- 企微：iframe 嵌官方 qrConnect 二维码页，扫码直达确认页 -->
+      <!-- 企微：iframe 嵌官方 wwlogin/sso/login 授权页（qrConnect 路径官方已 404），
+           扫码确认后 iframe 内 302 回 redirect_uri -->
       <iframe
         v-if="isWecom"
         :src="qrText"
         title="企业微信扫码登录"
-        width="300"
-        height="400"
+        width="320"
+        height="420"
         frameborder="0"
         class="rounded border"
         style="border-radius: 4px"
