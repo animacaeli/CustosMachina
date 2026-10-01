@@ -5,12 +5,13 @@ import { useRouter } from 'vue-router';
 import { preferences } from '@vben/preferences';
 import { useAccessStore } from '@vben/stores';
 
-import { useQRCode } from '@vueuse/integrations/useQRCode';
 import { message } from 'ant-design-vue';
 
 import { loginApi } from '#/api/core';
 import { requestClient } from '#/api/request';
 import { useAuthStore } from '#/store';
+
+import ImQrLogin from './components/im-qr-login.vue';
 
 defineOptions({ name: 'Login' });
 
@@ -18,42 +19,16 @@ const router = useRouter();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
 
-// --- 扫码登录（主视图） ---
-const qrText = ref('');
-const qrSrc = useQRCode(qrText, { margin: 1, width: 200 });
-const qrLoading = ref(true);
-const qrError = ref('');
-const isMock = ref(false);
-
-async function loadQR() {
-  qrLoading.value = true;
-  qrError.value = '';
-  try {
-    const result = await requestClient.get<{ url: string }>(
-      '/auth/qrlogin/url',
-    );
-    qrText.value = result.url;
-    isMock.value = result.url.includes('provider=mock');
-  } catch {
-    qrError.value = '二维码获取失败，请检查 IM 配置';
-  } finally {
-    qrLoading.value = false;
-  }
+// 扫码成功：保存双 token 并进入首页
+async function onQrSuccess(payload: {
+  accessToken: string;
+  refreshToken: string;
+}) {
+  accessStore.setAccessToken(payload.accessToken);
+  accessStore.setRefreshToken(payload.refreshToken);
+  await authStore.fetchUserInfo();
+  await router.push({ path: preferences.app.defaultHomePath, replace: true });
 }
-
-onMounted(async () => {
-  // 首启检测：未初始化跳 setup 向导
-  try {
-    const resp = await requestClient.get<{ needed: boolean }>('/setup/status');
-    if (resp.needed) {
-      await router.replace({ path: '/auth/setup' });
-      return;
-    }
-  } catch {
-    // 检测失败不阻塞登录
-  }
-  await loadQR();
-});
 
 // --- 超管登录（账密） ---
 const showAdmin = ref(false);
@@ -88,6 +63,18 @@ async function adminLogin() {
     adminLoading.value = false;
   }
 }
+
+onMounted(async () => {
+  // 首启检测：未初始化跳 setup 向导
+  try {
+    const resp = await requestClient.get<{ needed: boolean }>('/setup/status');
+    if (resp.needed) {
+      await router.replace({ path: '/auth/setup' });
+    }
+  } catch {
+    // 检测失败不阻塞登录
+  }
+});
 </script>
 
 <template>
@@ -100,39 +87,8 @@ async function adminLogin() {
 
     <!-- 扫码视图 -->
     <template v-if="!showAdmin">
-      <a-spin v-if="qrLoading" size="large" style="margin: 3.5rem 0" />
-      <template v-else-if="qrError">
-        <a-result
-          class="p-0"
-          status="warning"
-          :sub-title="qrError"
-          style="padding: 0"
-        >
-          <template #extra>
-            <a-button type="primary" @click="loadQR">重试</a-button>
-            <a-button @click="showAdmin = true">超管登录</a-button>
-          </template>
-        </a-result>
-      </template>
-      <template v-else>
-        <img
-          v-if="qrSrc"
-          :src="qrSrc"
-          alt="登录二维码"
-          class="rounded border p-2"
-        />
-        <a-alert v-if="isMock" show-icon type="info">
-          <template #message>
-            本地联调（mock 提供商）：
-            <a :href="qrText" class="text-xs">点此模拟扫码确认</a>
-          </template>
-        </a-alert>
-        <a-button size="small" type="link" @click="loadQR">
-          刷新二维码
-        </a-button>
-      </template>
-
-      <a-button @click="showAdmin = true">超管登录</a-button>
+      <ImQrLogin @success="onQrSuccess" />
+      <a-button class="mt-2" @click="showAdmin = true">超管登录</a-button>
     </template>
 
     <!-- 超管账密视图 -->
