@@ -47,8 +47,9 @@ func (h *Handler) qrCallback(c *gin.Context) {
 	state := c.Query("state")
 	result, err := h.svc.HandleQRCallback(c.Request.Context(), code, state)
 	if err != nil {
-		// 回调由 IM 浏览器发起，返回 JSON 无意义，重定向到前端错误态
-		httpx.OK(c, gin.H{"error": err.Error()})
+		// 回调发生在授权 iframe 内，JSON 无处渲染；重定向回前端扫码页展示错误
+		fe := h.svc.FrontendErrorURL(err.Error())
+		c.Redirect(http.StatusFound, fe)
 		return
 	}
 	c.Redirect(http.StatusFound, h.svc.FrontendCallbackURL(result.AccessToken, result.RefreshToken))

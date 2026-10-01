@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { preferences } from '@vben/preferences';
@@ -23,8 +23,12 @@ const qrSrc = useQRCode(qrText, { margin: 1, width: 220 });
 const loading = ref(true);
 const error = ref('');
 const isMock = ref(false);
+// 企微授权地址是官方内嵌二维码页（wwlogin/sso/qrConnect），用 iframe 而非自绘二维码
+const isWecom = computed(() => qrText.value.includes('wwlogin'));
 
-/** 回调落地：?token=access + #refresh=refresh → 保存会话并进入首页 */
+/** 回调落地：?token=access + #refresh=refresh → 保存会话并进入首页。
+ * 授权 iframe 被重定向回本页时 window.self !== window.top，
+ * 登录成功后需把顶层窗口带离登录页（同源可操作）。 */
 async function handleCallbackToken(token: string) {
   loading.value = true;
   try {
@@ -44,7 +48,12 @@ async function handleCallbackToken(token: string) {
       getAccessCodesApi(),
     ]);
     accessStore.setAccessCodes(accessCodes);
-    await router.push({ path: preferences.app.defaultHomePath, replace: true });
+    const home = preferences.app.defaultHomePath;
+    if (window.self !== window.top) {
+      window.top?.location.replace(home);
+      return;
+    }
+    await router.push({ path: home, replace: true });
   } catch {
     error.value = '登录信息获取失败，请重试';
     loading.value = false;
@@ -74,6 +83,17 @@ onMounted(async () => {
     await handleCallbackToken(token);
     return;
   }
+  // 回调失败重定向带回的 error（落在授权 iframe 内，顶层刷新二维码）
+  const errParam = route.query.error;
+  if (typeof errParam === 'string' && errParam) {
+    error.value = errParam;
+    if (window.self !== window.top) {
+      window.top?.location.reload();
+      return;
+    }
+    loading.value = false;
+    return;
+  }
   await loadQR();
 });
 </script>
@@ -99,8 +119,20 @@ onMounted(async () => {
     </template>
 
     <template v-else>
+      <!-- 企微：iframe 嵌官方 qrConnect 二维码页，扫码直达确认页 -->
+      <iframe
+        v-if="isWecom"
+        :src="qrText"
+        title="企业微信扫码登录"
+        width="300"
+        height="400"
+        frameborder="0"
+        class="rounded border"
+        style="border-radius: 4px"
+      ></iframe>
+      <!-- 其他提供商：URL 渲染为二维码图片 -->
       <img
-        v-if="qrSrc"
+        v-else-if="qrSrc"
         :src="qrSrc"
         alt="登录二维码"
         class="rounded border p-2"

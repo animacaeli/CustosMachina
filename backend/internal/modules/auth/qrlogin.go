@@ -214,6 +214,16 @@ func (s *AuthService) FrontendCallbackURL(accessToken, refreshToken string) stri
 	return u.String() + "#refresh=" + refreshToken
 }
 
+// FrontendErrorURL 回调失败时重定向回前端扫码页并带错误信息。
+func (s *AuthService) FrontendErrorURL(msg string) string {
+	base := strings.TrimRight(s.cfg.IM.FrontendURL, "/") + "/auth/qrcode-login"
+	u, _ := url.Parse(base)
+	q := u.Query()
+	q.Set("error", msg)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // --- 提供商配置管理（admin / setup）---
 
 // VerifyProviderConfig 验证给定凭证 JSON（保存前测试）或已存凭证。
