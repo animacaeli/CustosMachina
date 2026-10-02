@@ -36,6 +36,12 @@ func TestRenderTemplates(t *testing.T) {
 	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
 		t.Errorf("vector 配置应指向 O2 地址:\n%s", vectorYAML)
 	}
+	// 自激环过滤：O2 访问日志中间件行不得回流（真机 v0.91 教训：每次 POST
+	// 生成一条新访问日志，无限自我循环）
+	if !strings.Contains(vectorYAML, "middlewares::access_log") ||
+		!strings.Contains(vectorYAML, "inputs: [drop_o2_access_log]") {
+		t.Errorf("vector 模板应过滤 O2 访问日志行:\n%s", vectorYAML)
+	}
 	if !strings.Contains(byName["vector"].Compose, "./vector.yaml:/etc/vector/vector.yaml:ro") {
 		t.Errorf("vector compose 应相对路径挂载同目录配置")
 	}

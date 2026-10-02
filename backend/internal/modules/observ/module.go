@@ -156,10 +156,17 @@ func renderVectorYAML(o2URL string) string {
 	return fmt.Sprintf(`sources:
   docker_logs:
     type: docker_logs
+transforms:
+  # O2 的访问日志中间件行采回 O2 会形成自激环（每次 POST 生成一条新访问
+  # 日志 → 再被采集 → 无限循环）；按模块签名过滤，与其余日志无关
+  drop_o2_access_log:
+    type: filter
+    inputs: [docker_logs]
+    condition: '!contains(to_string(.message) ?? "", "middlewares::access_log")'
 sinks:
   o2:
     type: http
-    inputs: [docker_logs]
+    inputs: [drop_o2_access_log]
     uri: %s
     method: post
     encoding:

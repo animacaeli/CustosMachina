@@ -31,7 +31,14 @@ const (
 
 	platformDestination = "custos-platform" // 平台专用 O2 destination 名
 	platformTemplate    = "custos-platform-tpl"
+)
 
+// platformTemplateBody 平台模板体：全部值加引号——变量未被 O2 渲染、
+// 留下 "{rows_count}" 占位符时整体仍是合法 JSON（真机 v0.91 教训），
+// webhook 侧 flexInt 与原文兜底负责消化其余形态。
+const platformTemplateBody = `{"alert_name":"{alert_name}","stream_name":"{stream_name}","org_name":"{org_name}","alert_type":"{alert_type}","trigger_time":"{trigger_time}","rows_count":"{rows_count}"}`
+
+const (
 	// 同步状态
 	SyncPending = "pending"
 	SyncOK      = "synced"
@@ -285,7 +292,12 @@ func (s *Service) deleteO2AlertQuiet(ctx context.Context, name string) {
 	if !ok {
 		return
 	}
-	_, err := o2Request(ctx, cfg, http.MethodDelete, fmt.Sprintf("/api/%s/alerts/%s", cfg.Org, name), nil)
+	// DELETE 路径参数同样是 alert_id（真机教训：传名称恒 404，残留孤儿告警）
+	id := s.o2AlertIDByName(ctx, cfg, name)
+	if id == "" {
+		return
+	}
+	_, err := o2Request(ctx, cfg, http.MethodDelete, fmt.Sprintf("/api/v2/%s/alerts/%s", cfg.Org, id), nil)
 	if err != nil && !strings.Contains(err.Error(), "404") {
 		logger.Warnf("[observ] O2 删除告警失败 %q: %v", name, err)
 	}
@@ -324,12 +336,41 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 		"description":  a.Description,
 		"tz_offset":    480, // Asia/Shanghai
 	}
-	_, err := o2Request(ctx, cfg, http.MethodPost, fmt.Sprintf("/api/%s/alerts", cfg.Org), body)
-	if err != nil && strings.Contains(err.Error(), "already exist") {
-		// upsert：已存在则 PUT 覆盖
-		_, err = o2Request(ctx, cfg, http.MethodPut, fmt.Sprintf("/api/%s/alerts/%s", cfg.Org, a.Name), body)
+	// v0.91+ 的 alerts 在 /api/v2（destinations/templates 在无版本前缀——
+	// 混合形态见 docs/research-o2-alerts.md 真机补充）。
+	// 真机语义：POST 重名不报错而是静默创建重复条目，upsert 必须先按名
+	// 反查 alert_id（PUT/DELETE 的路径参数均为 id）——命中则 PUT，未命中才 POST
+	if id := s.o2AlertIDByName(ctx, cfg, a.Name); id != "" {
+		_, err := o2Request(ctx, cfg, http.MethodPut, fmt.Sprintf("/api/v2/%s/alerts/%s", cfg.Org, id), body)
+		return err
 	}
+	_, err := o2Request(ctx, cfg, http.MethodPost, fmt.Sprintf("/api/v2/%s/alerts", cfg.Org), body)
 	return err
+}
+
+// o2AlertIDByName 列表反查告警的 alert_id（PUT/DELETE 均需 id）；同名多条
+// 返回最新一条（同名校验在平台侧，O2 侧出现同名属异常残留）。
+func (s *Service) o2AlertIDByName(ctx context.Context, cfg *O2Config, name string) string {
+	b, err := o2Request(ctx, cfg, http.MethodGet, fmt.Sprintf("/api/v2/%s/alerts", cfg.Org), nil)
+	if err != nil {
+		return ""
+	}
+	var out struct {
+		List []struct {
+			AlertID string `json:"alert_id"`
+			Name    string `json:"name"`
+		} `json:"list"`
+	}
+	if json.Unmarshal(b, &out) != nil {
+		return ""
+	}
+	id := ""
+	for _, a := range out.List {
+		if a.Name == name {
+			id = a.AlertID
+		}
+	}
+	return id
 }
 
 // ensureO2Infra 幂等确保平台专用 destination 与模板存在。
@@ -345,15 +386,21 @@ func (s *Service) ensureO2Infra(ctx context.Context, cfg *O2Config) error {
 		return fmt.Errorf("webhook 共享密钥缺失（重新保存 O2 连接配置以生成）")
 	}
 
-	// template（Handlebars：默认变量输出，平台侧解析）
+	// template：单大括号替换（真机实测 v0.91 双大括号只部分渲染）
 	tplBody := map[string]any{
 		"name":       platformTemplate,
-		"body":       `{"alert_name":"{{alert_name}}","stream_name":"{{stream_name}}","org_name":"{{org_name}}","alert_type":"{{alert_type}}","trigger_time":"{{trigger_time}}","rows_count":{{rows_count}},"rows":{{{rows}}}}`,
+		"body":       platformTemplateBody,
 		"is_default": false,
 	}
-	if _, err := o2Request(ctx, cfg, http.MethodPost, fmt.Sprintf("/api/%s/alerts/templates", cfg.Org), tplBody); err != nil &&
-		!strings.Contains(err.Error(), "already exist") {
-		return fmt.Errorf("template: %w", err)
+	if _, err := o2Request(ctx, cfg, http.MethodPost, fmt.Sprintf("/api/%s/alerts/templates", cfg.Org), tplBody); err != nil {
+		if !strings.Contains(err.Error(), "already exist") {
+			return fmt.Errorf("template: %w", err)
+		}
+		// 已存在也要 PUT 覆盖——模板体演进（如双大括号→单大括号修复）才能下发
+		if _, err2 := o2Request(ctx, cfg, http.MethodPut,
+			fmt.Sprintf("/api/%s/alerts/templates/%s", cfg.Org, platformTemplate), tplBody); err2 != nil {
+			return fmt.Errorf("template: %w", err2)
+		}
 	}
 
 	// destination（POST 已存在则 PUT 覆盖——URL/token 可能轮换）

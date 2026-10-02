@@ -120,3 +120,17 @@ server {
 - 平台限速/审计按 `ClientIP` 取值，gin 可信代理默认 `127.0.0.1,::1,10/8,172.16/12,192.168/16`（`CUSTOS_HTTP_TRUSTED_PROXIES` 可覆盖）。
 - **宿主机 nginx 反代到容器 80 时必须设置** `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`——否则平台看到的来源是 docker 网关 IP，登录限速会把全部用户聚成一个桶。
 - CORS 默认同源（不回 CORS 头）；跨域部署显式配置 `CUSTOS_CORS_ORIGINS` 白名单。
+
+## 七、蓝绿适用性边界（真机 dogfood 教训，2026-10-02）
+
+- **蓝绿要求双颜色域并存**：compose 里固定 `container_name` 或固定宿主端口映射
+  （如 `5080:5080`）的服务**不适合蓝绿**——新颜色域创建容器即与活跃域冲突
+  （真机实例：OpenObserve 单实例 5080 直连，green 域 `Conflict: container name
+  "/obs-openobserve" already in use`，发布失败但失败域自动销毁、活跃域无损）。
+- 这类"直连宿主端口的单实例服务"用**原位更新**：资源管理 → compose 部署
+  （同名项目 `up -d --force-recreate`，同卷保数据），或为服务补 healthcheck
+  并走 nginx 反代后迁回蓝绿。
+- compose 部署 `--force-recreate` 是强制的：bind 挂载的伴随配置（vector.yaml 等）
+  改动依赖容器重建才生效。
+- 日志采集类组件（vector）过滤 `middlewares::access_log` 签名行是默认模板行为：
+  采集目标（O2）自身的访问日志回流会形成每秒一条的无限自激环。

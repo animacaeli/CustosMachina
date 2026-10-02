@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,8 +18,23 @@ import (
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 )
 
+// 记录 v2 PUT 的目标路径（验证按 alert_id 而非名称 upsert）
+var (
+	putMu    sync.Mutex
+	putPaths []string
+)
+
+func recordedPutPaths() []string {
+	putMu.Lock()
+	defer putMu.Unlock()
+	return append([]string(nil), putPaths...)
+}
+
 func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 	t.Helper()
+	putMu.Lock()
+	putPaths = nil
+	putMu.Unlock()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +47,7 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	var tplCalls, destCalls, alertCalls int64
+	var tplCalls, destCalls, alertCalls, putCalls int64
 	// 假 O2：记录 template/destination/alert 三类调用，模拟 "already exist" upsert 语义
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/default/alerts/templates", func(w http.ResponseWriter, r *http.Request) {
@@ -56,8 +72,24 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 	mux.HandleFunc("/api/default/alerts/destinations/custos-platform", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	})
-	mux.HandleFunc("/api/default/alerts", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v2/default/alerts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { // upsert 前按名反查：写入过才有条目
+			w.Header().Set("Content-Type", "application/json")
+			list := "[]"
+			if atomic.LoadInt64(&alertCalls) > 0 {
+				list = `[{"alert_id":"fake-id-1","name":"err-spike"}]`
+			}
+			_, _ = w.Write([]byte(`{"list":` + list + `}`))
+			return
+		}
 		atomic.AddInt64(&alertCalls, 1)
+		w.WriteHeader(200)
+	})
+	mux.HandleFunc("/api/v2/default/alerts/", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&putCalls, 1)
+		putMu.Lock()
+		putPaths = append(putPaths, r.URL.Path)
+		putMu.Unlock()
 		w.WriteHeader(200)
 	})
 	mux.HandleFunc("/api/default/alerts/", func(w http.ResponseWriter, r *http.Request) {
@@ -177,5 +209,91 @@ func TestWebhookTokenGuard(t *testing.T) {
 	h.o2AlertWebhook(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("错误 token 应 401, got %d", w.Code)
+	}
+}
+
+// 真机 v0.91 教训回归：模板未渲染（变量保留占位符）时发送体必须仍是合法 JSON。
+func TestTemplateBodyValidWhenUnrendered(t *testing.T) {
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(platformTemplateBody), &probe); err != nil {
+		t.Fatalf("未渲染形态的模板体应可被 JSON 解析: %v\n%s", err, platformTemplateBody)
+	}
+	if strings.Contains(platformTemplateBody, "{{") {
+		t.Error("模板不应使用双大括号（真机只部分渲染）")
+	}
+}
+
+// JSON 非法（如旧形态双大括号残留）时 webhook 兜底：提取 alert_name、原文进通知。
+func TestWebhookFallbackParse(t *testing.T) {
+	svc, _, _, _ := alertsTestEnv(t)
+	h := NewHandler(svc)
+	cfg, _ := svc.o2Config(context.Background())
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/observ/alerts/webhook",
+		strings.NewReader(`{"alert_name":"oops-spike","rows_count":{{rows_count}}`))
+	c.Request.Header.Set("X-Custos-Token", cfg.Token)
+	h.o2AlertWebhook(c)
+	if w.Code != http.StatusOK {
+		t.Errorf("兜底路径应 200, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// flexInt 兼容数字/带引号数字/占位符。
+func TestFlexInt(t *testing.T) {
+	cases := map[string]int{
+		`{"rows_count":7}`:                  7,
+		`{"rows_count":"12"}`:               12,
+		`{"rows_count":"{rows_count}"}`:     0,
+		`{"rows_count":"1790947406259743"}`: 1790947406259743,
+	}
+	for body, want := range cases {
+		var p o2AlertPayload
+		if err := json.Unmarshal([]byte(body), &p); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if int(p.RowsCount) != want {
+			t.Errorf("%s => %d, want %d", body, p.RowsCount, want)
+		}
+	}
+}
+
+// 重名 upsert 真机语义回归：POST 已存在 → 反查 alert_id → PUT 到 id 路径
+// （传名称会被 O2 当新建处理，产生同名重复告警——v0.91 真机教训）。
+func TestAlertUpsertByID(t *testing.T) {
+	svc, _, _, _ := alertsTestEnv(t)
+	ctx := context.Background()
+	a, err := svc.CreateAlert(ctx, SaveAlertInput{
+		Name: "err-spike", StreamName: "default", SQL: "select count(*) from \"default\"",
+		Period: 5, Operator: ">=", Threshold: 3, Frequency: 1, Silence: 10,
+		Enabled: true, Level: "warn", Description: "测试",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var got Alert
+		svc.db.First(&got, a.ID)
+		if got.SyncStatus == SyncOK {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	svc.SyncAlert(ctx, a.ID)
+	var got2 Alert
+	svc.db.First(&got2, a.ID)
+	if got2.SyncStatus != SyncOK {
+		t.Fatalf("重名同步应走 PUT 成功: status=%s err=%s", got2.SyncStatus, got2.SyncError)
+	}
+	paths := recordedPutPaths()
+	if len(paths) == 0 {
+		t.Fatal("重名同步应触发 PUT 覆盖")
+	}
+	for _, p := range paths {
+		if !strings.Contains(p, "fake-id-1") {
+			t.Errorf("PUT 应按 alert_id 定位（真机 O2 语义），got path %s", p)
+		}
 	}
 }

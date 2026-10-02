@@ -362,11 +362,12 @@ func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yaml
 	if err != nil {
 		return "", "", err
 	}
-	// 固定目录：同名重新部署 = 覆盖更新（旧文件自动备份）；目录名有白名单，直接拼接安全
+	// 固定目录：同名重新部署 = 覆盖更新（旧文件自动备份）；目录名有白名单，直接拼接安全。
+	// --force-recreate：bind 挂载的伴随配置（如 vector.yaml）改动依赖容器重建才生效
 	dir := deployRoot + "/" + name
 	const deployCmd = `mkdir -p %q && [ -f %q/compose.yaml ] && cp %q/compose.yaml %q/compose.yaml.bak.$(date +%%Y%%m%%d%%H%%M%%S) || true; ` +
 		`cat > %q/compose.yaml && ` +
-		`cd %q && docker compose -p %q -f compose.yaml up -d --remove-orphans 2>&1; ` +
+		`cd %q && docker compose -p %q -f compose.yaml up -d --force-recreate --remove-orphans 2>&1; ` +
 		`rc=$?; docker compose -p %q -f compose.yaml ps 2>&1; exit $rc`
 	cmd := fmt.Sprintf(deployCmd, dir, dir, dir, dir, dir, dir, name, name)
 	out, err := sshRunOutputWithStdin(srv, cred, cmd, yamlContent, 3*time.Minute)
