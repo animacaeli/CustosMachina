@@ -35,6 +35,17 @@ const routes: RouteRecordRaw[] = [
           title: '角色权限',
         },
       },
+      {
+        name: 'SystemBackup',
+        path: 'backup',
+        component: () => import('#/views/system/backup.vue'),
+        meta: {
+          icon: 'lucide:archive',
+          // admin 管理；ops 只读+手动触发（对齐 rbac v9）
+          authority: ['superadmin', 'admin', 'ops'],
+          title: '备份恢复',
+        },
+      },
     ],
   },
   // 管理后台：仅 admin，不进菜单，从头像下拉进入；平台级配置都在这里

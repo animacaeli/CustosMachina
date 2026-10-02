@@ -9,6 +9,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/auth"
+	"github.com/custos-machina/backend/internal/modules/backup"
 	"github.com/custos-machina/backend/internal/modules/canary"
 	"github.com/custos-machina/backend/internal/modules/ci"
 	cronmod "github.com/custos-machina/backend/internal/modules/cron"
@@ -32,6 +33,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models := identity.Models()
 	models = append(models, resources.Models()...)
 	models = append(models, notify.Models()...)
+	models = append(models, backup.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -69,6 +71,9 @@ func ProvideModules(
 	cronH *cronmod.Handler,
 	cronSvc *cronmod.Service,
 	cronSched *cronmod.Scheduler, // 拉起 cron:sched 到点扫描任务（哨兵依赖）
+	backupH *backup.Handler,
+	backupSvc *backup.Service,
+	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
 	slotsSvc *slots.Service,
 	ciSvc *ci.Service,
 	ciPoller *ci.Poller, // 拉起 ci:poll 状态轮询任务（哨兵依赖）
@@ -87,10 +92,11 @@ func ProvideModules(
 	canarySvc.SetColorGetter(releaseSvc)
 	// 桥接：cron 的 compose 载体任务跟随蓝绿活跃颜色域（同注入模式解构造环）
 	cronSvc.SetDomainResolver(releaseSvc)
-	// 桥接：cron 任务失败 / observ 部署失败推运维群（横切通知能力）
+	// 桥接：cron 任务失败 / observ 部署失败 / 备份失败推统一通知路由
 	cronSvc.SetNotifier(notifySvc)
 	observSvc.SetNotifier(notifySvc)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH}
+	backupSvc.SetNotifier(notifySvc)
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -110,6 +116,7 @@ var moduleSet = wire.NewSet(
 	rbac.Set,
 	resources.Set,
 	notify.Set,
+	backup.Set,
 	projects.Set,
 	ci.Set,
 	release.Set,
@@ -121,6 +128,7 @@ var moduleSet = wire.NewSet(
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
 	// cron 的 Runner（SSH 执行 + 事件审计）同样由 resources.Service 实现
 	wire.Bind(new(cronmod.Runner), new(*resources.Service)),
+	wire.Bind(new(backup.SSHExecutor), new(*resources.Service)),
 	// release 的 deployer/confRenderer 接口化便于测试，实现仍是 resources/canary
 	wire.Bind(new(release.Deployer), new(*resources.Service)),
 	wire.Bind(new(release.ConfRenderer), new(*canary.Service)),
