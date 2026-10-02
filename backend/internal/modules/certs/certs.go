@@ -317,8 +317,9 @@ func (s *Service) issue(ctx context.Context, c *Cert) error {
 		return err
 	}
 
-	// 部署：上传 → nginx -t → reload
-	if err := s.deploy(ctx, c, res); err != nil {
+	// 部署：上传 → nginx -t → reload（脱离请求 ctx：签发后部署被客户端
+	// 断开拦腰截断是最坏情形——证书已耗限额却没落盘）
+	if err := s.deploy(context.WithoutCancel(ctx), c, res); err != nil {
 		s.markResult(c, StatusFailed, c.ExpiresAt, fmt.Errorf("已签发但部署失败: %w", err))
 		s.notifyFailure(c, err)
 		return err

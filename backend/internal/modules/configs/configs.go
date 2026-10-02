@@ -341,7 +341,9 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 
 	actionNote := "仅落盘"
 	if f.ApplyAction != ApplyNone {
-		if err := s.applyAction(ctx, &f); err != nil {
+		// 生效动作脱离请求 ctx：重启容器等动作最长数分钟，
+		// HTTP 断开不得把容器重启拦在半途
+		if err := s.applyAction(context.WithoutCancel(ctx), &f); err != nil {
 			s.exec.RecordEvent(ctx, f.ServerID, "config_deploy",
 				fmt.Sprintf("配置 %q 已落盘但生效动作失败: %v", f.Name, err))
 			return fmt.Errorf("文件已落盘，但生效动作失败: %w", err)

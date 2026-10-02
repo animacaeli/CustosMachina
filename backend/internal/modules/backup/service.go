@@ -329,6 +329,9 @@ func (s *Service) dataDir() string {
 }
 
 func (s *Service) execute(ctx context.Context, j *Job, trigger string) (*Run, error) {
+	// 备份全程脱离请求 ctx：手动触发时客户端断开（页面关闭/网关超时）
+	// 不得中断大文件打包与 S3 上传——结果落 run 历史，成败均可查询
+	ctx = context.WithoutCancel(ctx)
 	run := &Run{JobID: j.ID, JobName: j.Name, Trigger: trigger, Status: RunRunning, StartedAt: time.Now()}
 	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
 		return nil, err

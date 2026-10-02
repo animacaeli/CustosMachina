@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
@@ -81,7 +82,7 @@ func (d *DigestService) MaybeDigest(ctx context.Context, alertName, alertBody st
 		if pack.Redactions > 0 {
 			detail += fmt.Sprintf("\n\n（上下文供给时 DLP 拦截 %d 处敏感项）", pack.Redactions)
 		}
-		d.notifier.NotifyEvent(c, "ai_digest", "info",
+		d.notifier.NotifyEvent(c, notify.SourceAIDigest, notify.LevelInfo,
 			"o2-"+alertName,
 			"AI 诊断摘要："+alertName,
 			"【AI 建议（参考，非结论）】\n"+detail)

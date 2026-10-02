@@ -114,3 +114,9 @@ server {
    需要长期留痕的统计结果请在脚本内自行落库/落文件。
 7. **失败重试**：任务可配 0-3 次失败重试（间隔 5 分钟）；错失（平台不可用
    期间）仍为跳过不补跑，两者语义不同。
+
+## 六、外层代理与可信链（P5 M1 起）
+
+- 平台限速/审计按 `ClientIP` 取值，gin 可信代理默认 `127.0.0.1,::1,10/8,172.16/12,192.168/16`（`CUSTOS_HTTP_TRUSTED_PROXIES` 可覆盖）。
+- **宿主机 nginx 反代到容器 80 时必须设置** `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`——否则平台看到的来源是 docker 网关 IP，登录限速会把全部用户聚成一个桶。
+- CORS 默认同源（不回 CORS 头）；跨域部署显式配置 `CUSTOS_CORS_ORIGINS` 白名单。
