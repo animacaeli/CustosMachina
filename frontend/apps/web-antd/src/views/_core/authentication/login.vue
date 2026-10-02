@@ -79,21 +79,18 @@ onMounted(async () => {
 
 <template>
   <div class="flex w-full max-w-[380px] flex-col items-center">
-    <!-- 欢迎语 -->
-    <h2 class="mb-1 text-2xl font-semibold">欢迎回来 👋🏻</h2>
-    <p class="text-muted-foreground mb-6 text-sm">
-      请使用企业 IM 扫一扫登录 CustosMachina
-    </p>
-
-    <!-- 扫码视图 -->
+    <!-- 扫码视图（说明文案在 ImQrLogin 内按提供商显示） -->
     <template v-if="!showAdmin">
+      <h2 class="mb-4 self-start text-2xl font-semibold">欢迎回来 👋🏻</h2>
       <ImQrLogin @success="onQrSuccess" />
       <a-button class="mt-2" @click="showAdmin = true">超管登录</a-button>
     </template>
 
     <!-- 超管账密视图 -->
     <template v-else>
-      <a-form layout="vertical" @submit.prevent style="margin-top: 1rem">
+      <h2 class="mb-1 text-2xl font-semibold">管理员登录</h2>
+      <p class="text-muted-foreground mb-6 text-sm">仅平台管理员使用</p>
+      <a-form class="w-full" layout="vertical" @submit.prevent>
         <a-form-item label="登录账号" required>
           <a-input
             v-model:value="form.username"

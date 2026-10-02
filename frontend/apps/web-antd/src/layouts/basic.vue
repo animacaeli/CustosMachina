@@ -15,7 +15,6 @@ import {
 import { preferences, usePreferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 
-import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
@@ -37,20 +36,12 @@ const isAdmin = computed(() => {
 });
 
 const menus = computed(() => {
+  // 平台级配置入口仅对超管显示（个人中心等页面未建设，不留死入口）
   const list: Array<{
     handler: () => void;
     icon: any;
     text: string;
-  }> = [
-    {
-      handler: () => {
-        router.push({ name: 'Profile' });
-      },
-      icon: 'lucide:user',
-      text: $t('page.auth.profile'),
-    },
-  ];
-  // 平台级配置入口仅对超管显示
+  }> = [];
   if (isAdmin.value) {
     list.push({
       handler: () => {

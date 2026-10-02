@@ -8,6 +8,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       icon: 'lucide:layers',
       order: 4,
+      authority: ['superadmin', 'admin', 'ops', 'dev'],
       title: '环境管理',
     },
     name: 'Envs',

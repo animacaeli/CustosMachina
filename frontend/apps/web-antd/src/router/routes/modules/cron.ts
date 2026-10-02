@@ -8,6 +8,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       icon: 'lucide:calendar-clock',
       order: 6,
+      authority: ['superadmin', 'admin', 'ops', 'dev'],
       title: '定时任务',
     },
     name: 'Cron',

@@ -128,28 +128,27 @@ defineExpose({ reload: load });
     </template>
 
     <template v-else>
-      <!-- 企微：官方 JSSDK 内嵌登录面板，扫码直达确认页 -->
+      <!-- 企微：官方 JSSDK 内嵌登录面板，面板内自带扫码说明文案 -->
       <div v-if="panelParams" ref="panelEl" class="rounded border"></div>
-      <!-- 其他提供商：URL 渲染为二维码图片 -->
-      <img
-        v-else-if="qrSrc"
-        :src="qrSrc"
-        alt="登录二维码"
-        class="rounded border p-2"
-      />
-      <div class="text-muted-foreground mt-3 text-sm">
-        请使用企业微信扫一扫登录
-      </div>
-      <a-alert
-        v-if="isMock"
-        message="本地联调（mock 提供商）"
-        type="info"
-        show-icon
-      >
-        <template #description>
-          <a :href="qrText" class="break-all text-xs">点此模拟扫码确认登录</a>
-        </template>
-      </a-alert>
+      <!-- 其他提供商：URL 渲染为二维码图片，说明用 IM 中性表述 -->
+      <template v-else-if="qrSrc">
+        <img :src="qrSrc" alt="登录二维码" class="rounded border p-2" />
+        <div class="text-muted-foreground mt-3 text-sm">
+          请使用企业 IM 扫一扫登录
+        </div>
+        <a-alert
+          v-if="isMock"
+          message="本地联调（mock 提供商）"
+          type="info"
+          show-icon
+        >
+          <template #description>
+            <a :href="qrText" class="break-all text-xs">
+              点此模拟扫码确认登录
+            </a>
+          </template>
+        </a-alert>
+      </template>
       <a-button size="small" type="link" @click="load"> 刷新二维码 </a-button>
     </template>
   </div>
