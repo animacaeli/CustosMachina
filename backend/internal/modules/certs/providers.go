@@ -11,6 +11,7 @@ import (
 	"github.com/go-acme/lego/v4/providers/dns/gandi"
 	"github.com/go-acme/lego/v4/providers/dns/godaddy"
 	"github.com/go-acme/lego/v4/providers/dns/huaweicloud"
+	"github.com/go-acme/lego/v4/providers/dns/tencentcloud"
 )
 
 // buildDNSProvider 按名构造 lego DNS provider；凭证经环境变量注入
@@ -27,6 +28,8 @@ func buildDNSProvider(name string, creds map[string]string) (challenge.Provider,
 		return dnspod.NewDNSProvider()
 	case "huaweicloud":
 		return huaweicloud.NewDNSProvider()
+	case "tencentcloud": // 腾讯云 API 密钥（SecretId/SecretKey），管理 DNSPod 解析
+		return tencentcloud.NewDNSProvider()
 	case "gandi":
 		return gandi.NewDNSProvider()
 	case "godaddy":

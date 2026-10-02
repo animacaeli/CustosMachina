@@ -105,7 +105,7 @@ func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }
 
 var validProviders = map[string]bool{
 	"alidns": true, "cloudflare": true, "dnspod": true,
-	"huaweicloud": true, "gandi": true, "godaddy": true,
+	"huaweicloud": true, "gandi": true, "godaddy": true, "tencentcloud": true,
 }
 
 type SaveInput struct {
@@ -127,7 +127,7 @@ func (s *Service) validate(in SaveInput) error {
 		return fmt.Errorf("ACME 账号邮箱不合法")
 	}
 	if !validProviders[in.DNSProvider] {
-		return fmt.Errorf("暂不支持的 DNS provider %q（支持 alidns/cloudflare/dnspod/huaweicloud/gandi/godaddy）", in.DNSProvider)
+		return fmt.Errorf("暂不支持的 DNS provider %q（支持 alidns/cloudflare/dnspod/tencentcloud/huaweicloud/gandi/godaddy）", in.DNSProvider)
 	}
 	if in.CADirURL != "" && !strings.HasPrefix(in.CADirURL, "https://") {
 		return fmt.Errorf("CA 目录 URL 须为 https://")

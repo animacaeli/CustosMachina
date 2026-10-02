@@ -26,6 +26,10 @@ const PROVIDER_ENVS: Record<string, Array<{ key: string; label: string }>> = {
   ],
   cloudflare: [{ key: 'CF_DNS_API_TOKEN', label: 'API Token' }],
   dnspod: [{ key: 'DNSPOD_API_KEY', label: 'API Key（id,token）' }],
+  tencentcloud: [
+    { key: 'TENCENTCLOUD_SECRET_ID', label: '腾讯云 SecretId' },
+    { key: 'TENCENTCLOUD_SECRET_KEY', label: '腾讯云 SecretKey' },
+  ],
   huaweicloud: [
     { key: 'HUAWEICLOUD_ACCESS_KEY_ID', label: 'AK' },
     { key: 'HUAWEICLOUD_SECRET_ACCESS_KEY', label: 'SK' },
