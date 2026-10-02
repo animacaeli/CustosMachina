@@ -122,7 +122,26 @@ func (w *WeComProvider) ExchangeCode(ctx context.Context, code string) (*IMUser,
 	if resp.UserID == "" {
 		return nil, errors.New("非企业成员（缺少 userid），无法登录")
 	}
-	return &IMUser{IMUserID: resp.UserID}, nil
+	return &IMUser{IMUserID: resp.UserID, IMName: w.userName(ctx, token, resp.UserID)}, nil
+}
+
+// userName 拉成员姓名（中文显示名）作为平台侧显示名。
+// 需应用有通讯录读取权限；无权限或用户不在可见范围时降级返回 userid，
+// 不阻塞登录。60xxx 之外常见 48002/60111 均属"拿不到详情"，静默降级。
+func (w *WeComProvider) userName(ctx context.Context, token, userid string) string {
+	var resp struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+		Name    string `json:"name"`
+	}
+	if err := wecomGet(ctx, "https://qyapi.weixin.qq.com/cgi-bin/user/get",
+		map[string]string{"access_token": token, "userid": userid}, &resp); err != nil {
+		return ""
+	}
+	if resp.ErrCode != 0 || resp.Name == "" {
+		return ""
+	}
+	return resp.Name
 }
 
 // Verify 用 gettoken 验证凭证连通性。

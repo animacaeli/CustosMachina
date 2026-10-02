@@ -86,9 +86,9 @@ onMounted(async () => {
   <div class="flex w-full max-w-[380px] flex-col items-center">
     <!-- 扫码视图（说明文案在 ImQrLogin 内按提供商显示） -->
     <template v-if="!showAdmin">
-      <h2 class="mb-4 self-start text-2xl font-semibold">欢迎回来 👋🏻</h2>
+      <h2 class="mb-6 text-2xl font-semibold">欢迎回来 👋🏻</h2>
       <ImQrLogin @success="onQrSuccess" />
-      <a-button class="mt-2" @click="showAdmin = true">超管登录</a-button>
+      <a-button class="mt-4" @click="showAdmin = true">超管登录</a-button>
     </template>
 
     <!-- 超管账密视图 -->
@@ -118,7 +118,12 @@ onMounted(async () => {
           登 录
         </a-button>
       </a-form>
-      <a-button size="small" type="link" @click="showAdmin = false">
+      <a-button
+        size="small"
+        type="link"
+        class="mt-3"
+        @click="showAdmin = false"
+      >
         ← 返回扫码登录
       </a-button>
     </template>

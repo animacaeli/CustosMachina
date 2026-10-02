@@ -213,6 +213,13 @@ func (s *AuthService) HandleQRCallback(ctx context.Context, code, state string) 
 		if err != nil {
 			return nil, fmt.Errorf("绑定的用户不存在: %w", err)
 		}
+		// IM 侧姓名变了（或首次拿到中文名）时同步平台显示名
+		if imUser.IMName != "" && u.DisplayName != imUser.IMName {
+			u.DisplayName = imUser.IMName
+			if err := s.users.Update(ctx, u); err != nil {
+				return nil, fmt.Errorf("同步显示名失败: %w", err)
+			}
+		}
 	} else {
 		// JIT 注册（FR2.2）：首次扫码自动建用户，默认 guest
 		display := imUser.IMName

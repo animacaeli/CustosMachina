@@ -152,7 +152,9 @@ defineExpose({ reload: load });
           </template>
         </a-alert>
       </template>
-      <a-button size="small" type="link" @click="load"> 刷新二维码 </a-button>
+      <a-button size="small" type="link" class="mt-2" @click="load">
+        刷新二维码
+      </a-button>
     </template>
   </div>
 </template>
