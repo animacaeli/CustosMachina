@@ -104,6 +104,11 @@ var defaultPolicies = [][]string{
 	// v8：统一通知路由规则管理（P5 M1，仅 admin；投递走服务端事件，无 API 操作面）
 	{"admin", "/notify-rules", "GET|POST|PUT|DELETE"},
 	{"admin", "/notify-rules/*", "GET|PUT|DELETE|POST"},
+	// v12：证书管理（P5 M5）——admin/ops（DNS 凭证属密钥管理，dev 不可见）
+	{"admin", "/certs", "GET|POST|PUT|DELETE"},
+	{"admin", "/certs/*", "GET|PUT|DELETE|POST"},
+	{"ops", "/certs", "GET|POST|PUT|DELETE"},
+	{"ops", "/certs/*", "GET|PUT|DELETE|POST"},
 	// v11：配置文件管理（P5 M4）——admin/ops 全量（明文 reveal 亦 admin/ops，落审计），dev 只读
 	{"admin", "/config-files", "GET|POST|PUT|DELETE"},
 	{"admin", "/config-files/*", "GET|PUT|DELETE|POST"},
@@ -197,7 +202,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "11" // v11：config-files 资源点（P5 M4 配置文件管理）；v10：observ 告警（M3）；v9：backup-jobs（M2）；v8：notify-rules（M1）
+const policySeedVersion = "12" // v12：certs 资源点（P5 M5 证书续期）；v11：config-files（M4）；v10：observ 告警（M3）；v9：backup-jobs（M2）；v8：notify-rules（M1）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -318,6 +323,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v10→v11：config-files 对 admin/ops/dev 都是新资源点
 		if len(ps) > 0 && oldVersion == "10" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v11→v12：certs 对 admin/ops 是新资源点
+		if len(ps) > 0 && oldVersion == "11" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

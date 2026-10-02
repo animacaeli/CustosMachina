@@ -36,6 +36,16 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        name: 'SystemCerts',
+        path: 'certs',
+        component: () => import('#/views/system/certs.vue'),
+        meta: {
+          icon: 'lucide:shield',
+          authority: ['superadmin', 'admin', 'ops'],
+          title: '证书续期',
+        },
+      },
+      {
         name: 'SystemBackup',
         path: 'backup',
         component: () => import('#/views/system/backup.vue'),

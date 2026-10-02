@@ -12,6 +12,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/backup"
 	"github.com/custos-machina/backend/internal/modules/canary"
+	"github.com/custos-machina/backend/internal/modules/certs"
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/configs"
 	"github.com/custos-machina/backend/internal/modules/cron"
@@ -96,7 +97,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	backupHandler := backup.NewHandler(backupService)
 	configsService := configs.NewService(db, resourcesService, cipher)
 	configsHandler := configs.NewHandler(configsService)
-	backupScheduler, cleanup5, err := backup.NewScheduler(backupService)
+	certsService := certs.NewService(db, cipher, resourcesService)
+	certsHandler := certs.NewHandler(certsService)
+	certsScheduler, cleanup5, err := certs.NewScheduler(certsService)
 	if err != nil {
 		cleanup4()
 		cleanup3()
@@ -104,7 +107,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	poller, cleanup6, err := ci.NewPoller(ciService)
+	backupScheduler, cleanup6, err := backup.NewScheduler(backupService)
 	if err != nil {
 		cleanup5()
 		cleanup4()
@@ -113,7 +116,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	sweeper, cleanup7, err := slots.NewSweeper(slotsService)
+	poller, cleanup7, err := ci.NewPoller(ciService)
 	if err != nil {
 		cleanup6()
 		cleanup5()
@@ -123,7 +126,18 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
+	sweeper, cleanup8, err := slots.NewSweeper(slotsService)
+	if err != nil {
+		cleanup7()
+		cleanup6()
+		cleanup5()
+		cleanup4()
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
@@ -133,6 +147,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	engine := server.NewEngine(configConfig, modules, authMiddleware, handlerFunc)
 	serverServer := server.New(configConfig, engine)
 	return serverServer, func() {
+		cleanup8()
 		cleanup7()
 		cleanup6()
 		cleanup5()

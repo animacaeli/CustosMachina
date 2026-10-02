@@ -11,6 +11,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/backup"
 	"github.com/custos-machina/backend/internal/modules/canary"
+	"github.com/custos-machina/backend/internal/modules/certs"
 	"github.com/custos-machina/backend/internal/modules/ci"
 	"github.com/custos-machina/backend/internal/modules/configs"
 	cronmod "github.com/custos-machina/backend/internal/modules/cron"
@@ -37,6 +38,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, backup.Models()...)
 	models = append(models, observ.Models()...)
 	models = append(models, configs.Models()...)
+	models = append(models, certs.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -77,6 +79,9 @@ func ProvideModules(
 	cronSched *cronmod.Scheduler, // 拉起 cron:sched 到点扫描任务（哨兵依赖）
 	backupH *backup.Handler,
 	configsH *configs.Handler,
+	certsH *certs.Handler,
+	certsSvc *certs.Service,
+	certsSched *certs.Scheduler, // 拉起 certs:sched 到期扫描（哨兵依赖）
 	backupSvc *backup.Service,
 	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
 	slotsSvc *slots.Service,
@@ -102,7 +107,8 @@ func ProvideModules(
 	observSvc.SetNotifier(notifySvc)
 	backupSvc.SetNotifier(notifySvc)
 	observSvc.SetPublicURL(cfg.IM.PublicURL)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH}
+	certsSvc.SetNotifier(notifySvc)
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -124,6 +130,7 @@ var moduleSet = wire.NewSet(
 	notify.Set,
 	backup.Set,
 	configs.Set,
+	certs.Set,
 	projects.Set,
 	ci.Set,
 	release.Set,
@@ -137,6 +144,7 @@ var moduleSet = wire.NewSet(
 	wire.Bind(new(cronmod.Runner), new(*resources.Service)),
 	wire.Bind(new(backup.SSHExecutor), new(*resources.Service)),
 	wire.Bind(new(configs.Executor), new(*resources.Service)),
+	wire.Bind(new(certs.SSHExecutor), new(*resources.Service)),
 	// release 的 deployer/confRenderer 接口化便于测试，实现仍是 resources/canary
 	wire.Bind(new(release.Deployer), new(*resources.Service)),
 	wire.Bind(new(release.ConfRenderer), new(*canary.Service)),
