@@ -4,10 +4,16 @@
 package app
 
 import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
 	"github.com/google/wire"
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/config"
+	"github.com/custos-machina/backend/internal/modules/ai"
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/backup"
 	"github.com/custos-machina/backend/internal/modules/canary"
@@ -39,6 +45,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, observ.Models()...)
 	models = append(models, configs.Models()...)
 	models = append(models, certs.Models()...)
+	models = append(models, ai.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -82,6 +89,9 @@ func ProvideModules(
 	certsH *certs.Handler,
 	certsSvc *certs.Service,
 	certsSched *certs.Scheduler, // 拉起 certs:sched 到期扫描（哨兵依赖）
+	aiH *ai.Handler,
+	aiDigest *ai.DigestService,
+	db *gorm.DB,
 	backupSvc *backup.Service,
 	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
 	slotsSvc *slots.Service,
@@ -108,7 +118,11 @@ func ProvideModules(
 	backupSvc.SetNotifier(notifySvc)
 	observSvc.SetPublicURL(cfg.IM.PublicURL)
 	certsSvc.SetNotifier(notifySvc)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH}
+	// 桥接（P5 M6）：O2 告警 → AI 诊断摘要；ai 的上下文供给由 app 层桥实现
+	aiDigest.SetNotifier(notifySvc)
+	aiDigest.SetContextSource(&alertContextBridge{db: db})
+	observSvc.SetDigestor(aiDigest)
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -131,6 +145,7 @@ var moduleSet = wire.NewSet(
 	backup.Set,
 	configs.Set,
 	certs.Set,
+	ai.Set,
 	projects.Set,
 	ci.Set,
 	release.Set,
@@ -160,3 +175,57 @@ var Set = wire.NewSet(
 	server.New,
 	server.NewEngine,
 )
+
+// alertContextBridge ai.ContextSource 的 app 层实现：
+// 告警关联上下文只读查询（server_events / cron_runs / config_files 快照摘要）。
+type alertContextBridge struct {
+	db *gorm.DB
+}
+
+func (b *alertContextBridge) AlertDigestContext(ctx context.Context, _ string, _ []string) (string, string, string) {
+	var ev strings.Builder
+	rows, err := b.db.WithContext(ctx).Table("server_events").
+		Select("server_id, type, message, created_at").
+		Where("created_at > ?", time.Now().Add(-24*time.Hour)).
+		Order("id DESC").Limit(10).Rows()
+	if err == nil {
+		for rows.Next() {
+			var sid uint
+			var typ, msg string
+			var ts time.Time
+			_ = rows.Scan(&sid, &typ, &msg, &ts)
+			fmt.Fprintf(&ev, "server=%d %s %s %s\n", sid, typ, msg, ts.Format(time.DateTime))
+		}
+		_ = rows.Close()
+	}
+	var cronB strings.Builder
+	if b.db != nil {
+		crows, err := b.db.WithContext(ctx).Table("cron_runs").
+			Select("job_name, status, created_at").
+			Where("status IN ? AND created_at > ?", []string{"failed", "timeout"}, time.Now().Add(-24*time.Hour)).
+			Order("id DESC").Limit(8).Rows()
+		if err == nil {
+			for crows.Next() {
+				var name, status string
+				var ts time.Time
+				_ = crows.Scan(&name, &status, &ts)
+				fmt.Fprintf(&cronB, "%s %s %s\n", name, status, ts.Format(time.DateTime))
+			}
+			_ = crows.Close()
+		}
+	}
+	// 配置快照：文件名与格式（不含内容——DLP 最小暴露面）
+	var cfgB strings.Builder
+	c2rows, err := b.db.WithContext(ctx).Table("config_files").
+		Select("name, path, format, updated_at").Order("updated_at DESC").Limit(8).Rows()
+	if err == nil {
+		for c2rows.Next() {
+			var name, path, format string
+			var ts time.Time
+			_ = c2rows.Scan(&name, &path, &format, &ts)
+			fmt.Fprintf(&cfgB, "%s（%s，%s，更新于 %s）\n", name, path, format, ts.Format(time.DateTime))
+		}
+		_ = c2rows.Close()
+	}
+	return ev.String(), cronB.String(), cfgB.String()
+}

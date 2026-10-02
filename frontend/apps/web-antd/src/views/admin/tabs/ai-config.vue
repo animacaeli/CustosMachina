@@ -1,0 +1,127 @@
+<script lang="ts" setup>
+import { onMounted, reactive, ref } from 'vue';
+
+import { message } from 'ant-design-vue';
+
+import { requestClient } from '#/api/request';
+
+defineOptions({ name: 'AdminAiConfig' });
+
+const loading = ref(false);
+const testing = ref(false);
+const settings = reactive({
+  configured: false,
+  endpoint: '',
+  model: '',
+});
+const form = reactive({ endpoint: '', model: '', apiKey: '' });
+const usages = ref<Array<Record<string, any>>>([]);
+
+async function load() {
+  loading.value = true;
+  try {
+    const s = await requestClient.get('/ai/settings');
+    Object.assign(settings, s);
+    form.endpoint = s.endpoint;
+    form.model = s.model;
+    form.apiKey = '';
+    usages.value = await requestClient.get('/ai/usages');
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(load);
+
+async function save() {
+  await requestClient.put('/ai/settings', {
+    endpoint: form.endpoint || undefined,
+    model: form.model || undefined,
+    apiKey: form.apiKey || undefined,
+  });
+  message.success('已保存');
+  await load();
+}
+
+async function test() {
+  testing.value = true;
+  try {
+    await requestClient.post('/ai/test');
+    message.success('中转层连通正常');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '测试失败');
+  } finally {
+    testing.value = false;
+  }
+}
+
+const usageCols = [
+  { title: '时间', dataIndex: 'createdAt', width: 170 },
+  { title: '场景', dataIndex: 'caller', width: 110 },
+  { title: '模型', dataIndex: 'model', width: 140 },
+  { title: '入/出字符', key: 'chars', width: 110 },
+  { title: '耗时', key: 'ms', width: 80 },
+  { title: '结果', dataIndex: 'ok', width: 70 },
+];
+</script>
+
+<template>
+  <div>
+    <a-form class="max-w-[560px]" layout="vertical">
+      <a-form-item
+        label="中转层 Endpoint（OpenAI 兼容 base，如 https://api.deepseek.com/v1）"
+      >
+        <a-input
+          v-model:value="form.endpoint"
+          :placeholder="settings.endpoint || 'https://api.deepseek.com/v1'"
+        />
+      </a-form-item>
+      <a-form-item label="模型名（如 deepseek-chat / qwen2.5:7b）">
+        <a-input
+          v-model:value="form.model"
+          :placeholder="settings.model || 'deepseek-chat'"
+        />
+      </a-form-item>
+      <a-form-item label="API Key（留空保留）">
+        <a-input-password v-model:value="form.apiKey" />
+      </a-form-item>
+      <a-space>
+        <a-button :loading="testing" @click="test">连通性测试</a-button>
+        <a-button type="primary" @click="save">保存</a-button>
+        <a-tag :color="settings.configured ? 'green' : 'orange'">
+          {{
+            settings.configured
+              ? '已启用（告警将附 AI 摘要）'
+              : '未配置（纯通知模式）'
+          }}
+        </a-tag>
+      </a-space>
+    </a-form>
+
+    <div class="mt-6">
+      <div class="mb-2 text-sm font-medium">最近用量（50 条）</div>
+      <a-table
+        :columns="usageCols"
+        :data-source="usages"
+        :loading="loading"
+        :pagination="false"
+        row-key="id"
+        size="small"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'chars'">
+            {{ record.promptChars }} / {{ record.outputChars }}
+          </template>
+          <template v-else-if="column.key === 'ms'">
+            {{ record.latencyMs }}ms
+          </template>
+          <template v-else-if="column.dataIndex === 'ok'">
+            <a-tag :color="record.ok ? 'green' : 'red'">
+              {{ record.ok ? '成功' : '失败' }}
+            </a-tag>
+          </template>
+        </template>
+      </a-table>
+    </div>
+  </div>
+</template>

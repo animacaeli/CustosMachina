@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref } from 'vue';
 
+import AiConfig from './tabs/ai-config.vue';
 import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
@@ -33,6 +34,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="notify-routes" tab="通知路由">
           <NotifyRoutes />
+        </a-tab-pane>
+        <a-tab-pane key="ai" tab="AI 中转层">
+          <AiConfig />
         </a-tab-pane>
         <a-tab-pane key="ci" tab="CI / 镜像仓库">
           <CiConfig />

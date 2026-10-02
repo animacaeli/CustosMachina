@@ -9,6 +9,7 @@ package main
 import (
 	"github.com/custos-machina/backend/internal/app"
 	"github.com/custos-machina/backend/internal/config"
+	"github.com/custos-machina/backend/internal/modules/ai"
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/backup"
 	"github.com/custos-machina/backend/internal/modules/canary"
@@ -107,6 +108,9 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
+	aiService := ai.NewService(db, cipher)
+	aiHandler := ai.NewHandler(aiService)
+	digestService := ai.NewDigestService(aiService, db)
 	backupScheduler, cleanup6, err := backup.NewScheduler(backupService)
 	if err != nil {
 		cleanup5()
@@ -137,7 +141,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, aiHandler, digestService, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

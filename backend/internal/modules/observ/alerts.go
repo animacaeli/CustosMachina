@@ -433,8 +433,16 @@ func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) 
 	return &a, nil
 }
 
-// notifyAlert O2 告警事件投统一通知路由。
+// Digestor AI 诊断摘要出口（ai.DigestService 实现，app 层注入；可空 = 降级纯通知）。
+type Digestor interface {
+	MaybeDigest(ctx context.Context, alertName, alertBody string)
+}
+
+// notifyAlert O2 告警事件投统一通知路由（先发主通知保及时性；AI 摘要异步补发）。
 func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail string) {
+	if s.digestor != nil {
+		s.digestor.MaybeDigest(context.WithoutCancel(ctx), alertName, detail)
+	}
 	if s.notifier == nil {
 		return
 	}

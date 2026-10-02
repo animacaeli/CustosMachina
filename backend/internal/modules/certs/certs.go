@@ -248,21 +248,19 @@ func (s *Service) RenewNow(ctx context.Context, id uint) error {
 
 // ---- 签发与部署 ----
 
+// markResult 落结果到 DB（不回写传入的 Cert——issue 由 scanDue 的 goroutine
+// 持有副本，写共享 struct 会与 warnExpiring 的读构成数据竞争）。
 func (s *Service) markResult(c *Cert, status string, expires *time.Time, err error) {
-	c.Status = status
-	c.ExpiresAt = expires
+	lastErr := ""
 	if err != nil {
-		c.LastError = truncStr(err.Error(), 500)
-	} else {
-		c.LastError = ""
+		lastErr = truncStr(err.Error(), 500)
 	}
 	next := time.Now().Add(retryBackoff)
 	if err == nil && expires != nil {
 		next = expires.Add(-renewBefore)
 	}
-	c.NextTryAt = &next
 	s.db.Model(&Cert{}).Where("id = ?", c.ID).Updates(map[string]any{
-		"status": c.Status, "expires_at": c.ExpiresAt, "last_error": c.LastError, "next_try_at": c.NextTryAt,
+		"status": status, "expires_at": expires, "last_error": lastErr, "next_try_at": next,
 	})
 }
 

@@ -3,6 +3,7 @@ package certs
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 )
 
-// fakeNotifier 拦截统一通知路由调用（测试断言用）。
+// fakeNotifier 拦截统一通知路由调用（后台 goroutine 写，测试断言读——须加锁）。
 type fakeNotifier struct {
+	mu     sync.Mutex
 	Events []struct {
 		Level  string
 		Source string
@@ -22,11 +24,35 @@ type fakeNotifier struct {
 }
 
 func (f *fakeNotifier) NotifyEvent(_ context.Context, source, level, _, title, _ string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.Events = append(f.Events, struct {
 		Level  string
 		Source string
 		Title  string
 	}{Level: level, Source: source, Title: title})
+}
+
+func (f *fakeNotifier) Len() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.Events)
+}
+
+func (f *fakeNotifier) All() []struct {
+	Level  string
+	Source string
+	Title  string
+} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]struct {
+		Level  string
+		Source string
+		Title  string
+	}, len(f.Events))
+	copy(out, f.Events)
+	return out
 }
 
 func testSvc(t *testing.T) (*Service, *gorm.DB) {
@@ -46,7 +72,8 @@ func testSvc(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	svc := NewService(db, cipher, nil)
-	svc.SetNotifier(&fakeNotifier{})
+	// notifier 由各测试构造后设置一次（生产语义：仅启动装配时注入，
+	// 中途替换会与扫描 goroutine 的读构成数据竞争）
 	return svc, db
 }
 
@@ -111,10 +138,10 @@ func TestScanDueWarnExpiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if len(rec.Events) == 0 {
+	if rec.Len() == 0 {
 		t.Fatal("临近到期应发通知")
 	}
-	e := rec.Events[0]
+	e := rec.All()[0]
 	if !strings.Contains(e.Source, "cert") || !strings.Contains(e.Title, "near") {
 		t.Errorf("事件形态不符: %+v", e)
 	}
@@ -130,7 +157,7 @@ func TestScanDueWarnExpiring(t *testing.T) {
 	_ = svc.scanDue(ctx)
 	time.Sleep(200 * time.Millisecond)
 	found := false
-	for _, ev := range rec2.Events {
+	for _, ev := range rec2.All() {
 		if ev.Title == "证书即将到期：crit" && ev.Level == "critical" {
 			found = true
 		}
