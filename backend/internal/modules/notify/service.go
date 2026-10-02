@@ -27,15 +27,18 @@ func toOut(g Group) GroupOut {
 	return out
 }
 
-// Service 通知中心：群 CRUD + 消息发送 + 发送留痕。
+// Service 通知中心：群 CRUD + 路由规则 + 事件投递（聚合/静默）+ 发送留痕。
 type Service struct {
 	db     *gorm.DB
 	cipher *crypto.Cipher
 	sender *sender
+	agg    *aggregator
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
-	return &Service{db: db, cipher: cipher, sender: newSender()}
+	s := &Service{db: db, cipher: cipher, sender: newSender(), agg: newAggregator()}
+	s.startAggSweeper()
+	return s
 }
 
 // ---- 群管理 ----

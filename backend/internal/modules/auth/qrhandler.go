@@ -13,9 +13,10 @@ import (
 
 // registerQRLoginRoutes 扫码登录相关路由（公开）+ 会话与配置管理。
 func (h *Handler) registerQRLoginRoutes(r server.Router) {
-	r.Public.GET("/auth/qrlogin/url", h.qrLoginURL)
-	r.Public.GET("/auth/qrlogin/callback", h.qrCallback)
-	r.Public.POST("/auth/qrlogin/exchange", h.qrExchange)
+	qrm := h.qrWindow.Middleware()
+	r.Public.GET("/auth/qrlogin/url", qrm, h.qrLoginURL)
+	r.Public.GET("/auth/qrlogin/callback", qrm, h.qrCallback)
+	r.Public.POST("/auth/qrlogin/exchange", qrm, h.qrExchange)
 	r.Public.POST("/auth/refresh", h.refresh)
 	r.Authed.POST("/auth/logout", h.logout)
 

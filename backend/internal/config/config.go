@@ -39,6 +39,7 @@ type HTTP struct {
 	Addr            string
 	Mode            string // gin mode: debug / release / test
 	ShutdownTimeout time.Duration
+	TrustedProxies  string // 逗号分隔的 IP/CIDR（决定 ClientIP 从 XFF 取到哪一跳）
 }
 
 type Database struct {
@@ -97,7 +98,12 @@ func Load() (*Config, error) {
 	v.SetDefault("log.max_size_mb", 50)
 	v.SetDefault("log.max_backups", 5)
 	v.SetDefault("log.max_age_days", 14)
-	v.SetDefault("cors.origins", "*")
+	// CORS 默认同源（不回 CORS 头）：单镜像部署前后端同源，无需跨域；
+	// 跨域部署显式配置来源白名单（P5 M1 安全欠账收敛，旧默认 * 已废弃）
+	v.SetDefault("cors.origins", "")
+	// 可信代理：单镜像内 nginx(127.0.0.1) + 自托管常见私网链路；
+	// 外层代理须设置 X-Forwarded-For，否则限速/审计按代理 IP 聚合（见 deploy-conventions）
+	v.SetDefault("http.trusted_proxies", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
 
 	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
 	// 这里显式逐项读取，保证 env 覆盖一定生效。
@@ -106,6 +112,7 @@ func Load() (*Config, error) {
 			Addr:            v.GetString("http.addr"),
 			Mode:            v.GetString("http.mode"),
 			ShutdownTimeout: v.GetDuration("http.shutdown_timeout"),
+			TrustedProxies:  v.GetString("http.trusted_proxies"),
 		},
 		Database: Database{
 			Driver: v.GetString("database.driver"),

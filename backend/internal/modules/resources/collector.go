@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 )
@@ -150,7 +151,7 @@ type Collector struct {
 
 	group *jobs.Group
 
-	notifier OpsNotifier // 可选：运维群推送（notify 模块注入）
+	notifier EventNotifier // 可选：统一通知路由（notify 模块注入）
 
 	mu        sync.Mutex
 	rings     map[uint]*ring
@@ -161,9 +162,10 @@ type Collector struct {
 	pending   []MetricSample
 }
 
-// OpsNotifier 平台级运维告警出口（notify.Service 实现；空实现 = 只落库不推送）。
-type OpsNotifier interface {
-	NotifyOps(ctx context.Context, title, detail string)
+// EventNotifier 平台级运维事件出口（notify.Service 统一路由实现；
+// 空实现 = 只落库不推送）。不可达/恢复走 platform_ops 事件源。
+type EventNotifier interface {
+	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
 }
 
 // NewCollector 构造并启动采集任务；wire 聚合返回的 cleanup 会在停机时调用 Stop。
@@ -325,8 +327,8 @@ func (c *Collector) refreshHostInfo(ctx context.Context) error {
 	return nil
 }
 
-// SetNotifier 注入运维告警出口（app 组装时调用；不注入则只落库不推送）。
-func (c *Collector) SetNotifier(n OpsNotifier) { c.notifier = n }
+// SetNotifier 注入统一通知路由出口（app 组装时调用；不注入则只落库不推送）。
+func (c *Collector) SetNotifier(n EventNotifier) { c.notifier = n }
 
 // emitEvent 落 server_events、打日志并推运维群（第三阶段 M1 起 notify 已实现）。
 func (c *Collector) emitEvent(ctx context.Context, serverID uint, typ, msg string) {
@@ -336,9 +338,11 @@ func (c *Collector) emitEvent(ctx context.Context, serverID uint, typ, msg strin
 	}
 	fmt.Printf("[resources] server=%d %s: %s\n", serverID, typ, msg)
 	if c.notifier != nil && (typ == "unreachable" || typ == "recovered") {
-		go c.notifier.NotifyOps(context.WithoutCancel(ctx),
-			"服务器"+map[string]string{"unreachable": "不可达", "recovered": "已恢复"}[typ],
-			fmt.Sprintf("服务器 ID=%d\n事件：%s", serverID, msg))
+		title := "服务器" + map[string]string{"unreachable": "不可达", "recovered": "已恢复"}[typ]
+		detail := fmt.Sprintf("服务器 ID=%d\n事件：%s", serverID, msg)
+		go c.notifier.NotifyEvent(context.WithoutCancel(ctx),
+			notify.SourcePlatformOps, notify.LevelWarn,
+			fmt.Sprintf("server-%d-%s", serverID, typ), title, detail)
 	}
 }
 

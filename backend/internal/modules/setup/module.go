@@ -5,31 +5,35 @@ package setup
 
 import (
 	"errors"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
 )
 
 var ErrSetupClosed = errors.New("初始化已完成，向导已关闭")
 
 type Handler struct {
-	users *identity.UserService
+	users  *identity.UserService
+	window *ratelimit.Window // 公开接口限速（P5 M1 安全欠账：向导接口防刷）
 }
 
 func NewHandler(users *identity.UserService) *Handler {
-	return &Handler{users: users}
+	return &Handler{users: users, window: ratelimit.NewWindow(10, time.Minute)}
 }
 
 func (h *Handler) Name() string { return "setup" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
-	r.Public.GET("/setup/status", h.status)
+	wm := h.window.Middleware()
+	r.Public.GET("/setup/status", wm, h.status)
 	// 完成后向导永久关闭（FR1.1）；其余配置（IM / Redis）在管理后台设置
-	r.Public.POST("/setup/admin", h.createAdmin)
+	r.Public.POST("/setup/admin", wm, h.createAdmin)
 }
 
 func (h *Handler) status(c *gin.Context) {

@@ -101,6 +101,9 @@ var defaultPolicies = [][]string{
 	{"dev", "/projects/*", "GET"},
 	{"admin", "/notify-groups", "GET|POST|PUT|DELETE"},
 	{"admin", "/notify-groups/*", "GET|PUT|DELETE|POST"},
+	// v8：统一通知路由规则管理（P5 M1，仅 admin；投递走服务端事件，无 API 操作面）
+	{"admin", "/notify-rules", "GET|POST|PUT|DELETE"},
+	{"admin", "/notify-rules/*", "GET|PUT|DELETE|POST"},
 	{"admin", "/notify-settings", "GET|PUT"},
 	{"admin", "/notify-settings/*", "GET|PUT"},
 	{"admin", "/ci", "GET|PUT"},
@@ -175,7 +178,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "7" // v7：observ/server-files 资源点 + admin 的 cron 写权限（第四阶段 M3/M4 及审核修复）
+const policySeedVersion = "8" // v8：notify-rules 资源点（P5 M1 统一通知路由）；v7：observ/server-files + admin cron 写权限（P4）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -280,6 +283,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		// v5/v6→v7：cron 增量资源点在 v6 下发的部署里只对部分角色生效过，
 		// observ/server-files 对 ops/dev（以及 admin 的 cron 写权限）都需逐条补齐
 		if len(ps) > 0 && (oldVersion == "5" || oldVersion == "6") {
+			entryLevelSeed[p[0]] = true
+		}
+		// v7→v8：notify-rules 对 admin 是新资源点
+		if len(ps) > 0 && oldVersion == "7" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

@@ -52,13 +52,19 @@ func NewAuthService(
 	}
 }
 
+// dummyHash 用户不存在时的假哈希：预跑一次同代价比较拉平耗时，
+// 消除"用户名存在性"时序侧信道（P5 M1 安全欠账 #2）。
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
+
 // LoginLocal 本地账号登录（超管 break-glass / 开发期使用）。
 func (s *AuthService) LoginLocal(ctx context.Context, username, password string) (*LoginResult, error) {
 	u, err := s.users.GetByUsername(ctx, username)
 	if err != nil {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return nil, ErrInvalidCredentials
 	}
 	if u.PasswordHash == "" {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return nil, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {

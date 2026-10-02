@@ -52,6 +52,55 @@ export async function setOpsGroupApi(groupId: number) {
   return requestClient.put('/notify-settings/ops-group', { groupId });
 }
 
+/** 通知路由规则（统一通知路由，P5 M1） */
+export interface NotifyRule {
+  aggregateSec: number;
+  createdAt: string;
+  enabled: boolean;
+  groupId: number;
+  id: number;
+  minLevel: 'critical' | 'info' | 'warn';
+  name: string;
+  silentEnd: string; // HH:MM，空 = 无静默
+  silentStart: string;
+  source: string;
+}
+
+export interface SaveNotifyRuleInput {
+  aggregateSec: number;
+  enabled: boolean;
+  groupId: number;
+  minLevel: 'critical' | 'info' | 'warn';
+  name: string;
+  silentEnd?: string;
+  silentStart?: string;
+  source: string;
+}
+
+export async function getNotifyRulesApi() {
+  return requestClient.get<NotifyRule[]>('/notify-rules');
+}
+
+export async function createNotifyRuleApi(data: SaveNotifyRuleInput) {
+  return requestClient.post<NotifyRule>('/notify-rules', data);
+}
+
+export async function updateNotifyRuleApi(
+  id: number,
+  data: SaveNotifyRuleInput,
+) {
+  return requestClient.put<NotifyRule>(`/notify-rules/${id}`, data);
+}
+
+export async function deleteNotifyRuleApi(id: number) {
+  return requestClient.delete(`/notify-rules/${id}`);
+}
+
+/** 用规则的 source/级别发一条测试事件（走完整路由管线，含静默/聚合） */
+export async function testNotifyRuleApi(id: number) {
+  return requestClient.post(`/notify-rules/${id}/test`);
+}
+
 /** 项目（CI token 已剔除，仅 hasCiToken） */
 export interface Project {
   composePath: string;

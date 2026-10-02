@@ -16,6 +16,11 @@ import (
 func NewEngine(cfg *config.Config, modules Modules, auth AuthMiddleware, authz gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(cfg.HTTP.Mode)
 	e := gin.New()
+	// 限速与审计依赖 ClientIP：只信任配置的代理链，防 XFF 伪造轮换绕过限速
+	if err := e.SetTrustedProxies(splitList(cfg.HTTP.TrustedProxies)); err != nil {
+		logger.Warnf("[server] 可信代理配置无效 %q: %v", cfg.HTTP.TrustedProxies, err)
+		_ = e.SetTrustedProxies(nil)
+	}
 	e.Use(requestLogger(), gin.Recovery(), cors(cfg.CORS.Origins))
 
 	api := e.Group("/api")
@@ -38,6 +43,16 @@ func requestLogger() gin.HandlerFunc {
 		logger.Infof("[gin] %3d | %13v | %-7s %s",
 			c.Writer.Status(), time.Since(start), c.Request.Method, c.Request.URL.Path)
 	}
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func cors(origins string) gin.HandlerFunc {

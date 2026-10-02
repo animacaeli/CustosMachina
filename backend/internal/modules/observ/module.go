@@ -15,6 +15,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
 )
 
@@ -234,16 +235,16 @@ func deployName(component string) string { return "custos-observ-" + component }
 
 // ---- Service ----
 
-// OpsNotifier 运维群推送出口（notify.Service 实现，app 层注入）：
+// EventNotifier 统一通知路由出口（notify.Service 实现，app 层注入）：
 // 观测组件部署/卸载失败不能静默。
-type OpsNotifier interface {
-	NotifyOps(ctx context.Context, title, detail string)
+type EventNotifier interface {
+	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
 }
 
 type Service struct {
 	db       *gorm.DB
 	res      *resources.Service
-	notifier OpsNotifier // 可空
+	notifier EventNotifier // 可空
 }
 
 func NewService(db *gorm.DB, res *resources.Service) *Service {
@@ -251,14 +252,18 @@ func NewService(db *gorm.DB, res *resources.Service) *Service {
 }
 
 // SetNotifier 注入运维群推送出口。
-func (s *Service) SetNotifier(n OpsNotifier) { s.notifier = n }
+func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }
 
 func (s *Service) notifyFailure(ctx context.Context, serverID uint, action string, err error, out string) {
 	if s.notifier == nil {
 		return
 	}
 	detail := fmt.Sprintf("服务器 ID：%d\n操作：%s\n错误：%v\n\n%s", serverID, action, err, truncateStr(out, 500))
-	go func() { s.notifier.NotifyOps(context.WithoutCancel(ctx), "观测组件"+action+"失败", detail) }()
+	go func() {
+		s.notifier.NotifyEvent(context.WithoutCancel(ctx),
+			notify.SourceObservFailed, notify.LevelWarn,
+			fmt.Sprintf("server-%d-%s", serverID, action), "观测组件"+action+"失败", detail)
+	}()
 }
 
 func truncateStr(s string, n int) string {

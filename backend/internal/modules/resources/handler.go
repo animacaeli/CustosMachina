@@ -22,7 +22,7 @@ func NewHandler(svc *Service, collector *Collector) *Handler {
 }
 
 // AttachNotifier 暴露给 app 组装层注入运维告警出口（collector 经 handler 转发）。
-func (h *Handler) AttachNotifier(n OpsNotifier) { h.collector.SetNotifier(n) }
+func (h *Handler) AttachNotifier(n EventNotifier) { h.collector.SetNotifier(n) }
 
 func (h *Handler) Name() string { return "resources" }
 

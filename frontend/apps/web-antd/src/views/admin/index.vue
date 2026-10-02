@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
+import NotifyRoutes from './tabs/notify-routes.vue';
 import Session from './tabs/session.vue';
 
 defineOptions({ name: 'AdminConsole' });
@@ -29,6 +30,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="notify" tab="通知群聊">
           <NotifyGroups />
+        </a-tab-pane>
+        <a-tab-pane key="notify-routes" tab="通知路由">
+          <NotifyRoutes />
         </a-tab-pane>
         <a-tab-pane key="ci" tab="CI / 镜像仓库">
           <CiConfig />

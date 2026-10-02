@@ -1,6 +1,8 @@
 package notify
 
 import (
+	"fmt"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
@@ -29,6 +31,97 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		s.GET("/ops-group", h.getOpsGroup)
 		s.PUT("/ops-group", h.putOpsGroup)
 	}
+	ru := r.Authed.Group("/notify-rules")
+	{
+		ru.GET("", h.listRules)
+		ru.POST("", h.createRule)
+		ru.PUT("/:id", h.updateRule)
+		ru.DELETE("/:id", h.deleteRule)
+		ru.POST("/:id/test", h.testRule)
+	}
+}
+
+// ---- 路由规则（统一通知路由，P5 M1）----
+
+func (h *Handler) listRules(c *gin.Context) {
+	out, err := h.svc.ListRules(c.Request.Context())
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) createRule(c *gin.Context) {
+	var in SaveRuleInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	out, err := h.svc.CreateRule(c.Request.Context(), in)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) updateRule(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	var in SaveRuleInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	out, err := h.svc.UpdateRule(c.Request.Context(), id, in)
+	if err != nil {
+		if err == ErrNotFound {
+			httpx.FailNotFound(c, err.Error())
+			return
+		}
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) deleteRule(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteRule(c.Request.Context(), id); err != nil {
+		if err == ErrNotFound {
+			httpx.FailNotFound(c, err.Error())
+			return
+		}
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, gin.H{"deleted": true})
+}
+
+// testRule 用规则的 source/级别发一条测试事件，走完整路由管线（含静默/聚合）。
+func (h *Handler) testRule(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	rule, err := h.svc.getRule(c.Request.Context(), id)
+	if err != nil {
+		if err == ErrNotFound {
+			httpx.FailNotFound(c, err.Error())
+			return
+		}
+		httpx.FailServer(c, err)
+		return
+	}
+	h.svc.NotifyEvent(c.Request.Context(), rule.Source, rule.MinLevel, "rule-test",
+		"【测试】"+rule.Name, fmt.Sprintf("路由规则测试事件（source=%s level=%s）。若配置了聚合窗口，请等待窗口到期后查看群消息。", rule.Source, rule.MinLevel))
+	httpx.OK(c, gin.H{"ok": true})
 }
 
 func (h *Handler) list(c *gin.Context) {

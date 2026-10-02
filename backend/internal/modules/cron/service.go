@@ -13,6 +13,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 )
@@ -27,10 +28,10 @@ type Runner interface {
 	RecordEvent(ctx context.Context, serverID uint, typ, msg string)
 }
 
-// OpsNotifier 运维群推送出口（notify.Service 实现，app 层注入）：
-// 任务失败/超时推运维群——定时任务半夜失败不能等第二天才发现。
-type OpsNotifier interface {
-	NotifyOps(ctx context.Context, title, detail string)
+// EventNotifier 统一通知路由出口（notify.Service 实现，app 层注入）：
+// 任务失败/超时走 cron_failed 事件源——半夜失败不能等第二天才发现。
+type EventNotifier interface {
+	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
 }
 
 // DomainResolver 项目基础名 → 当前活跃隔离域名（release.Service 提供，
@@ -44,11 +45,11 @@ type Service struct {
 	db       *gorm.DB
 	ssh      Runner
 	domains  DomainResolver // 可空：未注入时按原名执行
-	notifier OpsNotifier    // 可空：未注入时只落库不推送
+	notifier EventNotifier  // 可空：未注入时只落库不推送
 }
 
 // SetNotifier 注入运维群推送出口（notify.Service 提供）。
-func (s *Service) SetNotifier(n OpsNotifier) { s.notifier = n }
+func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }
 
 func NewService(db *gorm.DB, ssh Runner) *Service { return &Service{db: db, ssh: ssh} }
 
@@ -593,7 +594,11 @@ func (s *Service) finishAndMaybeRetry(ctx context.Context, job *CronJob, run *Cr
 			title := fmt.Sprintf("定时任务失败：%s", job.Name)
 			detail := fmt.Sprintf("状态：%s（第 %d 次尝试）\n触发：%s\n服务器 ID：%d\n\n%s",
 				status, attempt+1, run.Trigger, job.ServerID, truncateRunes(output, 500))
-			go func() { s.notifier.NotifyOps(context.WithoutCancel(ctx), title, detail) }()
+			go func() {
+				s.notifier.NotifyEvent(context.WithoutCancel(ctx),
+					notify.SourceCronFailed, notify.LevelWarn,
+					fmt.Sprintf("job-%d", job.ID), title, detail)
+			}()
 		}
 		// 重试链：间隔 5 分钟（Forbid 语义不变——重试前若有新调度触发会被它顶掉）
 		if attempt < job.Retry {
