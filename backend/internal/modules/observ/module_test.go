@@ -49,7 +49,7 @@ func TestRenderTemplates(t *testing.T) {
 }
 
 func TestO2URLSetting(t *testing.T) {
-	svc := NewService(testDB(t), nil)
+	svc := NewService(testDB(t), nil, nil)
 	ctx := context.Background()
 
 	if err := svc.SetO2URL(ctx, "not a url"); err == nil {

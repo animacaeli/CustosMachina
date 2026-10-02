@@ -45,6 +45,16 @@ const routes: RouteRecordRaw[] = [
           title: '观测组件',
         },
       },
+      {
+        name: 'ObservAlerts',
+        path: 'observ-alerts',
+        component: () => import('#/views/observ/alerts.vue'),
+        meta: {
+          icon: 'lucide:bell-ring',
+          authority: ['superadmin', 'admin', 'ops'],
+          title: '观测告警',
+        },
+      },
     ],
   },
 ];

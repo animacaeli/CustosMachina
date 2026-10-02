@@ -17,6 +17,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
+	"github.com/custos-machina/backend/internal/pkg/crypto"
 )
 
 var ErrBadComponent = errors.New("未知组件")
@@ -242,14 +243,19 @@ type EventNotifier interface {
 }
 
 type Service struct {
-	db       *gorm.DB
-	res      *resources.Service
-	notifier EventNotifier // 可空
+	db        *gorm.DB
+	res       *resources.Service
+	notifier  EventNotifier // 可空
+	cipher    *crypto.Cipher
+	publicURL string // 平台对外地址（CUSTOS_IM_PUBLIC_URL，webhook 回流用）
 }
 
-func NewService(db *gorm.DB, res *resources.Service) *Service {
-	return &Service{db: db, res: res}
+func NewService(db *gorm.DB, res *resources.Service, cipher *crypto.Cipher) *Service {
+	return &Service{db: db, res: res, cipher: cipher}
 }
+
+// SetPublicURL 注入平台对外地址（app 层装配，与 IM 回调同一配置）。
+func (s *Service) SetPublicURL(u string) { s.publicURL = u }
 
 // SetNotifier 注入运维群推送出口。
 func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }

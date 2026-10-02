@@ -34,6 +34,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, resources.Models()...)
 	models = append(models, notify.Models()...)
 	models = append(models, backup.Models()...)
+	models = append(models, observ.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -55,6 +56,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 // ProvideModules 汇总所有模块为 server.Modules。
 // 追加新模块时在此加一行 wire.Struct 不能自动完成，显式列出保证可读。
 func ProvideModules(
+	cfg *config.Config,
 	health *health.Handler,
 	auth *auth.Handler,
 	setup *setup.Handler,
@@ -96,6 +98,7 @@ func ProvideModules(
 	cronSvc.SetNotifier(notifySvc)
 	observSvc.SetNotifier(notifySvc)
 	backupSvc.SetNotifier(notifySvc)
+	observSvc.SetPublicURL(cfg.IM.PublicURL)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH}
 }
 

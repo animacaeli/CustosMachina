@@ -104,6 +104,13 @@ var defaultPolicies = [][]string{
 	// v8：统一通知路由规则管理（P5 M1，仅 admin；投递走服务端事件，无 API 操作面）
 	{"admin", "/notify-rules", "GET|POST|PUT|DELETE"},
 	{"admin", "/notify-rules/*", "GET|PUT|DELETE|POST"},
+	// v10：O2 告警闭环（P5 M3）——admin/ops 均可管理告警模板（运维职能）
+	{"admin", "/observ/alerts", "GET|POST|PUT|DELETE"},
+	{"admin", "/observ/alerts/*", "GET|PUT|DELETE|POST"},
+	{"admin", "/observ/o2-settings", "GET|PUT"},
+	{"ops", "/observ/alerts", "GET|POST|PUT|DELETE"},
+	{"ops", "/observ/alerts/*", "GET|PUT|DELETE|POST"},
+	{"ops", "/observ/o2-settings", "GET|PUT"},
 	// v9：备份任务管理（P5 M2）——admin 全量，ops 只读（可触发手动备份）
 	{"admin", "/backup-jobs", "GET|POST|PUT|DELETE"},
 	{"admin", "/backup-jobs/*", "GET|PUT|DELETE|POST"},
@@ -183,7 +190,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "9" // v9：backup-jobs 资源点（P5 M2 备份恢复）；v8：notify-rules（M1）；v7：observ/server-files + admin cron 写权限（P4）
+const policySeedVersion = "10" // v10：observ 告警闭环资源点（P5 M3）；v9：backup-jobs（M2）；v8：notify-rules（M1）；v7：observ/server-files + admin cron 写权限（P4）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -296,6 +303,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v8→v9：backup-jobs 对 admin/ops 都是新资源点
 		if len(ps) > 0 && oldVersion == "8" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v9→v10：observ/alerts、observ/o2-settings 对 admin/ops 都是新资源点
+		if len(ps) > 0 && oldVersion == "9" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

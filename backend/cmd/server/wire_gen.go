@@ -78,7 +78,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	releaseService := release.NewService(db, ciService, resourcesService, notifyService, projectsService, cipher, canaryService)
 	releaseHandler := release.NewHandler(releaseService)
 	canaryHandler := canary.NewHandler(canaryService)
-	observService := observ.NewService(db, resourcesService)
+	observService := observ.NewService(db, resourcesService, cipher)
 	observHandler := observ.NewHandler(observService)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService)
 	slotsHandler := slots.NewHandler(slotsService)
@@ -120,7 +120,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
