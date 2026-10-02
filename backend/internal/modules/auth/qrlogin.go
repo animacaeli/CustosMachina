@@ -154,6 +154,7 @@ func (s *AuthService) QRLoginURL(ctx context.Context) (*QRLoginResult, error) {
 		return nil, err
 	}
 	stateStr := hex.EncodeToString(state)
+	s.sweepExpiredStates()
 	s.qrStates.Store(stateStr, time.Now().Add(qrStateTTL))
 	if lp, ok := p.(LoginPaneler); ok {
 		panel, err := lp.LoginPanel(uri, stateStr)
@@ -176,6 +177,19 @@ func (s *AuthService) consumeState(state string) bool {
 	}
 	exp, _ := v.(time.Time)
 	return time.Now().Before(exp)
+}
+
+// sweepExpiredStates 清扫过期 state：qrStates 条目只在被消费时删除，
+// 而 /auth/qrlogin/url 是公开接口，过期项不主动清理会被无限刷大
+// （防内存放大；请求节流属既有"登录限速"欠账，另行处理）。
+func (s *AuthService) sweepExpiredStates() {
+	now := time.Now()
+	s.qrStates.Range(func(k, v any) bool {
+		if exp, ok := v.(time.Time); ok && now.After(exp) {
+			s.qrStates.Delete(k)
+		}
+		return true
+	})
 }
 
 // HandleQRCallback 扫码回调：code 换 IM 身份 → 绑定查找 →（无则 JIT 注册 guest）→ 签发 token。

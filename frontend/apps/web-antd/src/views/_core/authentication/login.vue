@@ -7,7 +7,7 @@ import { useAccessStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
-import { loginApi } from '#/api/core';
+import { getAccessCodesApi, loginApi } from '#/api/core';
 import { requestClient } from '#/api/request';
 import { useAuthStore } from '#/store';
 
@@ -26,7 +26,16 @@ async function onQrSuccess(payload: {
 }) {
   accessStore.setAccessToken(payload.accessToken);
   accessStore.setRefreshToken(payload.refreshToken);
-  await authStore.fetchUserInfo();
+  await afterLogin();
+}
+
+// 登录后公共收尾：拉用户信息与权限码（与 qrcode-login 路径保持一致）
+async function afterLogin() {
+  const [, accessCodes] = await Promise.all([
+    authStore.fetchUserInfo(),
+    getAccessCodesApi(),
+  ]);
+  accessStore.setAccessCodes(accessCodes);
   await router.push({ path: preferences.app.defaultHomePath, replace: true });
 }
 
@@ -51,11 +60,7 @@ async function adminLogin() {
       if (result.refreshToken) {
         accessStore.setRefreshToken(result.refreshToken);
       }
-      await authStore.fetchUserInfo();
-      await router.push({
-        path: preferences.app.defaultHomePath,
-        replace: true,
-      });
+      await afterLogin();
     }
   } catch {
     // 错误信息由全局拦截器弹出

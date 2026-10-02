@@ -8,6 +8,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       icon: 'lucide:calendar-clock',
       order: 6,
+      // authority 必须覆盖子路由并集：filterTree 对父级放行后空目录仍会显示
       authority: ['superadmin', 'admin', 'ops', 'dev'],
       title: '定时任务',
     },

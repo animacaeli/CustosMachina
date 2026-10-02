@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/logger"
 	"github.com/custos-machina/backend/internal/server"
 )
 
@@ -37,7 +38,9 @@ func (h *Handler) registerQRLoginRoutes(r server.Router) {
 func (h *Handler) qrLoginURL(c *gin.Context) {
 	result, err := h.svc.QRLoginURL(c.Request.Context())
 	if err != nil {
-		httpx.Fail(c, http.StatusServiceUnavailable, 503, err.Error())
+		// 公开接口：细节进日志，对外只给泛化文案（避免暴露部署配置）
+		logger.Warnf("[auth] 生成扫码登录地址失败: %v", err)
+		httpx.Fail(c, http.StatusServiceUnavailable, 503, "扫码登录暂不可用，请稍后重试或联系管理员")
 		return
 	}
 	httpx.OK(c, result)

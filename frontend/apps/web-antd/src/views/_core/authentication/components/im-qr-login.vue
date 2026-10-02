@@ -79,9 +79,12 @@ async function load() {
 }
 
 // 面板容器渲染完成后初始化官方登录组件（redirect_type=callback：
-// 授权成功经 onLoginSuccess 回调 auth code，不做页面跳转）
+// 授权成功经 onLoginSuccess 回调 auth code，不做页面跳转）。
+// 每次运行先卸载旧面板——SDK 的 window message 监听只有 unmount 才释放，
+// 刷新二维码时旧 iframe 虽被 v-if 移除但监听会随刷新次数累积。
 watchEffect(() => {
   if (!panelParams.value || !panelEl.value) return;
+  panelDestroy?.();
   const { appid, agentid, redirectUri, state } = panelParams.value;
   const panel = ww.createWWLoginPanel({
     el: panelEl.value,
