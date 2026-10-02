@@ -1,0 +1,90 @@
+/** 配置文件管理（P5 M4） */
+import { requestClient } from '#/api/request';
+
+export interface ConfigFile {
+  applyAction: 'http' | 'none' | 'restart' | 'sighup';
+  applyTarget: string;
+  createdAt: string;
+  format: 'env' | 'ini' | 'json' | 'toml' | 'yaml';
+  hasContent: boolean;
+  id: number;
+  name: string;
+  path: string;
+  remark: string;
+  sensitive: boolean;
+  serverId: number;
+}
+
+export interface SaveConfigFileInput {
+  applyAction: 'http' | 'none' | 'restart' | 'sighup';
+  applyTarget?: string;
+  format: 'env' | 'ini' | 'json' | 'toml' | 'yaml';
+  /** 新建时可带初始内容 */
+  content?: string;
+  name: string;
+  path: string;
+  remark?: string;
+  sensitive: boolean;
+  serverId: number;
+}
+
+export interface ConfigVersion {
+  createdAt: string;
+  createdBy: string;
+  hash: string;
+  hasContent: boolean;
+  id: number;
+  source: 'deploy' | 'edit' | 'rollback';
+}
+
+export async function getConfigFilesApi() {
+  return requestClient.get<ConfigFile[]>('/config-files');
+}
+
+export async function createConfigFileApi(data: SaveConfigFileInput) {
+  return requestClient.post<ConfigFile>('/config-files', data);
+}
+
+export async function updateConfigFileApi(
+  id: number,
+  data: SaveConfigFileInput,
+) {
+  return requestClient.put(`/config-files/${id}`, data);
+}
+
+export async function deleteConfigFileApi(id: number) {
+  return requestClient.delete(`/config-files/${id}`);
+}
+
+export async function getConfigContentApi(id: number, reveal = false) {
+  return requestClient.get<{
+    content: string;
+    masked: boolean;
+    sensitive: boolean;
+  }>(`/config-files/${id}/content`, { params: reveal ? { reveal: true } : {} });
+}
+
+export async function saveConfigContentApi(id: number, content: string) {
+  return requestClient.put(`/config-files/${id}/content`, { content });
+}
+
+export async function deployConfigApi(id: number) {
+  return requestClient.post(`/config-files/${id}/deploy`);
+}
+
+export async function getConfigVersionsApi(id: number) {
+  return requestClient.get<ConfigVersion[]>(`/config-files/${id}/versions`);
+}
+
+export async function getConfigVersionContentApi(
+  fileId: number,
+  versionId: number,
+) {
+  return requestClient.get<{ content: string }>(
+    `/config-files/${fileId}/versions/${versionId}`,
+  );
+}
+
+export async function rollbackConfigApi(id: number, versionId: number) {
+  return requestClient.post(`/config-files/${id}/rollback`, { versionId });
+}
