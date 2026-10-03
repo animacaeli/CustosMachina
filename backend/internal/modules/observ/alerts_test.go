@@ -192,7 +192,7 @@ func TestO2WebhookParseAndDetail(t *testing.T) {
 
 func TestWebhookTokenGuard(t *testing.T) {
 	svc, _, _, _ := alertsTestEnv(t)
-	h := NewHandler(svc)
+	h := NewHandler(svc, nil)
 	// token 未配置（o2Config.Token 在 SaveO2Settings 已生成）→ 取出比对
 	cfg, _ := svc.o2Config(context.Background())
 	if cfg.Token == "" {
@@ -226,7 +226,7 @@ func TestTemplateBodyValidWhenUnrendered(t *testing.T) {
 // JSON 非法（如旧形态双大括号残留）时 webhook 兜底：提取 alert_name、原文进通知。
 func TestWebhookFallbackParse(t *testing.T) {
 	svc, _, _, _ := alertsTestEnv(t)
-	h := NewHandler(svc)
+	h := NewHandler(svc, nil)
 	cfg, _ := svc.o2Config(context.Background())
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

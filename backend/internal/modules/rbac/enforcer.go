@@ -126,6 +126,17 @@ var defaultPolicies = [][]string{
 	{"ops", "/observ/alerts", "GET|POST|PUT|DELETE"},
 	{"ops", "/observ/alerts/*", "GET|PUT|DELETE|POST"},
 	{"ops", "/observ/o2-settings", "GET|PUT"},
+	// v14：告警模板化（R1）——模板 CRUD 仅 admin；ops/dev 可读（项目侧下拉）
+	// 与渲染预览；dev 经 /observ/alerts/from-template 实例化（SQL 服务端渲染），
+	// 删除/查看走 alerts 既有路径（handler 层再限项目侧）
+	{"admin", "/observ/alert-templates", "GET|POST|PUT|DELETE"},
+	{"admin", "/observ/alert-templates/*", "GET|PUT|DELETE|POST"},
+	{"ops", "/observ/alert-templates", "GET"},
+	{"ops", "/observ/alert-templates/*", "GET|POST"},
+	{"dev", "/observ/alert-templates", "GET"},
+	{"dev", "/observ/alert-templates/*", "GET|POST"},
+	{"dev", "/observ/alerts", "GET|POST"},
+	{"dev", "/observ/alerts/*", "GET|DELETE|POST"},
 	// v9：备份任务管理（P5 M2）——admin 全量，ops 只读（可触发手动备份）
 	{"admin", "/backup-jobs", "GET|POST|PUT|DELETE"},
 	{"admin", "/backup-jobs/*", "GET|PUT|DELETE|POST"},
@@ -205,7 +216,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "13" // v13：ai 资源点（P5 M6 AI 中转层）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "14" // v14：告警模板化（R1，dev 项目侧实例化）；v13：ai 资源点（P5 M6 AI 中转层）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，

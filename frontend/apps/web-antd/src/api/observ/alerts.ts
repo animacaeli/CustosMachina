@@ -74,3 +74,99 @@ export async function saveO2SettingsApi(data: {
 }) {
   return requestClient.put<O2Settings>('/observ/o2-settings', data);
 }
+
+/** 告警模板（R1 模板化） */
+export interface AlertPlaceholder {
+  default: string;
+  hint: string;
+  key: string;
+  label: string;
+  required: boolean;
+  type: 'number' | 'string';
+}
+
+export interface AlertTemplate {
+  boundCount: number;
+  category: string;
+  createdAt: string;
+  description: string;
+  frequency: number;
+  id: number;
+  level: 'critical' | 'info' | 'warn';
+  name: string;
+  operator: string;
+  period: number;
+  placeholders: AlertPlaceholder[];
+  query: string;
+  queryType: 'promql' | 'sql';
+  silence: number;
+  threshold: number;
+}
+
+export interface SaveAlertTemplateInput {
+  category: string;
+  description: string;
+  frequency: number;
+  level: 'critical' | 'info' | 'warn';
+  name: string;
+  operator: string;
+  period: number;
+  placeholders: AlertPlaceholder[];
+  query: string;
+  queryType: 'promql' | 'sql';
+  silence: number;
+  threshold: number;
+}
+
+export async function getAlertTemplatesApi() {
+  return requestClient.get<AlertTemplate[]>('/observ/alert-templates');
+}
+
+export async function createAlertTemplateApi(data: SaveAlertTemplateInput) {
+  return requestClient.post<AlertTemplate>('/observ/alert-templates', data);
+}
+
+export async function updateAlertTemplateApi(
+  id: number,
+  data: SaveAlertTemplateInput,
+) {
+  return requestClient.put<AlertTemplate>(
+    `/observ/alert-templates/${id}`,
+    data,
+  );
+}
+
+export async function deleteAlertTemplateApi(id: number) {
+  return requestClient.delete(`/observ/alert-templates/${id}`);
+}
+
+/** 渲染预览：占位符填参 → 服务端产出最终查询（含转义） */
+export async function renderAlertTemplateApi(
+  templateId: number,
+  params: Record<string, string>,
+) {
+  return requestClient.post<{ sql: string }>('/observ/alert-templates/render', {
+    params,
+    templateId,
+  });
+}
+
+/** 项目侧经模板实例化（创建/更新二合一：id=0 创建）——SQL 服务端渲染 */
+export async function upsertAlertFromTemplateApi(data: {
+  description?: string;
+  enabled: boolean;
+  frequency?: number;
+  id?: number;
+  level?: 'critical' | 'info' | 'warn';
+  name: string;
+  operator?: string;
+  params: Record<string, string>;
+  period?: number;
+  projectId: number;
+  silence?: number;
+  streamName?: string;
+  templateId: number;
+  threshold?: number;
+}) {
+  return requestClient.post('/observ/alerts/from-template', data);
+}

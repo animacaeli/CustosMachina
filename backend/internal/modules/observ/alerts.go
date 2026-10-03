@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 // O2 观测告警闭环（P5 M3，docs/research-o2-alerts.md）：
@@ -62,6 +64,11 @@ type Alert struct {
 	Description string `gorm:"size:255" json:"description"`
 	// 平台侧扩展
 	Level string `gorm:"size:8;not null;default:warn" json:"level"` // info|warn|critical（路由用）
+	// R1 模板化：项目侧策略归属与来源模板（paramsSnapshot 记录实例化参数——
+	// 模板后续修改不漂移，重新填充才更新）
+	ProjectID      uint   `gorm:"index;not null;default:0" json:"projectId"` // 0 = 平台级（管理后台直建）
+	TemplateID     uint   `gorm:"index;not null;default:0" json:"templateId"`
+	ParamsSnapshot string `gorm:"type:text" json:"paramsSnapshot"`
 	// 同步状态
 	SyncStatus string    `gorm:"size:16;not null;default:pending" json:"syncStatus"`
 	SyncError  string    `gorm:"size:512" json:"syncError"`
@@ -89,6 +96,11 @@ func (s *Service) o2Config(ctx context.Context) (*O2Config, bool) {
 	org, _ := s.setting(ctx, settingO2Org)
 	if org == "" {
 		org = "default"
+	}
+	// o2_url 存的是完整采集地址（vector 渲染用，可含 userinfo/路径/?ndjson）；
+	// API 调用只取 origin——否则路径拼进 API URL 会把告警创建变成日志写入
+	if u, perr := url.Parse(base); perr == nil && u.Host != "" {
+		base = u.Scheme + "://" + u.Host
 	}
 	cfg := &O2Config{BaseURL: base, Org: org, Email: email}
 	if cfg.BaseURL == "" || email == "" || encPass == "" {
@@ -167,6 +179,7 @@ func (s *Service) O2Settings(ctx context.Context) O2SettingsOut {
 // ---- 告警 CRUD + 同步 ----
 
 type SaveAlertInput struct {
+	ID          uint   `json:"id"` // 模板路径更新时携带（平台直建路径不用，走路径参数）
 	Name        string `json:"name" binding:"required,max=128"`
 	StreamName  string `json:"streamName" binding:"required,max=128"`
 	StreamType  string `json:"streamType" binding:"omitempty,oneof=logs metrics traces"`
@@ -179,6 +192,10 @@ type SaveAlertInput struct {
 	Enabled     bool   `json:"enabled"`
 	Description string `json:"description" binding:"max=255"`
 	Level       string `json:"level" binding:"required,oneof=info warn critical"`
+	// R1 模板化：项目侧经模板实例化时携带（dev 强制走该路径）
+	ProjectID  uint              `json:"projectId"`
+	TemplateID uint              `json:"templateId"`
+	Params     map[string]string `json:"params"`
 }
 
 func (s *Service) ListAlerts(ctx context.Context) ([]Alert, error) {
@@ -187,6 +204,23 @@ func (s *Service) ListAlerts(ctx context.Context) ([]Alert, error) {
 		return nil, err
 	}
 	return as, nil
+}
+
+// listProjectAlerts dev 视角：仅项目侧策略（平台级手写 SQL 告警不可见）。
+func (s *Service) listProjectAlerts(ctx context.Context) ([]Alert, error) {
+	var as []Alert
+	if err := s.db.WithContext(ctx).Where("project_id > 0").Order("id").Find(&as).Error; err != nil {
+		return nil, err
+	}
+	return as, nil
+}
+
+func (s *Service) getAlert(ctx context.Context, id uint) (*Alert, error) {
+	var a Alert
+	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // CreateAlert 平台落库 + 立即同步 O2。
@@ -206,8 +240,8 @@ func (s *Service) UpdateAlert(ctx context.Context, id uint, in SaveAlertInput) (
 		return nil, gorm.ErrRecordNotFound
 	}
 	na := alertFromInput(in)
-	// name 允许改（O2 侧删旧建新）
-	oldName := a.Name
+	// name 允许改（O2 侧删旧建新）；项目归属也可能变——删旧名按旧归属
+	oldName, oldProject := a.Name, a.ProjectID
 	a = *na
 	a.ID = id
 	a.SyncStatus = SyncPending
@@ -217,14 +251,18 @@ func (s *Service) UpdateAlert(ctx context.Context, id uint, in SaveAlertInput) (
 		"sql": a.SQL, "period": a.Period, "operator": a.Operator, "threshold": a.Threshold,
 		"frequency": a.Frequency, "silence": a.Silence, "enabled": a.Enabled,
 		"description": a.Description, "level": a.Level,
+		"project_id": a.ProjectID, "template_id": a.TemplateID, "params_snapshot": a.ParamsSnapshot,
 		"sync_status": SyncPending, "sync_error": "",
 	}).Error; err != nil {
 		return nil, err
 	}
 	go func() {
 		c := context.WithoutCancel(ctx)
-		if oldName != a.Name { // O2 侧删旧
-			s.deleteO2AlertQuiet(c, oldName)
+		if oldName != a.Name { // O2 侧删旧（按旧记录算前缀名）
+			old := *na
+			old.Name = oldName
+			old.ProjectID = oldProject
+			s.deleteO2AlertQuiet(c, &old)
 		}
 		s.SyncAlert(c, id)
 	}()
@@ -239,7 +277,7 @@ func (s *Service) DeleteAlert(ctx context.Context, id uint) error {
 	if err := s.db.WithContext(ctx).Delete(&Alert{}, id).Error; err != nil {
 		return err
 	}
-	go s.deleteO2AlertQuiet(context.WithoutCancel(ctx), a.Name)
+	go s.deleteO2AlertQuiet(context.WithoutCancel(ctx), &a)
 	return nil
 }
 
@@ -248,10 +286,17 @@ func alertFromInput(in SaveAlertInput) *Alert {
 	if st == "" {
 		st = "logs"
 	}
+	paramsJSON := ""
+	if len(in.Params) > 0 {
+		if b, err := json.Marshal(in.Params); err == nil {
+			paramsJSON = string(b)
+		}
+	}
 	return &Alert{
 		Name: in.Name, StreamName: in.StreamName, StreamType: st,
 		SQL: in.SQL, Period: in.Period, Operator: in.Operator, Threshold: in.Threshold,
 		Frequency: in.Frequency, Silence: in.Silence, Enabled: in.Enabled,
+		ProjectID: in.ProjectID, TemplateID: in.TemplateID, ParamsSnapshot: paramsJSON,
 		Description: in.Description, Level: in.Level,
 	}
 }
@@ -287,11 +332,12 @@ func (s *Service) SyncAllAlerts(ctx context.Context) (int, error) {
 	return len(as), nil
 }
 
-func (s *Service) deleteO2AlertQuiet(ctx context.Context, name string) {
+func (s *Service) deleteO2AlertQuiet(ctx context.Context, a *Alert) {
 	cfg, ok := s.o2Config(ctx)
 	if !ok {
 		return
 	}
+	name := s.o2NameFor(a)
 	// DELETE 路径参数同样是 alert_id（真机教训：传名称恒 404，残留孤儿告警）
 	id := s.o2AlertIDByName(ctx, cfg, name)
 	if id == "" {
@@ -313,7 +359,7 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 		return fmt.Errorf("初始化 destination/template 失败: %w", err)
 	}
 	body := map[string]any{
-		"name":        a.Name,
+		"name":        s.o2NameFor(a),
 		"org_id":      cfg.Org,
 		"stream_type": a.StreamType,
 		"stream_name": a.StreamName,
@@ -340,7 +386,7 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 	// 混合形态见 docs/research-o2-alerts.md 真机补充）。
 	// 真机语义：POST 重名不报错而是静默创建重复条目，upsert 必须先按名
 	// 反查 alert_id（PUT/DELETE 的路径参数均为 id）——命中则 PUT，未命中才 POST
-	if id := s.o2AlertIDByName(ctx, cfg, a.Name); id != "" {
+	if id := s.o2AlertIDByName(ctx, cfg, s.o2NameFor(a)); id != "" {
 		_, err := o2Request(ctx, cfg, http.MethodPut, fmt.Sprintf("/api/v2/%s/alerts/%s", cfg.Org, id), body)
 		return err
 	}
@@ -472,12 +518,37 @@ func randomToken() (string, error) {
 }
 
 // alertByName 按名取告警定义（webhook 定级用）。
+// o2NameFor O2 侧告警名：项目侧策略带项目前缀（防跨项目同名互踩；
+// webhook 回流时反解平台名）。projectID=0 平台级原名。
+func (s *Service) o2NameFor(a *Alert) string {
+	if a.ProjectID == 0 {
+		return a.Name
+	}
+	var pname string
+	if err := s.db.WithContext(context.Background()).
+		Table("projects").Select("name").Where("id = ?", a.ProjectID).Scan(&pname).Error; err != nil || pname == "" {
+		return fmt.Sprintf("p%d-%s", a.ProjectID, a.Name)
+	}
+	return strx.NormalizeName(pname) + "-" + a.Name
+}
+
 func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) {
+	// webhook 回流的 alert_name 是 O2 侧名（项目策略带前缀）——先精确匹配
+	// 平台名，miss 后按 o2NameFor 全量反查（告警量小，可接受）
 	var a Alert
-	if err := s.db.WithContext(ctx).Where("name = ?", name).First(&a).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("name = ?", name).First(&a).Error; err == nil {
+		return &a, nil
+	}
+	var all []Alert
+	if err := s.db.WithContext(ctx).Find(&all).Error; err != nil {
 		return nil, err
 	}
-	return &a, nil
+	for i := range all {
+		if s.o2NameFor(&all[i]) == name {
+			return &all[i], nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 // Digestor AI 诊断摘要出口（ai.DigestService 实现，app 层注入；可空 = 降级纯通知）。
@@ -501,4 +572,4 @@ func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail stri
 }
 
 // Models 本模块自动迁移清单。
-func Models() []any { return []any{&Alert{}} }
+func Models() []any { return []any{&Alert{}, &AlertTemplate{}} }

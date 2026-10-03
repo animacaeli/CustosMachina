@@ -7,19 +7,44 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
 )
 
 type Handler struct {
 	svc *Service
+	// 角色解析（项目侧模板化路径对 dev 强制在 handler 层做结构约束）
+	users identity.UserRepository
 	// O2 告警回流限速（公开接口防刷）
 	alertWebhookLimiter *ratelimit.Window
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc, alertWebhookLimiter: ratelimit.NewWindow(60, time.Minute)}
+func NewHandler(svc *Service, users identity.UserRepository) *Handler {
+	return &Handler{svc: svc, users: users, alertWebhookLimiter: ratelimit.NewWindow(60, time.Minute)}
+}
+
+// canManagePlatform 平台级（手写 SQL）告警管理资格：本地超管或 ops 角色。
+func (h *Handler) canManagePlatform(c *gin.Context) bool {
+	claims := jwt.ClaimsFromContext(c)
+	if claims == nil {
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	u, err := h.users.GetByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		return false
+	}
+	for _, r := range identity.ParseRoleList(u.Roles) {
+		if r == "ops" {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) Name() string { return "observ" }
@@ -40,6 +65,13 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.PUT("/alerts/:id", h.updateAlert)
 		g.DELETE("/alerts/:id", h.deleteAlert)
 		g.POST("/alerts/sync", h.syncAllAlerts)
+		// R1 模板化：管理员模板 CRUD；项目侧（含 dev）经 render 预览 + from-template 实例化
+		g.GET("/alert-templates", h.listTemplates)
+		g.POST("/alert-templates", h.createTemplate)
+		g.PUT("/alert-templates/:id", h.updateTemplate)
+		g.DELETE("/alert-templates/:id", h.deleteTemplate)
+		g.POST("/alert-templates/render", h.renderTemplate)
+		g.POST("/alerts/from-template", h.upsertAlertFromTemplate)
 	}
 	// O2 告警回流（公开；X-Custos-Token 校验 + 限速）
 	r.Public.POST("/observ/alerts/webhook", h.alertWebhookLimiter.Middleware(), h.o2AlertWebhook)
@@ -145,6 +177,15 @@ func (h *Handler) putO2Settings(c *gin.Context) {
 }
 
 func (h *Handler) listAlerts(c *gin.Context) {
+	if !h.canManagePlatform(c) { // dev：仅项目侧策略
+		out, err := h.svc.listProjectAlerts(c.Request.Context())
+		if err != nil {
+			httpx.FailServer(c, err)
+			return
+		}
+		httpx.OK(c, out)
+		return
+	}
 	out, err := h.svc.ListAlerts(c.Request.Context())
 	if err != nil {
 		httpx.FailServer(c, err)
@@ -157,6 +198,10 @@ func (h *Handler) createAlert(c *gin.Context) {
 	var in SaveAlertInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if !h.canManagePlatform(c) {
+		httpx.Fail(c, 403, 403, "平台级告警（手写 SQL）仅管理员/运维可建，项目侧请用告警模板")
 		return
 	}
 	out, err := h.svc.CreateAlert(c.Request.Context(), in)
@@ -177,6 +222,10 @@ func (h *Handler) updateAlert(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	if !h.canManagePlatform(c) {
+		httpx.Fail(c, 403, 403, "平台级告警仅管理员/运维可改，项目侧请用告警模板")
+		return
+	}
 	if _, err := h.svc.UpdateAlert(c.Request.Context(), id, in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -189,6 +238,12 @@ func (h *Handler) deleteAlert(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.canManagePlatform(c) {
+		if a, err := h.svc.getAlert(c.Request.Context(), id); err != nil || a.ProjectID == 0 {
+			httpx.Fail(c, 403, 403, "平台级告警仅管理员/运维可删")
+			return
+		}
+	}
 	if err := h.svc.DeleteAlert(c.Request.Context(), id); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -197,6 +252,10 @@ func (h *Handler) deleteAlert(c *gin.Context) {
 }
 
 func (h *Handler) syncAllAlerts(c *gin.Context) {
+	if !h.canManagePlatform(c) {
+		httpx.Fail(c, 403, 403, "全量同步仅管理员/运维可用")
+		return
+	}
 	n, err := h.svc.SyncAllAlerts(c.Request.Context())
 	if err != nil {
 		httpx.FailServer(c, err)

@@ -16,6 +16,7 @@ import {
 } from '#/api/projects';
 import { getServerListApi } from '#/api/resources/server';
 
+import AlertPoliciesTab from './alert-policies-tab.vue';
 import ContainersTab from './containers-tab.vue';
 
 defineOptions({ name: 'ProjectDetailDrawer' });
@@ -279,6 +280,9 @@ function close() {
 
         <a-tab-pane key="containers" tab="容器 / Pod">
           <ContainersTab v-if="projectId" :env="env" :project-id="projectId" />
+        </a-tab-pane>
+        <a-tab-pane key="alert-policies" tab="告警策略">
+          <AlertPoliciesTab v-if="projectId" :project-id="projectId" />
         </a-tab-pane>
       </a-tabs>
     </a-spin>

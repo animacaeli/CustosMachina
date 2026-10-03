@@ -82,7 +82,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	releaseHandler := release.NewHandler(releaseService)
 	canaryHandler := canary.NewHandler(canaryService)
 	observService := observ.NewService(db, resourcesService, cipher)
-	observHandler := observ.NewHandler(observService)
+	observHandler := observ.NewHandler(observService, userRepository)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService)
 	slotsHandler := slots.NewHandler(slotsService)
 	cronService := cron.NewService(db, resourcesService)
