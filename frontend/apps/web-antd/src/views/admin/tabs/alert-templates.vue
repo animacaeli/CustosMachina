@@ -211,24 +211,44 @@ async function testRender() {
               placeholder="如：服务错误日志突增"
             />
           </a-form-item>
+          <a-form-item label="描述">
+            <a-input
+              v-model:value="form.description"
+              placeholder="项目侧选模板时可见的说明"
+            />
+          </a-form-item>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
           <a-form-item label="分类">
             <a-input
               v-model:value="form.category"
               placeholder="如：日志 / 数据库 / 主机"
             />
           </a-form-item>
+          <a-form-item label="查询类型">
+            <a-select
+              v-model:value="form.queryType"
+              :options="[
+                { label: 'SQL（日志流）', value: 'sql' },
+                { label: 'PromQL（指标）', value: 'promql' },
+              ]"
+            />
+          </a-form-item>
         </div>
-        <a-form-item label="描述">
-          <a-input
-            v-model:value="form.description"
-            placeholder="项目侧选模板时可见的说明"
-          />
-        </a-form-item>
         <a-form-item
-          label="查询体（占位符用 {{key}} 引用，类型本版为 sql）"
+          :extra="
+            form.queryType === 'promql'
+              ? 'PromQL 查询指标流（如 100 * (1 - avg by(instance) (rate(node_cpu_seconds_total[2m]))))'
+              : 'SQL 查询日志流，占位符用 {{key}} 引用'
+          "
+          label="查询体"
           required
         >
-          <YamlEditor v-model="form.query" height="180px" language="sql" />
+          <YamlEditor
+            v-model="form.query"
+            height="180px"
+            :language="form.queryType === 'promql' ? 'plaintext' : 'sql'"
+          />
         </a-form-item>
 
         <a-divider class="my-2" orientation="left" plain>占位符定义</a-divider>

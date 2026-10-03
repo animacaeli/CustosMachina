@@ -32,7 +32,7 @@ func TestRenderTemplates(t *testing.T) {
 			t.Errorf("cadvisor 模板缺 %q:\n%s", want, c)
 		}
 	}
-	vectorYAML := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json")
+	vectorYAML := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json", "default")
 	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
 		t.Errorf("vector 配置应指向 O2 地址:\n%s", vectorYAML)
 	}
@@ -44,6 +44,15 @@ func TestRenderTemplates(t *testing.T) {
 	}
 	if !strings.Contains(byName["vector"].Compose, "./vector.yaml:/etc/vector/vector.yaml:ro") {
 		t.Errorf("vector compose 应相对路径挂载同目录配置")
+	}
+	// R3：指标 remote write（scrape exporter → O2 _metrics 端点）
+	if !strings.Contains(vectorYAML, "prometheus_scrape") ||
+		!strings.Contains(vectorYAML, "http://127.0.0.1:8081/metrics") {
+		t.Errorf("vector 模板应采集宿主 exporter 指标:\n%s", vectorYAML)
+	}
+	if !strings.Contains(vectorYAML, "prometheus_remote_write") ||
+		!strings.Contains(vectorYAML, "http://10.0.0.1:5080/api/default/prometheus/api/v1/write") {
+		t.Errorf("vector 模板应 remote_write 到 O2 指标端点:\n%s", vectorYAML)
 	}
 	fb := renderFluentBitConf("http://u:p@10.0.0.1:5080/api/x/_json")
 	if !strings.Contains(fb, "http_User u") || !strings.Contains(fb, "http_Passwd p") {
@@ -92,7 +101,7 @@ func TestComponentLookup(t *testing.T) {
 
 // O2 地址内嵌 basic auth 时拆出渲染 sink auth 块。
 func TestRenderVectorAuth(t *testing.T) {
-	vectorYAML := renderVectorYAML("http://foo:bar@10.0.0.1:5080/api/default/custos/_json")
+	vectorYAML := renderVectorYAML("http://foo:bar@10.0.0.1:5080/api/default/custos/_json", "default")
 	if !strings.Contains(vectorYAML, "uri: http://10.0.0.1:5080/api/default/custos/_json") {
 		t.Errorf("uri 应去掉 userinfo:\n%s", vectorYAML)
 	}
@@ -100,7 +109,7 @@ func TestRenderVectorAuth(t *testing.T) {
 		t.Errorf("basic auth 块缺失:\n%s", vectorYAML)
 	}
 	// 无凭据时不渲染 auth 块
-	plain := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json")
+	plain := renderVectorYAML("http://10.0.0.1:5080/api/default/custos/_json", "default")
 	if strings.Contains(plain, "strategy: basic") {
 		t.Errorf("无凭据不应渲染 auth 块:\n%s", plain)
 	}

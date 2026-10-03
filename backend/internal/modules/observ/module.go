@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -112,6 +113,9 @@ var components = []*Component{
     image: %s
     container_name: custos-vector
     restart: unless-stopped
+    # host 网络：exporter 端口仅绑宿主 127.0.0.1（安全约定），
+    # 网桥地址（172.17.0.1）够不到——host 模式下 127.0.0.1 直达
+    network_mode: host
     environment:
       VECTOR_LOG: warn
     volumes:
@@ -139,23 +143,48 @@ var components = []*Component{
 
 // renderVectorYAML vector.yaml 默认模板（docker_logs 源 → O2 http sink；
 // O2 地址可内嵌 basic auth，拆出渲染进 auth 块）。
-func renderVectorYAML(o2URL string) string {
-	uri, authBlock := o2URL, ""
+// R3：附 prometheus_scrape（cadvisor/node-exporter 宿主约定端口）→
+// prometheus_remote_write 到 O2 指标端点（/api/{org}/_metrics），支撑 PromQL 告警。
+func renderVectorYAML(o2URL, org string) string {
+	uri, authBlock, user, pass := o2URL, "", "", ""
 	if at := strings.LastIndex(o2URL, "@"); at > len("https://") && strings.Contains(o2URL[:at], ":") {
 		schemeEnd := strings.Index(o2URL, "://") + 3
 		creds := o2URL[schemeEnd:at]
 		if sep := strings.Index(creds, ":"); sep > 0 {
 			uri = o2URL[:schemeEnd] + o2URL[at+1:]
+			user, pass = creds[:sep], creds[sep+1:]
 			authBlock = fmt.Sprintf(`    auth:
       strategy: basic
       user: %s
       password: %s
-`, creds[:sep], creds[sep+1:])
+`, user, pass)
 		}
+	}
+	// 指标 remote write：端点取 O2 地址的 origin（与告警 API 同源推导），
+	// 凭据复用采集地址内嵌 basic auth
+	rwEndpoint := ""
+	if u, err := url.Parse(o2URL); err == nil && u.Host != "" {
+		rwEndpoint = fmt.Sprintf("%s://%s/api/%s/prometheus/api/v1/write", u.Scheme, u.Host, org)
+	}
+	rwAuth := ""
+	if user != "" {
+		rwAuth = fmt.Sprintf(`    auth:
+      strategy: basic
+      user: %s
+      password: %s
+`, user, pass)
 	}
 	return fmt.Sprintf(`sources:
   docker_logs:
     type: docker_logs
+  # 宿主 exporter 指标（cadvisor=127.0.0.1:8081 / node-exporter=:9100，
+  # observ 部署约定仅绑本机回环；vector 走 host 网络直达）
+  host_metrics:
+    type: prometheus_scrape
+    endpoints:
+      - http://127.0.0.1:8081/metrics
+      - http://127.0.0.1:9100/metrics
+    scrape_interval_secs: 15
 transforms:
   # O2 的访问日志中间件行采回 O2 会形成自激环（每次 POST 生成一条新访问
   # 日志 → 再被采集 → 无限循环）；按模块签名过滤，与其余日志无关
@@ -173,7 +202,12 @@ sinks:
       codec: json
     healthcheck:
       enabled: true
-%s`, uri, authBlock)
+%s
+  o2_metrics:
+    type: prometheus_remote_write
+    inputs: [host_metrics]
+    endpoint: %s
+%s`, uri, authBlock, rwEndpoint, rwAuth)
 }
 
 // renderFluentBitConf fluent-bit.conf 默认模板（docker 输入 → O2 http json_lines 输出）。
@@ -216,7 +250,11 @@ func componentDefaults(ctx context.Context, s *Service, c *Component) {
 	for i, cf := range c.ConfigFiles {
 		switch {
 		case c.Name == "vector" && cf.Filename == "vector.yaml":
-			c.ConfigFiles[i].Content = renderVectorYAML(s.O2URL(ctx))
+			org, _ := s.setting(ctx, settingO2Org)
+			if org == "" {
+				org = "default"
+			}
+			c.ConfigFiles[i].Content = renderVectorYAML(s.O2URL(ctx), org)
 		case c.Name == "fluent-bit" && cf.Filename == "fluent-bit.conf":
 			c.ConfigFiles[i].Content = renderFluentBitConf(s.O2URL(ctx))
 		}

@@ -234,6 +234,9 @@ func (s *Service) RenderTemplate(ctx context.Context, templateID uint, params ma
 	for _, p := range t.Placeholders() {
 		ph[p.Key] = p
 	}
+	// PromQL 模板的字符串占位符直接替换原文（不加 SQL 引号——
+	// PromQL 里的引号/区间如 "[2m]" 由模板作者掌控）
+	rawStrings := t.QueryType == "promql"
 	var missing []string
 	rendered := placeholderRe.ReplaceAllStringFunc(t.Query, func(m string) string {
 		key := placeholderRe.FindStringSubmatch(m)[1]
@@ -251,6 +254,9 @@ func (s *Service) RenderTemplate(ctx context.Context, templateID uint, params ma
 			} else {
 				return "''"
 			}
+		}
+		if rawStrings {
+			return v
 		}
 		if p.Type == "number" {
 			if _, err := strconv.ParseFloat(v, 64); err != nil {
@@ -294,7 +300,14 @@ func (s *Service) InstantiateFromTemplate(ctx context.Context, in SaveAlertInput
 	// 服务端强制覆盖：忽略客户端传入的 SQL 与流名（模板语义），触发参数缺省取模板
 	out := in
 	out.SQL = sql
-	if strings.TrimSpace(in.StreamName) == "" {
+	// 查询类型随模板（promql 型同步 O2 时走 metrics + promql_condition；
+	// O2 校验 stream 存在——取查询里的主指标名作为流名）
+	if t.QueryType == "promql" {
+		out.QueryType = "promql"
+		if strings.TrimSpace(out.StreamName) == "" {
+			out.StreamName = firstMetricName(sql)
+		}
+	} else if strings.TrimSpace(in.StreamName) == "" {
 		out.StreamName = "default"
 	}
 	if out.Period == 0 {
@@ -473,4 +486,37 @@ func mergeAlertName(oldName, newName string) string {
 		return oldName
 	}
 	return newName
+}
+
+// firstMetricName 从 PromQL 提取第一个指标名（跳过函数/关键字）——
+// O2 的 promql 告警要求 stream_name 指向真实存在的 metrics 流。
+var promqlFuncs = map[string]bool{
+	"rate": true, "irate": true, "increase": true, "delta": true, "idelta": true,
+	"avg": true, "sum": true, "min": true, "max": true, "count": true,
+	"stddev": true, "stdvar": true, "quantile": true, "topk": true, "bottomk": true,
+	"by": true, "without": true, "on": true, "ignoring": true, "group_left": true,
+	"group_right": true, "offset": true, "bool": true, "and": true, "or": true,
+	"unless": true, "vector": true, "scalar": true, "absent": true, "clamp": true,
+}
+
+var (
+	// 指标选择器形态：指标名后紧跟 {（最可靠——label selector）
+	metricSelectorRe = regexp.MustCompile(`([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\{`)
+	metricNameRe     = regexp.MustCompile(`[a-zA-Z_:][a-zA-Z0-9_:]*`)
+)
+
+func firstMetricName(promql string) string {
+	// 1) 带 label selector 的指标名（avg by(instance) 的 label 不会带 {）
+	for _, m := range metricSelectorRe.FindAllStringSubmatch(promql, -1) {
+		if name := m[1]; !promqlFuncs[name] {
+			return name
+		}
+	}
+	// 2) 退化：第一个非函数 token
+	for _, tok := range metricNameRe.FindAllString(promql, -1) {
+		if !promqlFuncs[tok] {
+			return tok
+		}
+	}
+	return "node_cpu_seconds_total" // 兜底：主机 CPU 指标恒有（observ 部署约定）
 }

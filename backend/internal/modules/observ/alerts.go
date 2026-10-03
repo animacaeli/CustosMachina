@@ -64,6 +64,8 @@ type Alert struct {
 	Description string `gorm:"size:255" json:"description"`
 	// 平台侧扩展
 	Level string `gorm:"size:8;not null;default:warn" json:"level"` // info|warn|critical（路由用）
+	// R3：查询类型（sql=日志流 SQL；promql=指标，O2 stream_type=metrics）
+	QueryType string `gorm:"size:16;not null;default:sql" json:"queryType"`
 	// R1 模板化：项目侧策略归属与来源模板（paramsSnapshot 记录实例化参数——
 	// 模板后续修改不漂移，重新填充才更新）
 	ProjectID      uint   `gorm:"index;not null;default:0" json:"projectId"` // 0 = 平台级（管理后台直建）
@@ -77,6 +79,13 @@ type Alert struct {
 }
 
 func (Alert) TableName() string { return "observ_alerts" }
+
+func queryTypeOrDefault(q string) string {
+	if q == "promql" {
+		return "promql"
+	}
+	return "sql"
+}
 
 // ---- O2 连接 ----
 
@@ -192,6 +201,7 @@ type SaveAlertInput struct {
 	Enabled     bool   `json:"enabled"`
 	Description string `json:"description" binding:"max=255"`
 	Level       string `json:"level" binding:"required,oneof=info warn critical"`
+	QueryType   string `json:"queryType"` // sql | promql（模板实例化带入）
 	// R1 模板化：项目侧经模板实例化时携带（dev 强制走该路径）
 	ProjectID  uint              `json:"projectId"`
 	TemplateID uint              `json:"templateId"`
@@ -250,7 +260,7 @@ func (s *Service) UpdateAlert(ctx context.Context, id uint, in SaveAlertInput) (
 		"name": a.Name, "stream_name": a.StreamName, "stream_type": a.StreamType,
 		"sql": a.SQL, "period": a.Period, "operator": a.Operator, "threshold": a.Threshold,
 		"frequency": a.Frequency, "silence": a.Silence, "enabled": a.Enabled,
-		"description": a.Description, "level": a.Level,
+		"description": a.Description, "level": a.Level, "query_type": queryTypeOrDefault(a.QueryType),
 		"project_id": a.ProjectID, "template_id": a.TemplateID, "params_snapshot": a.ParamsSnapshot,
 		"sync_status": SyncPending, "sync_error": "",
 	}).Error; err != nil {
@@ -296,6 +306,7 @@ func alertFromInput(in SaveAlertInput) *Alert {
 		Name: in.Name, StreamName: in.StreamName, StreamType: st,
 		SQL: in.SQL, Period: in.Period, Operator: in.Operator, Threshold: in.Threshold,
 		Frequency: in.Frequency, Silence: in.Silence, Enabled: in.Enabled,
+		QueryType: queryTypeOrDefault(in.QueryType),
 		ProjectID: in.ProjectID, TemplateID: in.TemplateID, ParamsSnapshot: paramsJSON,
 		Description: in.Description, Level: in.Level,
 	}
@@ -358,16 +369,32 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 	if err := s.ensureO2Infra(ctx, cfg); err != nil {
 		return fmt.Errorf("初始化 destination/template 失败: %w", err)
 	}
+	streamType := a.StreamType
+	qc := map[string]any{
+		"type":   "sql",
+		"sql":    a.SQL,
+		"promql": nil,
+	}
+	if queryTypeOrDefault(a.QueryType) == "promql" {
+		streamType = "metrics"
+		qc = map[string]any{
+			"type":   "promql",
+			"sql":    nil,
+			"promql": a.SQL,
+			"promql_condition": map[string]any{
+				"column":      "value", // O2 Condition 必填（PromQL 语义固定 value）
+				"operator":    a.Operator,
+				"value":       a.Threshold,
+				"ignore_case": false,
+			},
+		}
+	}
 	body := map[string]any{
-		"name":        s.o2NameFor(a),
-		"org_id":      cfg.Org,
-		"stream_type": a.StreamType,
-		"stream_name": a.StreamName,
-		"query_condition": map[string]any{
-			"type":   "sql",
-			"sql":    a.SQL,
-			"promql": nil,
-		},
+		"name":            s.o2NameFor(a),
+		"org_id":          cfg.Org,
+		"stream_type":     streamType,
+		"stream_name":     a.StreamName,
+		"query_condition": qc,
 		"trigger_condition": map[string]any{
 			"period":         a.Period,
 			"operator":       a.Operator,

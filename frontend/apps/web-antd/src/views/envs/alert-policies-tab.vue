@@ -50,6 +50,7 @@ onMounted(load);
 
 const columns = [
   { title: '策略名', dataIndex: 'name', width: 160 },
+  { title: '类型', dataIndex: 'queryType', width: 80 },
   { title: '来源模板', key: 'tpl', width: 150 },
   { title: '级别', dataIndex: 'level', width: 80 },
   { title: '阈值', key: 'threshold', width: 90 },
