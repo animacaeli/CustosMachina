@@ -27,6 +27,8 @@ export interface SaveO2AlertInput {
   level: 'critical' | 'info' | 'warn';
   name: string;
   operator: string;
+  /** sql | promql（留空=sql）；promql 时数据流填指标名 */
+  queryType?: 'promql' | 'sql';
   period: number;
   silence: number;
   sql: string;

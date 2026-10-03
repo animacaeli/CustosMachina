@@ -297,3 +297,47 @@ func TestAlertUpsertByID(t *testing.T) {
 		}
 	}
 }
+
+// R4：旧路径（平台直建，非模板）PromQL 型告警同步——stream_name/类型/priority 正确。
+func TestPromqlAlertSyncLegacy(t *testing.T) {
+	svc, o2, _, alertCalls := alertsTestEnv(t)
+	ctx := context.Background()
+	// 建库表（projects 供前缀）
+	if err := svc.db.Exec(`CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.db.Exec(`INSERT OR IGNORE INTO projects (id, name) VALUES (1, 'Demo Project')`)
+	_ = svc.db.Exec(`INSERT OR IGNORE INTO projects (id, name) VALUES (2, 'demo')`)
+
+	a, err := svc.CreateAlert(ctx, SaveAlertInput{
+		Name: "cpu-legacy", StreamName: "node_cpu_seconds_total", StreamType: "metrics",
+		SQL:       "100 * (1 - avg by(instance) (rate(node_cpu_seconds_total[2m])))",
+		QueryType: "promql",
+		Period:    5, Operator: ">", Threshold: 80, Frequency: 1,
+		Enabled: true, Level: "critical", ProjectID: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var got Alert
+		svc.db.First(&got, a.ID)
+		if got.SyncStatus == SyncOK {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var got Alert
+	svc.db.First(&got, a.ID)
+	if got.SyncStatus != SyncOK {
+		t.Fatalf("PromQL 旧路径同步: status=%s err=%s", got.SyncStatus, got.SyncError)
+	}
+	if got.QueryType != "promql" {
+		t.Fatalf("queryType 未落库: %s", got.QueryType)
+	}
+	if atomic.LoadInt64(alertCalls) == 0 {
+		t.Fatal("应已调 O2 alerts API")
+	}
+	_ = o2
+}

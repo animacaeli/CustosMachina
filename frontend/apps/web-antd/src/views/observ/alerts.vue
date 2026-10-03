@@ -38,6 +38,7 @@ onMounted(load);
 const columns = [
   { title: 'ID', dataIndex: 'id', width: 56 },
   { title: '名称', dataIndex: 'name' },
+  { title: '类型', key: 'qtype', width: 70 },
   { title: '数据流', key: 'stream', width: 160 },
   { title: '条件', key: 'cond', width: 170 },
   { title: '级别', dataIndex: 'level', width: 90 },
@@ -53,6 +54,7 @@ const form = reactive({
   name: '',
   streamName: '',
   streamType: 'logs' as 'logs' | 'metrics' | 'traces',
+  queryType: 'sql' as 'promql' | 'sql',
   sql: '',
   period: 10,
   operator: '>=',
@@ -70,6 +72,7 @@ function openCreate() {
     name: '',
     streamName: '',
     streamType: 'logs',
+    queryType: 'sql',
     sql: '',
     period: 10,
     operator: '>=',
@@ -89,6 +92,7 @@ function openEdit(a: O2Alert) {
     name: a.name,
     streamName: a.streamName,
     streamType: a.streamType,
+    queryType: (a as any).queryType === 'promql' ? 'promql' : 'sql',
     sql: a.sql,
     period: a.period,
     operator: a.operator,
@@ -214,6 +218,11 @@ const levelColor: Record<string, string> = {
         <template v-if="column.key === 'stream'">
           {{ record.streamName }}（{{ record.streamType }}）
         </template>
+        <template v-else-if="column.key === 'qtype'">
+          <a-tag :color="record.queryType === 'promql' ? 'purple' : 'blue'">
+            {{ record.queryType === 'promql' ? 'PromQL' : 'SQL' }}
+          </a-tag>
+        </template>
         <template v-else-if="column.key === 'cond'">
           {{ record.operator }} {{ record.threshold }} 条 /
           {{ record.period }} 分钟，每 {{ record.frequency }} 分钟查
@@ -258,6 +267,12 @@ const levelColor: Record<string, string> = {
         <a-form-item label="告警名称" required>
           <a-input v-model:value="form.name" placeholder="如 error-spike" />
         </a-form-item>
+        <a-form-item label="查询类型">
+          <a-radio-group v-model:value="form.queryType">
+            <a-radio value="sql">SQL（日志）</a-radio>
+            <a-radio value="promql">PromQL（指标）</a-radio>
+          </a-radio-group>
+        </a-form-item>
         <a-form-item label="数据流" required>
           <div class="flex gap-2">
             <a-input
@@ -276,7 +291,11 @@ const levelColor: Record<string, string> = {
             />
           </div>
         </a-form-item>
-        <a-form-item label="SQL 查询" required>
+        <a-form-item
+          extra="SQL 查日志流 / PromQL 查指标流（promql 型数据流填指标名）"
+          label="查询体"
+          required
+        >
           <a-textarea
             v-model:value="form.sql"
             :rows="4"
