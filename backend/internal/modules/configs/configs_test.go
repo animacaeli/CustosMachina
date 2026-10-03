@@ -249,3 +249,65 @@ func TestValidateRelPath(t *testing.T) {
 		t.Fatalf("字段未落库: %+v", f)
 	}
 }
+
+// 环境同步：覆盖生成新版本 + 缺失建档（目标主机跟随目标环境）。
+func TestEnvSync(t *testing.T) {
+	svc, db, _ := testSvc(t)
+	ctx := context.Background()
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'prod', 10), (1, 'test', 20)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	src, err := svc.Create(ctx, SaveFileInput{
+		Name: "app", ServerID: 10, Path: "/opt/app/a.yaml", Format: "yaml",
+		ApplyAction: "none", ProjectID: 1, RelPath: "prod/app.yaml", Content: "v: 1",
+	}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 同 prod → test：新建
+	c1, u1, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "test"}, "t")
+	if err != nil || c1 != 1 || u1 != 0 {
+		t.Fatalf("首次同步: c=%d u=%d err=%v", c1, u1, err)
+	}
+	var dst File
+	if err := db.Where("project_id = 1 AND rel_path = ?", "test/app.yaml").First(&dst).Error; err != nil {
+		t.Fatal("目标文件未建档", err)
+	}
+	if dst.ServerID != 20 {
+		t.Fatalf("目标主机应跟随目标环境: %d", dst.ServerID)
+	}
+	if dst.Content != "v: 1" {
+		t.Fatalf("内容未同步: %q", dst.Content)
+	}
+	// 源更新后再同步：覆盖生成新版本
+	if err := svc.SaveContent(ctx, src.ID, "v: 2", "t"); err != nil {
+		t.Fatal(err)
+	}
+	c2, u2, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "test"}, "t")
+	if err != nil || c2 != 0 || u2 != 1 {
+		t.Fatalf("二次同步: c=%d u=%d err=%v", c2, u2, err)
+	}
+	if err := db.First(&dst, dst.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dst.Content != "v: 2" {
+		t.Fatalf("覆盖未生效: %q", dst.Content)
+	}
+	var n int64
+	if err := db.Model(&Version{}).Where("file_id = ? AND source = ?", dst.ID, SourceEnvSync).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("env_sync 版本数不符: %d", n)
+	}
+	// 同环境拒绝 / 未绑定环境拒绝
+	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "prod"}, "t"); err == nil {
+		t.Fatal("同环境应拒绝")
+	}
+	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "canary"}, "t"); err == nil {
+		t.Fatal("未绑定目标环境应拒绝")
+	}
+}

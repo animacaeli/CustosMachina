@@ -49,6 +49,7 @@ const (
 	SourceEdit     = "edit"   // 手动编辑保存
 	SourceDeploy   = "deploy" // 下发时快照
 	SourceRollback = "rollback"
+	SourceEnvSync  = "env_sync" // 环境同步覆盖/建档
 )
 
 // File 配置文件定义。
@@ -427,4 +428,79 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// EnvSyncInput 环境同步：把源环境（可选子前缀）下的配置文件内容完整同步到
+// 目标环境——目标已存在则生成新版本，不存在则建档（目标主机自动取目标环境
+// 的部署目标，远端路径沿用源文件）。
+type EnvSyncInput struct {
+	ProjectID uint   `json:"projectId" binding:"required"`
+	SourceEnv string `json:"sourceEnv" binding:"required,oneof=prod canary test"`
+	TargetEnv string `json:"targetEnv" binding:"required,oneof=prod canary test"`
+	SubPath   string `json:"subPath" binding:"omitempty,max=512"`
+}
+
+// EnvSync 执行环境同步；返回新建/覆盖计数。内容只进版本链，不自动下发。
+func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (created, updated int, err error) {
+	if in.SourceEnv == in.TargetEnv {
+		return 0, 0, fmt.Errorf("源与目标环境相同")
+	}
+	sub := strings.Trim(strings.TrimSpace(in.SubPath), "/")
+	for _, seg := range strings.Split(sub, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			if sub == "" {
+				break
+			}
+			return 0, 0, fmt.Errorf("子路径不合法: %q", seg)
+		}
+	}
+	// 目标环境须已绑定部署目标（新建文件的主机来源）
+	var targetServer uint
+	if err := s.db.WithContext(ctx).Table("project_env_targets").
+		Select("server_id").Where("project_id = ? AND env_type = ?", in.ProjectID, in.TargetEnv).
+		Scan(&targetServer).Error; err != nil {
+		return 0, 0, err
+	}
+	if targetServer == 0 {
+		return 0, 0, fmt.Errorf("项目未配置 %s 环境的部署目标", in.TargetEnv)
+	}
+	prefix := in.SourceEnv
+	if sub != "" {
+		prefix = in.SourceEnv + "/" + sub
+	}
+	var sources []File
+	if err := s.db.WithContext(ctx).
+		Where("project_id = ? AND rel_path LIKE ?", in.ProjectID, prefix+"/%").
+		Find(&sources).Error; err != nil {
+		return 0, 0, err
+	}
+	if len(sources) == 0 {
+		return 0, 0, fmt.Errorf("源路径 %s 下没有配置文件", prefix)
+	}
+	for _, src := range sources {
+		rest := strings.TrimPrefix(src.RelPath, in.SourceEnv) // /xxx/yyy.yaml
+		dstRel := in.TargetEnv + rest
+		var dst File
+		e := s.db.WithContext(ctx).Where("project_id = ? AND rel_path = ?", in.ProjectID, dstRel).First(&dst).Error
+		if e == nil {
+			dst.Content = src.Content
+			if err := s.db.WithContext(ctx).Model(&File{}).Where("id = ?", dst.ID).
+				Update("content", src.Content).Error; err != nil {
+				return created, updated, err
+			}
+			s.snapVersion(ctx, dst.ID, src.Content, SourceEnvSync, by)
+			updated++
+		} else {
+			nf := src
+			nf.ID = 0
+			nf.RelPath = dstRel
+			nf.ServerID = targetServer
+			if err := s.db.WithContext(ctx).Create(&nf).Error; err != nil {
+				return created, updated, err
+			}
+			s.snapVersion(ctx, nf.ID, src.Content, SourceEnvSync, by)
+			created++
+		}
+	}
+	return created, updated, nil
 }

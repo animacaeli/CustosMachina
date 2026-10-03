@@ -3,12 +3,14 @@ import type { ConfigFile, ConfigVersion } from '#/api/configs';
 
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
+import { DownOutlined } from '@ant-design/icons-vue';
 import { message } from 'ant-design-vue';
 
 import {
   createConfigFileApi,
   deleteConfigFileApi,
   deployConfigApi,
+  envSyncConfigApi,
   getConfigContentApi,
   getConfigFilesApi,
   getConfigVersionContentApi,
@@ -278,6 +280,104 @@ async function deploy() {
     message.error(error?.response?.data?.message || '下发失败');
   } finally {
     deploying.value = 0;
+  }
+}
+
+// ---- 更多菜单：历史版本 / 环境同步 / 导入 / 导出 ----
+const historyOpen = ref(false);
+const importInput = ref<HTMLInputElement | null>(null);
+
+function onMoreMenu({ key }: { key: number | string }) {
+  if (key === 'history') historyOpen.value = true;
+  if (key === 'env-sync') {
+    envSyncForm.sourceEnv =
+      currentDir.value[0] ?? envOptions.value.at(0)?.value;
+    envSyncForm.targetEnv = undefined;
+    envSyncForm.subPath = currentDir.value.slice(1).join('/');
+    envSyncOpen.value = true;
+  }
+  if (key === 'export') exportFile();
+  if (key === 'import') importInput.value?.click();
+}
+
+const EXT_BY_FORMAT: Record<string, string> = {
+  env: '.env',
+  ini: '.ini',
+  json: '.json',
+  toml: '.toml',
+  yaml: '.yaml',
+};
+
+function exportFile() {
+  if (!selected.value) return;
+  const ext = EXT_BY_FORMAT[selected.value.format] ?? '.txt';
+  const blob = new Blob([content.value], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download =
+    (selected.value.relPath.split('/').at(-1) ?? selected.value.name).replace(
+      /\.[^.]+$/,
+      '',
+    ) + ext;
+  a.click();
+  URL.revokeObjectURL(url);
+  message.success('已导出（敏感文件为脱敏内容，明文需先查看）');
+}
+
+async function onImportFile(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || !selected.value) return;
+  if (contentMasked.value) {
+    message.warning('脱敏视图不能导入（先查看明文）');
+    return;
+  }
+  const text = await file.text();
+  if (text.length > 1024 * 1024) {
+    message.error('文件超过 1MB 上限');
+    return;
+  }
+  content.value = text;
+  message.success(`已导入 ${file.name} 到编辑器（点「仅保存」生成新版本）`);
+}
+
+// ---- 环境同步 ----
+const envSyncOpen = ref(false);
+const envSyncing = ref(false);
+const envSyncForm = reactive({
+  sourceEnv: undefined as string | undefined,
+  targetEnv: undefined as string | undefined,
+  subPath: '',
+});
+
+async function doEnvSync() {
+  if (
+    !currentProject.value ||
+    !envSyncForm.sourceEnv ||
+    !envSyncForm.targetEnv
+  ) {
+    message.warning('请选择源与目标环境');
+    return;
+  }
+  envSyncing.value = true;
+  try {
+    const r = await envSyncConfigApi({
+      projectId: currentProject.value,
+      sourceEnv: envSyncForm.sourceEnv,
+      targetEnv: envSyncForm.targetEnv,
+      subPath: envSyncForm.subPath.trim(),
+    });
+    message.success(
+      `同步完成：新建 ${r.created}、覆盖 ${r.updated}（不自动下发）`,
+    );
+    envSyncOpen.value = false;
+    await load();
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '同步失败');
+  } finally {
+    envSyncing.value = false;
   }
 }
 
@@ -552,6 +652,20 @@ async function remove(f: ConfigFile) {
               >
                 查看明文（审计）
               </a-button>
+              <a-dropdown>
+                <a-button size="small">
+                  更多
+                  <DownOutlined class="ml-1 text-xs" />
+                </a-button>
+                <template #overlay>
+                  <a-menu @click="onMoreMenu">
+                    <a-menu-item key="history">历史版本</a-menu-item>
+                    <a-menu-item key="env-sync">环境同步</a-menu-item>
+                    <a-menu-item key="export">导出</a-menu-item>
+                    <a-menu-item key="import">导入</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
               <a-button size="small" @click="openEdit(selected)">设置</a-button>
               <a-popconfirm title="确认删除？" @confirm="remove(selected)">
                 <a-button danger size="small">删除</a-button>
@@ -560,87 +674,141 @@ async function remove(f: ConfigFile) {
                 脱敏视图（编辑禁用）
               </a-tag>
             </div>
-            <a-spin
-              :spinning="contentLoading"
-              wrapper-class-name="min-h-0 flex-1"
-            >
-              <YamlEditor
-                v-model="content"
-                height="100%"
-                :language="editorLang"
-                :read-only="contentMasked"
-              />
-            </a-spin>
           </template>
+          <div v-show="selected" class="editor-host min-h-0 flex-1">
+            <YamlEditor
+              v-model="content"
+              height="calc(100vh - 320px)"
+              :language="editorLang"
+              :read-only="contentMasked"
+            />
+          </div>
           <a-empty
-            v-else
+            v-if="!selected"
             class="m-auto"
             description="从左侧选择文件（目录树按 环境/子目录 组织）"
           />
         </div>
-
-        <!-- 版本侧栏 -->
-        <div
-          v-if="selected"
-          class="flex w-80 shrink-0 flex-col gap-2 overflow-auto rounded border p-2"
-        >
-          <div class="text-sm font-medium">版本历史（勾选两个对比 diff）</div>
-          <a-table
-            :columns="[
-              { title: '', key: 'pick', width: 32 },
-              { title: '指纹', dataIndex: 'hash', width: 110 },
-              { title: '来源', dataIndex: 'source', width: 70 },
-              { title: '操作', key: 'op', width: 120 },
-            ]"
-            :data-source="versions"
-            :pagination="{ pageSize: 10 }"
-            row-key="id"
-            size="small"
-          >
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'pick'">
-                <a-checkbox
-                  :checked="diffPair.some((d) => d.id === record.id)"
-                  :disabled="
-                    !diffPair.some((d) => d.id === record.id) &&
-                    diffPair.length >= 2
-                  "
-                  @change="(e: any) => toggleDiff(record, e.target.checked)"
-                />
-              </template>
-              <template v-else-if="column.key === 'op'">
-                <a-space>
-                  <a-button
-                    size="small"
-                    type="link"
-                    @click="viewVersion(record)"
-                  >
-                    查看
-                  </a-button>
-                  <a-popconfirm
-                    :title="`回滚到 ${record.hash}？（回滚后需手动下发）`"
-                    @confirm="doRollback(record)"
-                  >
-                    <a-button danger size="small" type="link">回滚</a-button>
-                  </a-popconfirm>
-                </a-space>
-              </template>
-            </template>
-          </a-table>
-          <template v-if="diffPair.length === 2">
-            <div class="text-muted-foreground text-xs">
-              {{ diffPair[0]?.hash }} → {{ diffPair[1]?.hash }}
-            </div>
-            <DiffEditor
-              :language="editorLang"
-              :original="diffOriginal"
-              :value="diffModified"
-              height="360px"
-            />
-          </template>
-        </div>
       </div>
     </div>
+
+    <!-- 历史版本抽屉（宽，diff 并排） -->
+    <a-drawer
+      v-model:open="historyOpen"
+      :title="`历史版本 · ${selected?.name ?? ''}`"
+      width="min(1100px, 92vw)"
+    >
+      <div class="flex flex-col gap-3">
+        <div class="text-muted-foreground text-xs">
+          勾选任意两个版本对比差异（git diff
+          视图，并排/行内可切）；回滚会生成新版本，需手动下发
+        </div>
+        <a-table
+          :columns="[
+            { title: '', key: 'pick', width: 32 },
+            { title: '指纹', dataIndex: 'hash', width: 130 },
+            { title: '来源', dataIndex: 'source', width: 90 },
+            { title: '操作人', dataIndex: 'createdBy', width: 120 },
+            { title: '时间', dataIndex: 'createdAt' },
+            { title: '操作', key: 'op', width: 150 },
+          ]"
+          :data-source="versions"
+          :pagination="{ pageSize: 10 }"
+          row-key="id"
+          size="small"
+        >
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'pick'">
+              <a-checkbox
+                :checked="diffPair.some((d) => d.id === record.id)"
+                :disabled="
+                  !diffPair.some((d) => d.id === record.id) &&
+                  diffPair.length >= 2
+                "
+                @change="(e: any) => toggleDiff(record, e.target.checked)"
+              />
+            </template>
+            <template v-else-if="column.key === 'op'">
+              <a-space>
+                <a-button size="small" type="link" @click="viewVersion(record)">
+                  查看
+                </a-button>
+                <a-popconfirm
+                  :title="`回滚到 ${record.hash}？（回滚后需手动下发）`"
+                  @confirm="doRollback(record)"
+                >
+                  <a-button danger size="small" type="link">回滚</a-button>
+                </a-popconfirm>
+              </a-space>
+            </template>
+          </template>
+        </a-table>
+        <template v-if="diffPair.length === 2">
+          <div class="text-muted-foreground text-xs">
+            {{ diffPair[0]?.hash }} → {{ diffPair[1]?.hash }}
+          </div>
+          <DiffEditor
+            :language="editorLang"
+            :original="diffOriginal"
+            :value="diffModified"
+            height="380px"
+          />
+        </template>
+      </div>
+    </a-drawer>
+
+    <!-- 环境同步模态 -->
+    <a-modal
+      v-model:open="envSyncOpen"
+      :confirm-loading="envSyncing"
+      title="环境同步"
+      width="520px"
+      @ok="doEnvSync"
+    >
+      <a-form layout="vertical">
+        <a-form-item
+          extra="把源环境（可选子前缀）下的全部配置文件内容完整同步到目标环境：已存在则生成新版本，不存在则建档（目标主机自动取目标环境部署目标）。仅同步内容，不自动下发。"
+          label="同步范围"
+          required
+        >
+          <div class="flex items-center gap-2">
+            <a-select
+              v-model:value="envSyncForm.sourceEnv"
+              :options="envOptions"
+              placeholder="源环境"
+              style="width: 120px"
+            />
+            <span>→</span>
+            <a-select
+              v-model:value="envSyncForm.targetEnv"
+              :options="
+                envOptions.filter((o) => o.value !== envSyncForm.sourceEnv)
+              "
+              placeholder="目标环境"
+              style="width: 120px"
+            />
+          </div>
+        </a-form-item>
+        <a-form-item
+          extra="留空 = 同步该环境全部；如 dev1 只同步该子目录"
+          label="子前缀（当前路径）"
+        >
+          <a-input
+            v-model:value="envSyncForm.subPath"
+            :placeholder="currentDir.slice(1).join('/')"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 导入（隐藏 file input，内容读入编辑器待保存） -->
+    <input
+      ref="importInput"
+      accept=".json,.jsonc,.yaml,.yml,.toml,.ini,.env,.conf,.txt"
+      hidden
+      type="file"
+      @change="onImportFile"
+    />
 
     <!-- 新建/设置弹窗 -->
     <a-modal

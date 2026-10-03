@@ -94,3 +94,16 @@ export async function getConfigVersionContentApi(
 export async function rollbackConfigApi(id: number, versionId: number) {
   return requestClient.post(`/config-files/${id}/rollback`, { versionId });
 }
+
+/** 环境同步：源环境（可选子前缀）内容完整同步到目标环境 */
+export async function envSyncConfigApi(data: {
+  projectId: number;
+  sourceEnv: string;
+  subPath?: string;
+  targetEnv: string;
+}) {
+  return requestClient.post<{ created: number; updated: number }>(
+    '/config-files/env-sync',
+    data,
+  );
+}

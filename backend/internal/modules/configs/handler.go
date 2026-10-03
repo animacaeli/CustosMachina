@@ -29,6 +29,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.GET("/:id/versions", h.listVersions)
 		g.GET("/:id/versions/:vid", h.getVersionContent)
 		g.POST("/:id/rollback", h.rollback)
+		g.POST("/env-sync", h.envSync)
 	}
 }
 
@@ -181,4 +182,19 @@ func (h *Handler) rollback(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, gin.H{"rolled": true})
+}
+
+// envSync POST /config-files/env-sync 环境同步（admin/ops 写权限由 rbac 矩阵约束）。
+func (h *Handler) envSync(c *gin.Context) {
+	var in EnvSyncInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	created, updated, err := h.svc.EnvSync(c.Request.Context(), in, actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"created": created, "updated": updated})
 }
