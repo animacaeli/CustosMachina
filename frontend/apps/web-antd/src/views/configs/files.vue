@@ -116,6 +116,9 @@ interface TreeNode {
   title: string;
 }
 
+// 手动新建的空目录（虚拟节点，会话内有效——目录本质由文件派生，落文件后固化）
+const ephemeralDirs = ref<string[]>([]);
+
 const treeData = computed<TreeNode[]>(() => {
   const root: TreeNode = { key: '', title: '', isLeaf: false, children: [] };
   for (const f of projectFiles.value) {
@@ -140,6 +143,22 @@ const treeData = computed<TreeNode[]>(() => {
       file: f,
     });
   }
+  for (const dir of ephemeralDirs.value) {
+    const segs = dir.split('/').filter(Boolean);
+    if (segs.length === 0) continue;
+    let node = root;
+    let prefix = '';
+    for (const seg of segs) {
+      prefix = prefix ? `${prefix}/${seg}` : seg;
+      node.children ??= [];
+      let next = node.children.find((cn) => !cn.isLeaf && cn.title === seg);
+      if (!next) {
+        next = { key: `/${prefix}`, title: seg, isLeaf: false, children: [] };
+        node.children.push(next);
+      }
+      node = next;
+    }
+  }
   const sortRec = (n: TreeNode) => {
     n.children?.sort((a, b) => {
       if (a.isLeaf !== b.isLeaf) return a.isLeaf ? 1 : -1;
@@ -157,12 +176,16 @@ const selected = ref<ConfigFile | null>(null);
 function onSelectFile(_keys: number[] | string[], info: any) {
   const f = info?.node?.file as ConfigFile | undefined;
   if (f) {
+    // 文件：地址栏实时到全路径（末段文件名不可再点）
+    if (f.relPath) currentDir.value = f.relPath.split('/').filter(Boolean);
     openContent(f);
     return;
   }
-  // 目录节点：点击切换展开（expandedKeys 受控，antd 不会自动加）
+  // 目录：地址栏切到该目录 + 清空文件选中（编辑器随之隐藏）+ 切换展开
   const key = info?.node?.key;
   if (typeof key === 'string' && key) {
+    currentDir.value = key.split('/').filter(Boolean);
+    selected.value = null;
     expandedKeys.value = expandedKeys.value.includes(key)
       ? expandedKeys.value.filter((k) => k !== key)
       : [...expandedKeys.value, key];
@@ -195,10 +218,9 @@ watch(
   () => selected.value,
   (f) => {
     if (f?.relPath) {
-      const segs = f.relPath.split('/').filter(Boolean);
-      currentDir.value = segs.slice(0, -1);
+      // 展开沿途目录（地址栏由 onSelect 统一驱动，不在此覆盖）
       let prefix = '';
-      for (const seg of segs.slice(0, -1)) {
+      for (const seg of f.relPath.split('/').filter(Boolean).slice(0, -1)) {
         prefix = `${prefix}/${seg}`;
         if (!expandedKeys.value.includes(prefix))
           expandedKeys.value.push(prefix);
@@ -283,10 +305,23 @@ async function reveal() {
 const savingContent = ref(false);
 async function saveContent() {
   if (!selected.value || contentMasked.value) return;
+  const fmt = selected.value.format;
+  let toSave = editorText.value;
+  if (viewFormat.value !== fmt) {
+    const back = convertView(viewFormat.value, fmt, editorText.value);
+    if (back === null) {
+      message.error(
+        `${viewFormat.value.toUpperCase()} 视图内容转换回 ${fmt.toUpperCase()} 失败（语法错误？）`,
+      );
+      return;
+    }
+    toSave = back;
+  }
   savingContent.value = true;
   try {
-    await saveConfigContentApi(selected.value.id, content.value);
+    await saveConfigContentApi(selected.value.id, toSave);
     message.success('内容已保存（新版本）');
+    await openContent(selected.value);
     await loadVersions(selected.value.id);
   } finally {
     savingContent.value = false;
@@ -306,6 +341,101 @@ async function deploy() {
   } finally {
     deploying.value = 0;
   }
+}
+
+// ---- 目录右键：新建文件 / 新建文件夹（Windows 风格） ----
+const ctxMenu = reactive({
+  open: false,
+  x: 0,
+  y: 0,
+  dirKey: '', // 目标目录（'' = 根）
+});
+const folderModalOpen = ref(false);
+const newFolderName = ref('');
+
+function closeCtxMenu() {
+  ctxMenu.open = false;
+}
+onMounted(() => document.addEventListener('click', closeCtxMenu));
+
+function openCtxMenu(x: number, y: number, dirKey: string) {
+  ctxMenu.x = x;
+  ctxMenu.y = y;
+  ctxMenu.dirKey = dirKey;
+  ctxMenu.open = true;
+}
+
+// 树节点右键：目录（含文件节点不给菜单）
+function onTreeRightClick(state: { event: MouseEvent; node: any }) {
+  const f = state?.node?.file;
+  if (f) return; // 文件不给右键菜单
+  const key = typeof state?.node?.key === 'string' ? state.node.key : '';
+  state?.event?.preventDefault?.();
+  openCtxMenu(state.event.clientX, state.event.clientY, key);
+}
+
+// 树容器空白处右键 = 根目录菜单（节点右键会冒泡到此——按目标是否节点区分）
+function onRootRightClick(ev: MouseEvent) {
+  const onNode = (ev.target as HTMLElement | null)?.closest(
+    '.ant-tree-node-content-wrapper',
+  );
+  if (onNode) return; // 节点右键由 onTreeRightClick 处理
+  openCtxMenu(ev.clientX, ev.clientY, '');
+}
+
+function ctxNewFile() {
+  closeCtxMenu();
+  openCreateIn(ctxMenu.dirKey);
+}
+
+function ctxNewFolder() {
+  closeCtxMenu();
+  newFolderName.value = '';
+  folderModalOpen.value = true;
+}
+
+function confirmNewFolder() {
+  const name = newFolderName.value.trim().replaceAll(/^\/+|\/+$/g, '');
+  if (!name) return;
+  // dirKey 形如 /prod/demo（树 key 带前导斜杠）——拼装后统一归一化，
+  // 否则首字符是 / 导致环境首段校验永假
+  const full = (ctxMenu.dirKey ? `${ctxMenu.dirKey}/${name}` : name).replaceAll(
+    /^\/+|\/+$/g,
+    '',
+  );
+  const segs = full.split('/').filter(Boolean);
+  if (!/^(prod|canary|test)(\/|$)/.test(full)) {
+    message.warning('首段须为环境名（prod/canary/test）');
+    return;
+  }
+  if (!ephemeralDirs.value.includes(full)) ephemeralDirs.value.push(full);
+  // 展开新目录并把地址栏切过去
+  let prefix = '';
+  for (const seg of segs) {
+    prefix = prefix ? `${prefix}/${seg}` : seg;
+    if (!expandedKeys.value.includes(`/${prefix}`))
+      expandedKeys.value.push(`/${prefix}`);
+  }
+  currentDir.value = segs;
+  folderModalOpen.value = false;
+}
+
+// 在指定目录下新建文件（右键入口；openCreate 保留供历史调用，根=右键空白处）
+function openCreateIn(dirKey: string) {
+  editingId.value = null;
+  Object.assign(form, {
+    name: '',
+    serverId: undefined,
+    path: '',
+    relPath: dirKey.replaceAll(/^\/+|\/+$/g, ''),
+    format: 'yaml',
+    sensitive: false,
+    content: '',
+    applyAction: 'none',
+    applyTarget: '',
+    remark: '',
+  });
+  formOpen.value = true;
 }
 
 // ---- 更多菜单：历史版本 / 环境同步 / 导入 / 导出 ----
@@ -491,23 +621,6 @@ watch(
   },
 );
 
-function openCreate() {
-  editingId.value = null;
-  Object.assign(form, {
-    name: '',
-    serverId: undefined,
-    path: '',
-    relPath: currentDir.value.join('/'),
-    format: 'yaml',
-    sensitive: false,
-    content: '',
-    applyAction: 'none',
-    applyTarget: '',
-    remark: '',
-  });
-  formOpen.value = true;
-}
-
 function openEdit(f: ConfigFile) {
   editingId.value = f.id;
   Object.assign(form, {
@@ -591,12 +704,14 @@ async function remove(f: ConfigFile) {
           @press-enter="jump"
         />
       </div>
-      <a-button type="primary" @click="openCreate">新建文件</a-button>
     </div>
 
     <div class="flex min-h-0 flex-1 gap-2">
       <!-- 左：目录树 -->
-      <div class="w-64 shrink-0 overflow-auto rounded border p-1">
+      <div
+        class="w-64 shrink-0 overflow-auto rounded border p-1"
+        @contextmenu.prevent="onRootRightClick"
+      >
         <a-spin :spinning="loading">
           <a-tree
             v-if="treeData.length > 0"
@@ -605,6 +720,7 @@ async function remove(f: ConfigFile) {
             :tree-data="treeData"
             block-node
             show-icon
+            @right-click="onTreeRightClick"
             @select="onSelectFile"
           >
             <template #title="{ dataRef }">
@@ -829,6 +945,57 @@ async function remove(f: ConfigFile) {
           />
         </a-form-item>
       </a-form>
+    </a-modal>
+
+    <!-- 目录右键菜单（Windows 风格：新建文件/新建文件夹） -->
+    <teleport to="body">
+      <div
+        v-if="ctxMenu.open"
+        :style="{
+          left: `${ctxMenu.x}px`,
+          position: 'fixed',
+          top: `${ctxMenu.y}px`,
+          zIndex: 1050,
+        }"
+        class="min-w-36 rounded border bg-white py-1 shadow-lg"
+      >
+        <div
+          class="cursor-pointer px-3 py-1.5 hover:bg-gray-100"
+          @click="ctxNewFile"
+        >
+          新建文件
+        </div>
+        <div
+          class="cursor-pointer px-3 py-1.5 hover:bg-gray-100"
+          @click="ctxNewFolder"
+        >
+          新建文件夹
+        </div>
+      </div>
+    </teleport>
+
+    <!-- 新建文件夹（虚拟目录，会话内展示；落文件后固化） -->
+    <a-modal
+      v-model:open="folderModalOpen"
+      :extra="`将在 ${ctxMenu.dirKey || '根目录'} 下创建`"
+      title="新建文件夹"
+      width="420px"
+      @ok="confirmNewFolder"
+    >
+      <a-form-item
+        :extra="
+          ctxMenu.dirKey && !/^(prod|canary|test)(\/|$)/.test(ctxMenu.dirKey)
+            ? '首段须为环境名（prod/canary/test）'
+            : '可多级（a/b）；首段为环境名'
+        "
+        label="文件夹名"
+        required
+      >
+        <a-input
+          v-model:value="newFolderName"
+          @press-enter="confirmNewFolder"
+        />
+      </a-form-item>
     </a-modal>
 
     <!-- 导入（隐藏 file input，内容读入编辑器待保存） -->

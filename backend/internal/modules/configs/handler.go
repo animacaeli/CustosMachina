@@ -1,6 +1,8 @@
 package configs
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
@@ -152,10 +154,13 @@ func (h *Handler) listVersions(c *gin.Context) {
 }
 
 func (h *Handler) getVersionContent(c *gin.Context) {
-	vid, ok := httpx.ParamID(c)
-	if !ok {
+	// 路由是 /:id/versions/:vid——ParamID 只认 :id，版本号须显式取 :vid
+	vid64, err := strconv.ParseUint(c.Param("vid"), 10, 64)
+	if err != nil || vid64 == 0 {
+		httpx.FailBadRequest(c, "无效的版本 id")
 		return
 	}
+	vid := uint(vid64)
 	reveal := c.Query("reveal") == "true"
 	content, _, err := h.svc.GetVersionContent(c.Request.Context(), vid, reveal)
 	if err != nil {
