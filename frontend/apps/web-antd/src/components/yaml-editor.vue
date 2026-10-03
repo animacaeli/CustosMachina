@@ -12,6 +12,8 @@ import { usePreferences } from '@vben/preferences';
 import * as monaco from 'monaco-editor';
 // oxlint-disable-next-line import/default
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
+// oxlint-disable-next-line import/default
+import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 import { configureMonacoYaml } from 'monaco-yaml';
 // oxlint-disable-next-line import/default
 import yamlWorker from 'monaco-yaml/yaml.worker?worker';
@@ -47,27 +49,14 @@ globalThis.MonacoEnvironment = {
 };
 
 // JSONC：json 允许 // 注释与尾逗号（配置文件惯例；保存不校验合法性）。
-// monaco.languages.json 的官方类型标了 deprecated，经结构化类型访问真实导出。
-const monacoJSON = (
-  monaco.languages as unknown as {
-    json: {
-      jsonDefaults: {
-        setDiagnosticsOptions: (opts: {
-          allowComments: boolean;
-          trailingComma: string;
-          validate: boolean;
-        }) => void;
-      };
-    };
-  }
-).json;
-monacoJSON.jsonDefaults.setDiagnosticsOptions({
+// 显式引入 json 语言 contribution——monaco.languages.json 是惰性挂载的，
+// 顶层直接访问在 contribution 未加载时是 undefined；该模块同时导出类型安全的
+// jsonDefaults。
+jsonDefaults.setDiagnosticsOptions({
   allowComments: true,
   trailingComma: 'ignore',
   validate: true,
 });
-
-// monaco-yaml v5：configureMonacoYaml 单实例配置，schema 用内置 vendored 副本
 
 // monaco-yaml v5：configureMonacoYaml 单实例配置，schema 用内置 vendored 副本
 // （仅 yaml 语言且显式要求 compose schema 时挂补全，其他语言不受影响）
