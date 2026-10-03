@@ -4,14 +4,14 @@
   "homepage": "https://vben.pro",
   "bugs": "https://github.com/vbenjs/vue-vben-admin/issues",
   "repository": {
+    "directory": "apps/web-antd",
     "type": "git",
-    "url": "git+https://github.com/vbenjs/vue-vben-admin.git",
-    "directory": "apps/web-antd"
+    "url": "git+https://github.com/vbenjs/vue-vben-admin.git"
   },
   "license": "MIT",
   "author": {
-    "name": "vben",
     "email": "ann.vben@gmail.com",
+    "name": "vben",
     "url": "https://github.com/anncwb"
   },
   "type": "module",
@@ -51,6 +51,7 @@
     "monaco-editor": "catalog:",
     "monaco-yaml": "catalog:",
     "pinia": "catalog:",
+    "smol-toml": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
     "yaml": "catalog:"

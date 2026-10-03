@@ -372,6 +372,9 @@ catalogs:
     secure-ls:
       specifier: ^2.0.0
       version: 2.0.0
+    smol-toml:
+      specifier: ^1.9.0
+      version: 1.9.0
     sortablejs:
       specifier: ^1.15.7
       version: 1.15.7
@@ -685,6 +688,9 @@ importers:
       pinia:
         specifier: ^4.0.2
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.41(typescript@6.0.3))
+      smol-toml:
+        specifier: 'catalog:'
+        version: 1.9.0
       vue:
         specifier: 3.5.41
         version: 3.5.41(typescript@6.0.3)
@@ -9159,6 +9165,10 @@ packages:
 
   smol-toml@1.8.0:
     resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+    engines: {node: '>= 18'}
+
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
     engines: {node: '>= 18'}
 
   sortablejs@1.15.7:
@@ -18019,6 +18029,8 @@ snapshots:
   smob@1.6.2: {}
 
   smol-toml@1.8.0: {}
+
+  smol-toml@1.9.0: {}
 
   sortablejs@1.15.7: {}
 

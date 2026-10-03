@@ -163,6 +163,7 @@ catalog:
   sass: ^1.101.6
   sass-embedded: ^1.100.0
   secure-ls: ^2.0.0
+  smol-toml: ^1.9.0
   sortablejs: ^1.15.7
   stylelint: ^17.14.1
   stylelint-config-recess-order: ^7.7.0

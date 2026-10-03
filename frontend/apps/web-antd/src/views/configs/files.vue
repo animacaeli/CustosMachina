@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { ConfigFile, ConfigVersion } from '#/api/configs';
+import type { ConfigFormat } from '#/utils/config-format';
 
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
@@ -23,6 +24,7 @@ import { getProjectApi, getProjectsApi } from '#/api/projects';
 import { getServerListApi } from '#/api/resources/server';
 import DiffEditor from '#/components/diff-editor.vue';
 import YamlEditor from '#/components/yaml-editor.vue';
+import { CONFIG_FORMATS, convertView } from '#/utils/config-format';
 
 defineOptions({ name: 'ConfigsFiles' });
 
@@ -46,11 +48,6 @@ const FORMAT_LANG: Record<string, string> = {
   json: 'json',
   toml: 'ini',
   yaml: 'yaml',
-};
-const LANG_LABEL: Record<string, string> = {
-  ini: 'INI',
-  json: 'JSON',
-  yaml: 'YAML',
 };
 
 function actionText(action: string, target: string) {
@@ -219,16 +216,44 @@ const content = ref('');
 const contentMasked = ref(false);
 const contentLoading = ref(false);
 const revealLoading = ref(false);
-const langOverride = ref<null | string>(null);
+// 格式视图：viewFormat ≠ 原格式 = 转换渲染（保存时转回原格式）
+const viewFormat = ref<ConfigFormat>('yaml');
+const viewConvertError = ref('');
+const editorText = ref('');
 
-const editorLang = computed(() => {
-  if (langOverride.value) return langOverride.value;
-  return FORMAT_LANG[selected.value?.format ?? 'yaml'] ?? 'yaml';
-});
+const editorLang = computed(() => FORMAT_LANG[viewFormat.value] ?? 'yaml');
+const isConvertedView = computed(
+  () => !!selected.value && viewFormat.value !== selected.value.format,
+);
+
+function refreshEditorText() {
+  viewConvertError.value = '';
+  if (!selected.value) {
+    editorText.value = '';
+    return;
+  }
+  if (viewFormat.value === selected.value.format) {
+    editorText.value = content.value;
+    return;
+  }
+  const converted = convertView(
+    selected.value.format,
+    viewFormat.value,
+    content.value,
+  );
+  if (converted === null) {
+    viewConvertError.value = `原文件按 ${selected.value.format.toUpperCase()} 解析失败，暂以原文展示（切换视图需原文件语法合法）`;
+    editorText.value = content.value;
+    return;
+  }
+  editorText.value = converted;
+}
+
+watch([content, viewFormat, selected], refreshEditorText);
 
 async function openContent(f: ConfigFile) {
   selected.value = f;
-  langOverride.value = null;
+  viewFormat.value = f.format;
   contentMasked.value = false;
   contentLoading.value = true;
   diffPair.value = [];
@@ -612,18 +637,13 @@ async function remove(f: ConfigFile) {
               </span>
               <!-- 语言按钮组（GitHub 风格，切换编辑器高亮） -->
               <a-radio-group
-                v-model:value="langOverride"
+                v-model:value="viewFormat"
                 class="ml-auto"
                 size="small"
                 button-style="solid"
-                @change="(e: any) => (langOverride = e.target.value)"
               >
-                <a-radio-button
-                  v-for="(label, lang) in LANG_LABEL"
-                  :key="lang"
-                  :value="lang"
-                >
-                  {{ label }}
+                <a-radio-button v-for="f in CONFIG_FORMATS" :key="f" :value="f">
+                  {{ f.toUpperCase() }}
                 </a-radio-button>
               </a-radio-group>
             </div>
@@ -675,9 +695,19 @@ async function remove(f: ConfigFile) {
               </a-tag>
             </div>
           </template>
+          <a-alert
+            v-if="isConvertedView || viewConvertError"
+            :message="
+              viewConvertError ||
+              `结构视图：由 ${selected?.format.toUpperCase()} 转换渲染为 ${viewFormat.toUpperCase()}；保存将回写为 ${selected?.format.toUpperCase()}（注释与键序不保留）`
+            "
+            :type="viewConvertError ? 'error' : 'warning'"
+            class="shrink-0"
+            show-icon
+          />
           <div v-show="selected" class="editor-host min-h-0 flex-1">
             <YamlEditor
-              v-model="content"
+              v-model="editorText"
               height="calc(100vh - 320px)"
               :language="editorLang"
               :read-only="contentMasked"
