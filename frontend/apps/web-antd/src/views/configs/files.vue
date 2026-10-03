@@ -957,16 +957,16 @@ async function remove(f: ConfigFile) {
           top: `${ctxMenu.y}px`,
           zIndex: 1050,
         }"
-        class="min-w-36 rounded border bg-white py-1 shadow-lg"
+        class="border-border bg-popover text-popover-foreground min-w-36 rounded border py-1 shadow-lg"
       >
         <div
-          class="cursor-pointer px-3 py-1.5 hover:bg-gray-100"
+          class="hover:bg-accent cursor-pointer px-3 py-1.5"
           @click="ctxNewFile"
         >
           新建文件
         </div>
         <div
-          class="cursor-pointer px-3 py-1.5 hover:bg-gray-100"
+          class="hover:bg-accent cursor-pointer px-3 py-1.5"
           @click="ctxNewFolder"
         >
           新建文件夹
