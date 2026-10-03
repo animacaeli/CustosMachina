@@ -55,8 +55,12 @@ const (
 type File struct {
 	ID uint `gorm:"primarykey" json:"id"`
 	// 定义
-	Name        string    `gorm:"size:64;not null" json:"name"`
-	ServerID    uint      `gorm:"index;not null" json:"serverId"`
+	Name     string `gorm:"size:64;not null" json:"name"`
+	ServerID uint   `gorm:"index;not null" json:"serverId"`
+	// R2 文件管理器：项目归属 + 层级路径（首段=环境 prod/canary/test，
+	// 更深层自由；旧数据 project_id=0 树根展示待迁移）
+	ProjectID   uint      `gorm:"index;not null;default:0" json:"projectId"`
+	RelPath     string    `gorm:"size:512" json:"relPath"`
 	Path        string    `gorm:"size:512;not null" json:"path"` // 远端绝对路径
 	Format      string    `gorm:"size:8;not null;default:yaml" json:"format"`
 	Sensitive   bool      `gorm:"not null;default:false" json:"sensitive"`
@@ -108,6 +112,8 @@ func NewService(db *gorm.DB, exec Executor, cipher *crypto.Cipher) *Service {
 type SaveFileInput struct {
 	Name        string `json:"name" binding:"required,max=64"`
 	ServerID    uint   `json:"serverId" binding:"required"`
+	ProjectID   uint   `json:"projectId"`
+	RelPath     string `json:"relPath" binding:"omitempty,max=512"`
 	Path        string `json:"path" binding:"required,max=512"`
 	Format      string `json:"format" binding:"required,oneof=yaml json toml env ini"`
 	Sensitive   bool   `json:"sensitive"`
@@ -135,13 +141,48 @@ func validateTarget(action, target string) error {
 	return nil
 }
 
+// validateRelPath 层级路径强语义：首段=环境（prod/canary/test）且项目已配置
+// 该环境部署目标（project_env_targets）；深层子目录自由（test/dev1/... 对应槽位目录）。
+func (s *Service) validateRelPath(ctx context.Context, projectID uint, relPath string) error {
+	relPath = strings.Trim(strings.TrimSpace(relPath), "/")
+	if relPath == "" {
+		return nil // 旧形态兼容（不挂层级的裸文件）
+	}
+	segs := strings.Split(relPath, "/")
+	env := segs[0]
+	if env != "prod" && env != "canary" && env != "test" {
+		return fmt.Errorf("层级路径首段须为环境名（prod/canary/test），got %q", env)
+	}
+	if projectID == 0 {
+		return fmt.Errorf("层级路径需要先选择归属项目")
+	}
+	var n int64
+	if err := s.db.WithContext(ctx).Table("project_env_targets").
+		Where("project_id = ? AND env_type = ?", projectID, env).Count(&n).Error; err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("项目未配置 %s 环境的部署目标（先在环境管理绑定）", env)
+	}
+	for _, seg := range segs {
+		if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, " \\") {
+			return fmt.Errorf("路径段不合法: %q", seg)
+		}
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, in SaveFileInput, by string) (*File, error) {
 	if err := validateTarget(in.ApplyAction, in.ApplyTarget); err != nil {
 		return nil, err
 	}
+	if err := s.validateRelPath(ctx, in.ProjectID, in.RelPath); err != nil {
+		return nil, err
+	}
 	f := File{Name: in.Name, ServerID: in.ServerID, Path: in.Path, Format: in.Format,
 		Sensitive: in.Sensitive, Content: in.Content, ApplyAction: in.ApplyAction,
-		ApplyTarget: in.ApplyTarget, Remark: in.Remark}
+		ApplyTarget: in.ApplyTarget, Remark: in.Remark,
+		ProjectID: in.ProjectID, RelPath: strings.Trim(strings.TrimSpace(in.RelPath), "/")}
 	if err := s.db.WithContext(ctx).Create(&f).Error; err != nil {
 		return nil, err
 	}
@@ -159,10 +200,14 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveFileInput) error {
 	if err := validateTarget(in.ApplyAction, in.ApplyTarget); err != nil {
 		return err
 	}
+	if err := s.validateRelPath(ctx, in.ProjectID, in.RelPath); err != nil {
+		return err
+	}
 	updates := map[string]any{
 		"name": in.Name, "server_id": in.ServerID, "path": in.Path, "format": in.Format,
 		"sensitive": in.Sensitive, "apply_action": in.ApplyAction,
 		"apply_target": in.ApplyTarget, "remark": in.Remark,
+		"project_id": in.ProjectID, "rel_path": strings.Trim(strings.TrimSpace(in.RelPath), "/"),
 	}
 	if err := s.db.WithContext(ctx).Model(&File{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return err

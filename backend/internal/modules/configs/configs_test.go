@@ -196,3 +196,56 @@ func TestDeployFailureKeepsAudit(t *testing.T) {
 		t.Error("失败也应落审计")
 	}
 }
+
+// R2 层级路径强语义：首段环境校验 + 项目环境绑定检查 + 深层自由。
+func TestValidateRelPath(t *testing.T) {
+	svc, db, _ := testSvc(t)
+	ctx := context.Background()
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'prod', 1)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 合法：已配置环境 + 深层子目录（槽位）
+	if err := svc.validateRelPath(ctx, 1, "prod/application.yaml"); err != nil {
+		t.Fatalf("合法路径被拒: %v", err)
+	}
+	if err := svc.validateRelPath(ctx, 1, "prod/sub/dev1/app.env"); err != nil {
+		t.Fatalf("深层路径被拒: %v", err)
+	}
+	// 空路径（旧形态）放行
+	if err := svc.validateRelPath(ctx, 0, ""); err != nil {
+		t.Fatalf("空路径应放行: %v", err)
+	}
+	// 首段非环境
+	if err := svc.validateRelPath(ctx, 1, "dev1/app.yaml"); err == nil {
+		t.Fatal("首段非环境应拒绝")
+	}
+	// 项目未配置该环境
+	if err := svc.validateRelPath(ctx, 1, "canary/app.yaml"); err == nil {
+		t.Fatal("未配置环境应拒绝")
+	}
+	// 有项目环境但未挂项目
+	if err := svc.validateRelPath(ctx, 0, "prod/app.yaml"); err == nil {
+		t.Fatal("无项目归属应拒绝")
+	}
+	// 路径段非法
+	if err := svc.validateRelPath(ctx, 1, "prod/../etc/passwd"); err == nil {
+		t.Fatal("非法段应拒绝")
+	}
+	// 创建链路也校验（Create 走 validateRelPath）
+	if _, err := svc.Create(ctx, SaveFileInput{
+		Name: "x", ServerID: 1, Path: "/opt/x.yaml", Format: "yaml",
+		ApplyAction: "none", ProjectID: 1, RelPath: "prod/x.yaml", Content: "a: 1",
+	}, "t"); err != nil {
+		t.Fatalf("合法创建被拒: %v", err)
+	}
+	var f File
+	if err := db.First(&f).Error; err != nil {
+		t.Fatal(err)
+	}
+	if f.RelPath != "prod/x.yaml" || f.ProjectID != 1 {
+		t.Fatalf("字段未落库: %+v", f)
+	}
+}

@@ -10,6 +10,9 @@ export interface ConfigFile {
   id: number;
   name: string;
   path: string;
+  /** R2 文件管理器：项目归属与层级路径（首段=环境 prod/canary/test） */
+  projectId: number;
+  relPath: string;
   remark: string;
   sensitive: boolean;
   serverId: number;
@@ -23,6 +26,9 @@ export interface SaveConfigFileInput {
   content?: string;
   name: string;
   path: string;
+  projectId?: number;
+  /** 层级路径（首段=环境；留空=旧形态） */
+  relPath?: string;
   remark?: string;
   sensitive: boolean;
   serverId: number;
