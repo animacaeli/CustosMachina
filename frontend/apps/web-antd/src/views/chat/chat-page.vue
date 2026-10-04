@@ -13,9 +13,12 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 import {
+  cancelActionApi,
   chatStreamApi,
+  confirmActionApi,
   createConversationApi,
   deleteConversationApi,
+  listActionsApi,
   listConversationsApi,
   listMessagesApi,
 } from '#/api/chat';
@@ -100,12 +103,55 @@ async function openConversation(id: number) {
   currentId.value = id;
   messages.value = (await listMessagesApi(id)).map((m) => ({
     ...m,
+    actions: (m.actions ?? []).map((a) => ({ ...a, status: 'pending' })),
     attachments: m.attachments ?? undefined,
     skill: m.skill ?? undefined,
     tools: m.tools ?? undefined,
   }));
+  // 操作卡状态刷新（消息里只留了 id/type/summary，终态从服务端取）
+  const ids = messages.value.flatMap((m) => (m.actions ?? []).map((a) => a.id));
+  if (ids.length > 0) {
+    try {
+      const acts = await listActionsApi(ids);
+      const byId = new Map(acts.map((a) => [a.id, a]));
+      for (const m of messages.value) {
+        if (!m.actions) continue;
+        m.actions = m.actions.map((a) => {
+          const fresh = byId.get(a.id);
+          return fresh ? { ...a, result: fresh.result, status: fresh.status } : a;
+        });
+      }
+    } catch {
+      /* 状态刷新失败不阻塞会话打开 */
+    }
+  }
   await nextTick();
   scrollToBottom();
+}
+
+// ---- M4 操作卡：确认/取消（仅发起人；执行走后端 casbin 判权） ----
+async function confirmActionCard(a: UiAction) {
+  try {
+    const out = await confirmActionApi(a.id);
+    a.status = out.status;
+    a.result = out.result;
+    if (out.status === 'done') {
+      antMessage.success(out.result || '已执行');
+    } else {
+      antMessage.error(out.result || '执行失败');
+    }
+  } catch (e: any) {
+    antMessage.error(e?.response?.data?.message ?? '确认失败');
+  }
+}
+
+async function cancelActionCard(a: UiAction) {
+  try {
+    const out = await cancelActionApi(a.id);
+    a.status = out.status;
+  } catch (e: any) {
+    antMessage.error(e?.response?.data?.message ?? '取消失败');
+  }
 }
 
 async function removeConversation(id: number) {
@@ -123,7 +169,18 @@ async function removeConversation(id: number) {
 }
 
 // ---- 消息与流式 ----
+// 操作卡（M4 确认层）：AI 生成意图 → 用户确认才执行；状态实时（pending 可操作，
+// 终态只读展示）
+interface UiAction {
+  id: number;
+  result?: string;
+  status: string;
+  summary: string;
+  type: string;
+}
+
 interface UiMessage {
+  actions?: UiAction[];
   attachments?: ChatAttachment[];
   content: string;
   role: string;
@@ -207,6 +264,14 @@ async function send() {
     onTool: (name, args) => {
       // function calling：模型调用平台工具，气泡顶部实时追加工具标签
       assistant!.tools = [...(assistant!.tools ?? []), { arguments: args, name }];
+      scrollToBottom();
+    },
+    onAction: (a) => {
+      // M4 确认层：生成待确认操作卡（不自动执行，用户点确认）
+      assistant!.actions = [
+        ...(assistant!.actions ?? []),
+        { id: a.id, result: a.result, status: a.status, summary: a.summary, type: a.type },
+      ];
       scrollToBottom();
     },
     onDone: (status) => {
@@ -567,6 +632,49 @@ onMounted(async () => {
                 >
                   🔧 {{ t.name }}
                 </a-tag>
+              </div>
+              <!-- M4 操作确认卡：AI 生成意图 → 人确认才执行 -->
+              <div
+                v-if="m.role === 'assistant' && m.actions?.length"
+                class="mb-2 space-y-1.5"
+              >
+                <div
+                  v-for="a in m.actions"
+                  :key="a.id"
+                  class="rounded-md border px-3 py-2 text-xs"
+                  :class="
+                    a.status === 'pending'
+                      ? 'border-amber-500/50 bg-amber-500/5'
+                      : a.status === 'done'
+                        ? 'border-green-500/50 bg-green-500/5'
+                        : a.status === 'failed'
+                          ? 'border-red-500/50 bg-red-500/5'
+                          : 'border-border bg-muted/40'
+                  "
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-foreground">
+                      {{ a.type === 'restart_container' ? '🔄 重启容器' : a.type === 'trigger_cron' ? '⏱️ 触发定时任务' : a.type === 'deploy_config' ? '📤 下发配置' : a.type }}
+                    </span>
+                    <span v-if="a.status === 'pending'" class="text-amber-600">待确认</span>
+                    <span v-else-if="a.status === 'done'" class="text-green-600">已执行</span>
+                    <span v-else-if="a.status === 'failed'" class="text-red-500">执行失败</span>
+                    <span v-else class="text-muted-foreground">
+                      {{ a.status === 'cancelled' ? '已取消' : '已过期' }}
+                    </span>
+                  </div>
+                  <div class="mt-1 text-muted-foreground">{{ a.summary }}</div>
+                  <div v-if="a.result" class="mt-1 break-all text-muted-foreground">
+                    {{ a.result }}
+                  </div>
+                  <div v-if="a.status === 'pending'" class="mt-2 flex gap-2">
+                    <a-button danger size="small" type="primary" @click="confirmActionCard(a)">
+                      确认执行
+                    </a-button>
+                    <a-button size="small" @click="cancelActionCard(a)">取消</a-button>
+                    <span class="self-center text-muted-foreground">5 分钟内有效</span>
+                  </div>
+                </div>
               </div>
               <!-- eslint-disable-next-line vue/no-v-html 内容经 renderMd 内 DOMPurify 消毒（AI 输出属不可信输入） -->
               <div

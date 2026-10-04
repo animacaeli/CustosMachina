@@ -29,6 +29,8 @@ func (fakeSrc) ListReleases(context.Context, uint, int) []map[string]any {
 	return nil
 }
 func (fakeSrc) ListCronRuns(context.Context, int) []map[string]any { return nil }
+func (fakeSrc) ListCronJobs(context.Context) []map[string]any      { return nil }
+func (fakeSrc) ListConfigs(context.Context) []map[string]any       { return nil }
 func (fakeSrc) ListContainers(context.Context, uint) ([]map[string]any, error) {
 	return nil, nil
 }

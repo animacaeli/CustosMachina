@@ -128,7 +128,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var deltas atomic.Int32
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) }, nil)
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) }, nil, nil)
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 	}
 	// 会话互斥：进行中重复发消息被拒——串行场景下第二次正常（上轮已结束），
 	// 互斥行为由 handler 层并发触发，此处验证会话可继续
-	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil, nil); err != nil {
+	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil, nil, nil); err != nil {
 		t.Fatalf("第二轮对话失败: %v", err)
 	}
 }
@@ -485,7 +485,7 @@ func TestChatFunctionCalling(t *testing.T) {
 	var toolEvents []string
 	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, func(name, args string) {
 		toolEvents = append(toolEvents, name+" "+args)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -526,11 +526,139 @@ func TestChatToolDegradation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建会话失败: %v", err)
 	}
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, nil)
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("降级对话失败: %v", err)
 	}
 	if msg.Content != "降级回答" || msg.Tools != "" {
 		t.Fatalf("降级回复异常: %q tools=%q", msg.Content, msg.Tools)
+	}
+}
+
+// fakeActionExecutor 确认层测试替身：校验拒绝幻觉 ID；执行可注入失败。
+type fakeActionExecutor struct {
+	failOn string
+}
+
+func (f fakeActionExecutor) ChatActions() []ChatActionDef {
+	return []ChatActionDef{{
+		Type:        ActTriggerCron,
+		Description: "手动触发定时任务",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"job_id": map[string]any{"type": "integer"},
+		}},
+		Summary: func(p map[string]any) string { return fmt.Sprintf("触发任务 #%v", p["job_id"]) },
+	}}
+}
+
+func (f fakeActionExecutor) ValidateChatAction(_ context.Context, typ string, params map[string]any) (string, error) {
+	if typ != ActTriggerCron {
+		return "", fmt.Errorf("未知类型")
+	}
+	if _, ok := params["job_id"]; !ok {
+		return "", fmt.Errorf("job_id 必填")
+	}
+	return fmt.Sprintf("触发任务 #%v", params["job_id"]), nil
+}
+
+func (f fakeActionExecutor) ExecuteChatAction(_ context.Context, userID uint, _, _, typ string, params map[string]any) (string, error) {
+	if f.failOn == typ {
+		return "", fmt.Errorf("执行失败（注入）")
+	}
+	return "已执行", nil
+}
+
+// 意图工具调用：模型触发 → 生成 pending 卡（不执行）→ onAction 回调 →
+// 消息留痕；确认才执行；TTL/幂等/仅本人。
+func TestChatActionIntentFlow(t *testing.T) {
+	db := chatTestDB(t)
+	if err := db.AutoMigrate(&PendingAction{}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	// 上游：第一轮发起 trigger_cron 意图，第二轮收尾
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		if strings.Contains(string(body), `"role":"tool"`) {
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"请确认\"}}]}\n\ndata: [DONE]\n\n")
+		} else {
+			fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"trigger_cron","arguments":"{\"job_id\":5}"}}]}}]}`+"\n\n"+
+				`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+		}
+		fl.Flush()
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := relayFor(t, db, srv.URL+"/v1")
+	svc := NewChatService(db, s)
+	svc.ActionExecutor = fakeActionExecutor{}
+
+	conv, _ := svc.CreateConversation(t.Context(), 7, ChatModePlatform, nil)
+	var actions []PendingAction
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "触发下任务5", "", nil, []string{"admin"}, nil, nil, func(a PendingAction) {
+		actions = append(actions, a)
+	})
+	if err != nil {
+		t.Fatalf("对话失败: %v", err)
+	}
+	if len(actions) != 1 || actions[0].Status != ActPending || actions[0].Type != ActTriggerCron {
+		t.Fatalf("意图卡异常: %+v", actions)
+	}
+	if !contains(msg.Actions, "trigger_cron") || !contains(msg.Actions, `"id":`) {
+		t.Fatalf("消息留痕异常: %q", msg.Actions)
+	}
+	// 未确认前不执行（executor 无副作用可证；直接看状态仍是 pending）
+	var pa PendingAction
+	db.First(&pa, actions[0].ID)
+	if pa.Status != ActPending {
+		t.Fatalf("未确认不应执行, status=%s", pa.Status)
+	}
+
+	// 他人不可确认
+	if _, err := svc.ConfirmAction(t.Context(), 8, "other", pa.ID); err == nil {
+		t.Fatal("他人确认应被拒")
+	}
+	// 本人确认 → 执行成功
+	out, err := svc.ConfirmAction(t.Context(), 7, "root", pa.ID)
+	if err != nil || out.Status != ActDone || out.Result != "已执行" {
+		t.Fatalf("确认执行异常: %v %+v", err, out)
+	}
+	// 重复确认幂等拒绝
+	if _, err := svc.ConfirmAction(t.Context(), 7, "root", pa.ID); err == nil {
+		t.Fatal("重复确认应被拒")
+	}
+}
+
+// 意图参数校验失败（幻觉 ID）：不生成卡，错误文本回填模型可重试。
+func TestChatActionValidateFail(t *testing.T) {
+	svc := NewChatService(chatTestDB(t), nil)
+	if _, err := svc.CreatePendingAction(t.Context(), 7, 1, "dev", ActTriggerCron, map[string]any{}); err == nil {
+		t.Fatal("缺 job_id 应校验失败")
+	}
+}
+
+// 执行失败路径：状态 failed + 错误信息留档。
+func TestChatActionExecuteFail(t *testing.T) {
+	db := chatTestDB(t)
+	if err := db.AutoMigrate(&PendingAction{}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	svc := NewChatService(db, nil)
+	svc.ActionExecutor = fakeActionExecutor{failOn: ActTriggerCron}
+	a, err := svc.CreatePendingAction(t.Context(), 7, 1, "admin", ActTriggerCron, map[string]any{"job_id": 1})
+	if err != nil {
+		t.Fatalf("建卡失败: %v", err)
+	}
+	// 手动过期验证 TTL 拒绝
+	db.Model(&PendingAction{}).Where("id = ?", a.ID).Update("expires_at", time.Now().Add(-time.Minute))
+	if _, err := svc.ConfirmAction(t.Context(), 7, "root", a.ID); err == nil {
+		t.Fatal("过期确认应被拒")
+	}
+	var pa PendingAction
+	db.First(&pa, a.ID)
+	if pa.Status != ActExpired {
+		t.Fatalf("过期状态未落, status=%s", pa.Status)
 	}
 }

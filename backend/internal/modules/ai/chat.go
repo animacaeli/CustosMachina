@@ -61,16 +61,41 @@ type ChatAttachment struct {
 
 // ChatMessage 对话消息。
 type ChatMessage struct {
-	ID             uint      `gorm:"primarykey" json:"id"`
-	ConversationID uint      `gorm:"index;not null" json:"conversationId"`
-	Role           string    `gorm:"size:16;not null" json:"role"` // user | assistant
-	Content        string    `gorm:"type:text" json:"content"`
-	Attachments    string    `gorm:"type:text" json:"attachments,omitempty"` // JSON []ChatAttachment（user 消息可带）
-	Skill          string    `gorm:"size:64" json:"skill,omitempty"`         // 本轮触发的技能名（/命令）
-	Tools          string    `gorm:"type:text" json:"tools,omitempty"`       // JSON []ToolTrace：本轮 assistant 调过的工具（审计留痕）
+	ID             uint   `gorm:"primarykey" json:"id"`
+	ConversationID uint   `gorm:"index;not null" json:"conversationId"`
+	Role           string `gorm:"size:16;not null" json:"role"` // user | assistant
+	Content        string `gorm:"type:text" json:"content"`
+	// 以下三个 JSON 串列对外经 ChatMessageOut 解析成数组输出（直接序列化
+	// ChatMessage 会把 JSON 文本当字符串给前端，v-for 遍历成字符——实测踩过）
+	Attachments    string    `gorm:"type:text" json:"-"`             // JSON []ChatAttachment（user 消息可带）
+	Skill          string    `gorm:"size:64" json:"skill,omitempty"` // 本轮触发的技能名（/命令）
+	Tools          string    `gorm:"type:text" json:"-"`             // JSON []ToolTrace：本轮调过的工具（审计留痕）
+	Actions        string    `gorm:"type:text" json:"-"`             // JSON []ActionTrace：本轮生成的操作卡（M4 留痕）
 	Status         string    `gorm:"size:16;not null;default:done" json:"status"`
 	PackRedactions int       `gorm:"not null;default:0" json:"packRedactions"` // 本轮 pack 拦截数（留痕）
 	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// ChatMessageOut 消息 API 输出：JSON 串列解析为数组（前端免二次解析）。
+type ChatMessageOut struct {
+	ChatMessage
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	Tools       []ToolTrace      `json:"tools,omitempty"`
+	Actions     []ActionTrace    `json:"actions,omitempty"`
+}
+
+func toMsgOut(m ChatMessage) ChatMessageOut {
+	out := ChatMessageOut{ChatMessage: m}
+	if m.Attachments != "" {
+		_ = json.Unmarshal([]byte(m.Attachments), &out.Attachments)
+	}
+	if m.Tools != "" {
+		_ = json.Unmarshal([]byte(m.Tools), &out.Tools)
+	}
+	if m.Actions != "" {
+		_ = json.Unmarshal([]byte(m.Actions), &out.Actions)
+	}
+	return out
 }
 
 // ToolTrace 工具调用留痕（ChatMessage.Tools 项）。
@@ -81,11 +106,14 @@ type ToolTrace struct {
 
 // ChatTool 对话内工具（function calling）：只读查询投影，与 MCP tools 同源
 // （app 层同一实现适配两种出口）；角色过滤由投影层负责（AI 铁律）。
+// NeedsConfirm = 写操作意图（M4 确认层）：调用不执行，落 PendingAction
+// 待发起人界面确认——AI 只生成意图，执行权在人。
 type ChatTool struct {
-	Name        string
-	Description string
-	Parameters  map[string]any // JSON Schema（nil = 无参数）
-	Fn          func(ctx context.Context, args map[string]any) (string, error)
+	Name         string
+	Description  string
+	Parameters   map[string]any // JSON Schema（nil = 无参数）
+	NeedsConfirm bool
+	Fn           func(ctx context.Context, args map[string]any) (string, error)
 }
 
 // ChatToolSource 对话工具源（app 层注入；nil = 平台模式无工具可用）。
@@ -116,6 +144,8 @@ type ChatService struct {
 	MountSource ChatContextSource
 	// ToolSource 对话内工具源（app 层注入；nil = function calling 不可用）
 	ToolSource ChatToolSource
+	// ActionExecutor NL→操作执行器（app 层注入；nil = 写操作意图不可用）
+	ActionExecutor ChatActionExecutor
 	// Skills 技能服务（/命令触发；nil = 技能不可用）
 	Skills *SkillService
 	// 会话级互斥（同一会话同时只允许一个进行中的流）；
@@ -259,7 +289,7 @@ func (s *ChatService) DeleteConversation(ctx context.Context, userID, id uint, i
 }
 
 // Messages 会话消息（升序）。本人或 admin。
-func (s *ChatService) Messages(ctx context.Context, userID, id uint, isAdmin bool) ([]ChatMessage, error) {
+func (s *ChatService) Messages(ctx context.Context, userID, id uint, isAdmin bool) ([]ChatMessageOut, error) {
 	c, err := s.accessible(ctx, userID, id, isAdmin)
 	if err != nil {
 		return nil, err
@@ -269,7 +299,11 @@ func (s *ChatService) Messages(ctx context.Context, userID, id uint, isAdmin boo
 		Order("id").Limit(500).Find(&ms).Error; err != nil {
 		return nil, err
 	}
-	return ms, nil
+	out := make([]ChatMessageOut, len(ms))
+	for i := range ms {
+		out[i] = toMsgOut(ms[i])
+	}
+	return out, nil
 }
 
 // accessible 归属校验：admin 跨用户放行（查看/管理，含已软删会话——留档审阅）；
@@ -322,8 +356,9 @@ func (s *ChatService) acquire(convID uint) (release func(), err error) {
 // ChatStream 一轮流式对话：落用户消息（可带附件）→ 组 prompt（挂载 pack + 历史）→ 流式回调。
 // 返回值：assistant 消息落库结果（断连时 err=ErrConvAborted 语义由调用方判定）。
 // onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）；
-// onTool 在模型发起工具调用时同步回调（前端展示工具活动；nil = 不关心）。
-func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string), onTool func(name, args string)) (*ChatMessage, error) {
+// onTool 在模型发起工具调用时同步回调（前端展示工具活动；nil = 不关心）；
+// onAction 在生成待确认操作卡时同步回调（M4 确认层，前端渲染确认卡）。
+func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string), onTool func(name, args string), onAction func(PendingAction)) (*ChatMessage, error) {
 	if !s.relay.Configured(ctx) {
 		return nil, ErrNotConfigur
 	}
@@ -378,10 +413,22 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	// 对话内工具（platform 模式，M3 后半）：模型可自动调用平台只读查询，
 	// 结果以 tool 消息回填后续答。工具轮上限防失控循环；模型不支持
 	// function calling（上游 400）时去工具降级重试一次（计划要求的降级路径）。
+	// M4：ActionExecutor 的白名单写操作以 NeedsConfirm 工具暴露——调用只生成
+	// 待确认卡（onAction），绝不直接执行。
 	var chatTools []ChatTool
 	var toolDefs []ToolDef
-	if c.Mode == ChatModePlatform && s.ToolSource != nil {
-		chatTools = s.ToolSource.ChatTools(ctx, viewerRoles)
+	if c.Mode == ChatModePlatform {
+		if s.ToolSource != nil {
+			chatTools = s.ToolSource.ChatTools(ctx, viewerRoles)
+		}
+		if s.ActionExecutor != nil {
+			for _, ad := range s.ActionExecutor.ChatActions() {
+				chatTools = append(chatTools, ChatTool{
+					Name: ad.Type, Description: ad.Description,
+					Parameters: ad.Parameters, NeedsConfirm: true,
+				})
+			}
+		}
 		for _, t := range chatTools {
 			toolDefs = append(toolDefs, ToolDef{Type: "function", Function: ToolDefFn{
 				Name: t.Name, Description: t.Description, Parameters: t.Parameters,
@@ -389,8 +436,18 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		}
 	}
 	caller := "chat:" + fmt.Sprint(c.ID)
+	rolesCSV := strings.Join(viewerRoles, ",")
 	const maxToolRounds = 4
 	var toolsUsed []ToolTrace
+	var actionsUsed []ActionTrace
+	findTool := func(name string) *ChatTool {
+		for i := range chatTools {
+			if chatTools[i].Name == name {
+				return &chatTools[i]
+			}
+		}
+		return nil
+	}
 	out, calls, rerr := s.relay.CompleteStream(ctx, caller, msgs, 0, toolDefs, onDelta)
 	if rerr != nil && len(toolDefs) > 0 && strings.Contains(rerr.Error(), "HTTP 400") {
 		toolDefs, chatTools = nil, nil
@@ -407,7 +464,13 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 			if onTool != nil {
 				onTool(call.Function.Name, call.Function.Arguments)
 			}
-			msgs = append(msgs, Message{Role: "tool", ToolCallID: call.ID, Content: execChatTool(ctx, chatTools, call)})
+			var result string
+			if t := findTool(call.Function.Name); t != nil && t.NeedsConfirm {
+				result = s.requestAction(ctx, userID, c.ID, rolesCSV, call, onAction, &actionsUsed)
+			} else {
+				result = execChatTool(ctx, chatTools, call)
+			}
+			msgs = append(msgs, Message{Role: "tool", ToolCallID: call.ID, Content: result})
 		}
 		out, calls, rerr = s.relay.CompleteStream(ctx, caller, msgs, 0, toolDefs, onDelta)
 	}
@@ -432,6 +495,11 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 			assistant.Tools = string(b)
 		}
 	}
+	if len(actionsUsed) > 0 {
+		if b, err := json.Marshal(actionsUsed); err == nil {
+			assistant.Actions = string(b)
+		}
+	}
 	sctx := context.WithoutCancel(ctx)
 	if err := s.db.WithContext(sctx).Create(&assistant).Error; err != nil {
 		logger.Warnf("[ai-chat] 回复落库失败 conv=%d: %v", c.ID, err)
@@ -443,6 +511,27 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		return &assistant, rerr
 	}
 	return &assistant, nil
+}
+
+// requestAction M4 确认层：写意图工具调用处理——校验参数、落待确认卡、
+// 回给模型的说明（必须等用户界面确认，绝不自动执行）。校验失败（幻觉 ID等）
+// 也以文本回填，模型可用只读工具核实后重试。
+func (s *ChatService) requestAction(ctx context.Context, userID, convID uint, rolesCSV string, call ToolCall, onAction func(PendingAction), used *[]ActionTrace) string {
+	args := map[string]any{}
+	if call.Function.Arguments != "" {
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "参数解析失败: " + err.Error()
+		}
+	}
+	a, err := s.CreatePendingAction(ctx, userID, convID, rolesCSV, call.Function.Name, args)
+	if err != nil {
+		return "操作未受理: " + err.Error() + "（请先用查询工具核实对象是否真实存在，修正后重试，不要凭记忆构造参数）"
+	}
+	*used = append(*used, ActionTrace{ID: a.ID, Type: a.Type, Summary: a.Summary})
+	if onAction != nil {
+		onAction(*a)
+	}
+	return fmt.Sprintf("已生成待确认操作卡（#%d）：%s。该操作必须由用户在界面上点击「确认执行」后才会执行，平台不会自动执行。请明确告知用户查看确认卡并确认。", a.ID, a.Summary)
 }
 
 // execChatTool 执行一次工具调用：定义不存在/参数不合法/执行出错都以文本结果
@@ -561,4 +650,4 @@ func messageContent(h ChatMessage) any {
 }
 
 // ChatModels chat 模块自动迁移模型。
-func ChatModels() []any { return []any{&Conversation{}, &ChatMessage{}} }
+func ChatModels() []any { return []any{&Conversation{}, &ChatMessage{}, &PendingAction{}} }

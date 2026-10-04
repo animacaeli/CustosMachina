@@ -245,7 +245,7 @@ func TestForbidSkipsWhenRunning(t *testing.T) {
 		t.Fatalf("首次运行状态应为 running, got %s", run1.Status)
 	}
 	// 第二次立即触发：Forbid 拒绝
-	if _, err := svc.Trigger(ctx, job.ID); err == nil {
+	if _, err := svc.Trigger(ctx, job.ID, TriggerManual); err == nil {
 		t.Error("running 中手动触发应被 Forbid 拒绝")
 	}
 	// startRun 直接判定
@@ -268,7 +268,7 @@ func TestTriggerExecutesAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建任务失败: %v", err)
 	}
-	run, err := svc.Trigger(ctx, job.ID)
+	run, err := svc.Trigger(ctx, job.ID, TriggerManual)
 	if err != nil {
 		t.Fatalf("触发失败: %v", err)
 	}

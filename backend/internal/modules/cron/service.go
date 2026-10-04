@@ -375,7 +375,7 @@ func (s *Service) ListRuns(ctx context.Context, jobID uint, page, size int) ([]C
 // ---- 触发与执行（手动触发与调度共用一条链路）----
 
 // Trigger 手动立即执行一次；Forbid：上次（任意触发）未结束时拒绝而不是排队。
-func (s *Service) Trigger(ctx context.Context, jobID uint) (*CronRun, error) {
+func (s *Service) Trigger(ctx context.Context, jobID uint, trigger string) (*CronRun, error) {
 	var job CronJob
 	if err := s.db.WithContext(ctx).First(&job, jobID).Error; err != nil {
 		return nil, ErrNotFound
@@ -385,7 +385,7 @@ func (s *Service) Trigger(ctx context.Context, jobID uint) (*CronRun, error) {
 		return nil, err
 	}
 	job.ServerID = serverID // 内存内填充（不回写：部署目标变更后下次执行重新解析）
-	run, ok := s.startRun(&job, TriggerManual)
+	run, ok := s.startRun(&job, trigger)
 	if !ok {
 		return nil, fmt.Errorf("上一次执行仍在进行中（Forbid），请稍后再试")
 	}

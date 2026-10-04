@@ -35,7 +35,22 @@ export interface ChatToolTrace {
   name: string;
 }
 
+/** M4 NL→操作：AI 生成的待确认操作卡（人确认才执行） */
+export interface PendingAction {
+  conversationId: number;
+  createdAt: string;
+  expiresAt: string;
+  id: number;
+  params: string;
+  result?: string;
+  status: 'cancelled' | 'done' | 'expired' | 'failed' | 'pending';
+  summary: string;
+  type: string;
+  userId: number;
+}
+
 export interface ChatMessage {
+  actions?: null | { id: number; summary: string; type: string }[];
   attachments?: ChatAttachment[] | null;
   content: string;
   conversationId: number;
@@ -81,11 +96,27 @@ export async function listMessagesApi(id: number) {
   );
 }
 
+/** M4：确认执行意图卡（仅发起人本人；真实权限由执行器 casbin 判定） */
+export async function confirmActionApi(id: number) {
+  return requestClient.post<PendingAction>(`/ai/chat/actions/${id}/confirm`);
+}
+
+export async function cancelActionApi(id: number) {
+  return requestClient.post<PendingAction>(`/ai/chat/actions/${id}/cancel`);
+}
+
+export async function listActionsApi(ids: number[]) {
+  return requestClient.get<PendingAction[]>('/ai/chat/actions', {
+    params: ids.length > 0 ? { ids: ids.join(',') } : undefined,
+  });
+}
+
 export interface ChatStreamHandlers {
   onDelta: (text: string) => void;
   onDone: (status: string, messageId?: number) => void;
   onError: (message: string) => void;
   onTool?: (name: string, args: string) => void; // 模型发起工具调用（function calling）
+  onAction?: (a: PendingAction) => void; // 生成待确认操作卡（M4 确认层）
 }
 
 /**
@@ -164,6 +195,8 @@ export async function chatStreamApi(
               handlers.onDelta(String(payload.text ?? ''));
             } else if (event === 'tool') {
               handlers.onTool?.(String(payload.name ?? ''), String(payload.args ?? ''));
+            } else if (event === 'action') {
+              handlers.onAction?.(payload as unknown as PendingAction);
             } else if (event === 'done') {
               handlers.onDone(
                 String(payload.status ?? 'done'),

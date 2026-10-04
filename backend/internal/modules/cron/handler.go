@@ -144,7 +144,7 @@ func (h *Handler) trigger(c *gin.Context) {
 		httpx.Fail(c, http.StatusForbidden, 403, "手动执行仅管理员可操作")
 		return
 	}
-	run, err := h.svc.Trigger(c.Request.Context(), id)
+	run, err := h.svc.Trigger(c.Request.Context(), id, TriggerManual)
 	if err != nil {
 		if err == ErrNotFound {
 			httpx.FailNotFound(c, err.Error())

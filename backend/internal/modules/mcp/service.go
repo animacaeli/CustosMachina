@@ -27,6 +27,8 @@ type ToolsSource interface {
 	ListBuilds(ctx context.Context, projectID uint, limit int) []map[string]any
 	ListReleases(ctx context.Context, projectID uint, limit int) []map[string]any
 	ListCronRuns(ctx context.Context, limit int) []map[string]any
+	ListCronJobs(ctx context.Context) []map[string]any
+	ListConfigs(ctx context.Context) []map[string]any
 	ListContainers(ctx context.Context, serverID uint) ([]map[string]any, error)
 }
 
@@ -244,6 +246,26 @@ func (s *Service) registerTools(srv *mcp.Server, role string) {
 		start := time.Now()
 		rows := s.src.ListCronRuns(ctx, lim(a.Limit))
 		audit(ctx, "list_cron_runs", start, true)
+		return textResult(rowsToText(rows)), nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_cron_jobs",
+		Description: "列出定时任务定义（ID/名称/调度表达式/启用状态/最近结果）",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		start := time.Now()
+		rows := s.src.ListCronJobs(ctx)
+		audit(ctx, "list_cron_jobs", start, true)
+		return textResult(rowsToText(rows)), nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "list_configs",
+		Description: "列出配置文件（ID/名称/目标主机/路径/格式/生效动作）",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		start := time.Now()
+		rows := s.src.ListConfigs(ctx)
+		audit(ctx, "list_configs", start, true)
 		return textResult(rowsToText(rows)), nil, nil
 	})
 

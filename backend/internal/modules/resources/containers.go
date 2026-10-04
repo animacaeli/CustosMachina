@@ -91,6 +91,40 @@ func (h *Handler) listContainers(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
+// ContainerAction 执行容器动作（start|stop|restart）并留痕事件。
+// P6-M4：AI 对话确认层复用（与 handler.containerAction 同链路——SSH docker
+// client + server_events 审计，operator 标注发起人）。
+func (s *Service) ContainerAction(ctx context.Context, serverID uint, cid, action, operator string) error {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	cli, sshConn, err := dockerClientFor(srv, cred)
+	if err != nil {
+		return err
+	}
+	defer sshConn.Close()
+	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var aerr error
+	switch action {
+	case "start":
+		_, aerr = cli.ContainerStart(actx, cid, dc.ContainerStartOptions{})
+	case "stop":
+		_, aerr = cli.ContainerStop(actx, cid, dc.ContainerStopOptions{})
+	case "restart":
+		_, aerr = cli.ContainerRestart(actx, cid, dc.ContainerRestartOptions{})
+	default:
+		return fmt.Errorf("不支持的操作 %q", action)
+	}
+	cli.Close()
+	if aerr != nil {
+		return aerr
+	}
+	s.recordSimpleEvent(actx, srv.ID, "container_op", fmt.Sprintf("%s 容器 %s %s", operator, cid, action))
+	return nil
+}
+
 func (h *Handler) containerAction(c *gin.Context) {
 	id, cid, ok := twoIDs(c)
 	if !ok {

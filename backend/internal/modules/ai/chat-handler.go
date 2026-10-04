@@ -6,10 +6,12 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +39,10 @@ func (h *ChatHandler) RegisterRoutes(r server.Router) {
 		g.PUT("/conversations/:id/mount", h.updateMount)
 		g.GET("/conversations/:id/messages", h.messages)
 		g.POST("/conversations/:id/messages", h.chat) // SSE 流式回复
+		// M4 NL→操作确认层：意图卡确认/取消/状态查询（真实权限在执行器 casbin）
+		g.GET("/actions", h.listActions)
+		g.POST("/actions/:id/confirm", h.confirmAction)
+		g.POST("/actions/:id/cancel", h.cancelAction)
 	}
 	// 技能：GET 全角色（命令面板列自己可用的）；写操作 admin（casbin v16）
 	sk := r.Authed.Group("/ai/skills")
@@ -207,6 +213,56 @@ type chatEvent struct {
 	data gin.H
 }
 
+// ---- M4 NL→操作确认层：意图卡路由 ----
+
+func (h *ChatHandler) listActions(c *gin.Context) {
+	claims := jwt.ClaimsFromContext(c)
+	var ids []uint
+	for _, s := range strings.Split(c.Query("ids"), ",") {
+		if v, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64); err == nil && v > 0 {
+			ids = append(ids, uint(v))
+		}
+	}
+	list, err := h.svc.ListActions(c.Request.Context(), claims.UserID, viewerAdmin(c), ids)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
+
+func (h *ChatHandler) confirmAction(c *gin.Context) {
+	claims := jwt.ClaimsFromContext(c)
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	operator := claims.DisplayName
+	if operator == "" {
+		operator = fmt.Sprintf("user#%d", claims.UserID)
+	}
+	a, err := h.svc.ConfirmAction(c.Request.Context(), claims.UserID, operator, id)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, a)
+}
+
+func (h *ChatHandler) cancelAction(c *gin.Context) {
+	claims := jwt.ClaimsFromContext(c)
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	a, err := h.svc.CancelAction(c.Request.Context(), claims.UserID, id)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, a)
+}
+
 // chat SSE 流式对话。错误一律以 error 事件发出（此时响应头已写，无法改状态码）；
 // 连接层错误（鉴权前的 401/404）不在此列。
 func (h *ChatHandler) chat(c *gin.Context) {
@@ -253,6 +309,14 @@ func (h *ChatHandler) chat(c *gin.Context) {
 		}, func(name, args string) {
 			select {
 			case ch <- chatEvent{"tool", gin.H{"name": name, "args": args}}:
+			case <-reqCtx.Done():
+			}
+		}, func(a PendingAction) {
+			select {
+			case ch <- chatEvent{"action", gin.H{
+				"id": a.ID, "type": a.Type, "summary": a.Summary,
+				"params": json.RawMessage(a.Params), "status": a.Status,
+			}}:
 			case <-reqCtx.Done():
 			}
 		})
