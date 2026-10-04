@@ -1,12 +1,12 @@
-# 第六阶段计划：AI 主线（对话 UI / MCP Server / NL→操作）+ 配置拉取与欠账收口
+# 第六阶段计划：AI 主线（对话 UI / MCP Server / NL→操作）+ 配置双形态与生态适配 + 欠账收口
 
-> 状态：**讨论稿 v1.0**（2026-10-04 起草，待评审；评审通过后更新状态行并同步 roadmap）
-> 范围决策记录（承 roadmap §四/§五与 P5 收官留档）：**对话 UI 为 P6 首项**（旗舰体验）；**MCP Server 化与对话 UI 同期**（对话 UI 本身就是"内置 MCP 客户端 + 界面"）；**NL→操作带人工确认层**（AI 五铁律之"advisory 先行、autonomous 后置"在本阶段闭环）；**配置拉取 API（方案 B）**按 roadmap §四已细化要点落地并同步收口 AgileConfig 决策；堡垒机语义/审计回放/composable 抽取/版本化 migration 四笔顺延欠账**本阶段必须清**（均已顺延一次）。
-> 上游依据：docs/roadmap.md §四（P6）、§五（AI 规划）、§六（生态抽象纪律）；docs/plan-phase5-services.md 收官状态。
+> 状态：**讨论稿 v1.1**（2026-10-04 起草，同日按用户三点反馈修订：AgileConfig 转共存设计、新增 gitee+Jenkins 生态适配、compose 重建已补 pull；待评审）
+> 范围决策记录（承 roadmap §四/§五与 P5 收官留档）：**对话 UI 为 P6 首项**（旗舰体验）；**MCP Server 化与对话 UI 同期**（对话 UI 本身就是"内置 MCP 客户端 + 界面"）；**NL→操作带人工确认层**（AI 五铁律之"advisory 先行、autonomous 后置"在本阶段闭环）；**配置拉取 API（方案 B）+ AgileConfig 共存接入**（用户 2026-10-04 定向：不收缩 AgileConfig，按 roadmap 2026-10-01 决策记录做文件+K/V 共存）；**gitee+Jenkins 组合适配**（用户存量项目主力组合，自用刚需，见 M8）；堡垒机语义/审计回放/composable 抽取/版本化 migration 四笔顺延欠账**本阶段必须清**（均已顺延一次）。
+> 上游依据：docs/roadmap.md §四（P6）、§五（AI 规划）、§六（生态抽象纪律）、§三.3（AgileConfig 决策记录）；docs/plan-phase5-services.md 收官状态。
 > 本阶段要回答的三个问题：
 > 1. **对话入口如何不做只读超权**——会话挂载 Context Pack 后，角色过滤与 casbin 既有资源点如何对齐（对话不得成为绕过权限模型的旁路）？
-> 2. **MCP 化的边界在哪**——平台哪些能力值得暴露为标准 tools，写操作工具的确认层挂在协议哪一层？
-> 3. **AI 主线与欠账的取舍**——时间不够时先保对话闭环还是先清堡垒机回放（安全审计欠账已两次顺延）？
+> 2. **配置的两种消费底层如何共存**——文件真相源与 AgileConfig K/V 在同一应用×环境下并行，UI/模型/审计如何归一而不互相渗透（roadmap 解耦硬性要求的落地）？
+> 3. **AI 主线与生态刚需/欠账的取舍**——时间不够时先保对话闭环还是先保 gitee+Jenkins 存量项目接入（自用刚需）？
 
 ## 一、总判断：P6 是"AI 成为主线功能"的阶段
 
@@ -15,7 +15,8 @@ P1~P5 把运维功能做成了 AI 主线的**地基**（数据、通道、审计
 - **对话**：从"告警通知附一段 AI 摘要"到"独立对话 UI（通用模式 + 平台上下文挂载）"；
 - **工具协议**：从"平台私有 pack 组装"到"标准 MCP tools 暴露"（Claude Desktop / IDE / 任意 MCP 客户端可直连，开源放大器）；
 - **操作**：从"AI 只读建议"到"NL→待执行操作→人确认→走既有 casbin 与审计执行"；
-- **配置消费**：从"SFTP 下发文件"补齐"服务启动 API 拉取"（方案 B，文件真相源一址两用）；
+- **配置消费**：从"SFTP 下发文件"补齐"服务启动 API 拉取"（方案 B，文件真相源一址两用）+ AgileConfig K/V 共存（SDK 热更形态，平台模型归一）；
+- **生态适配**：gitee+Jenkins 组合接入（GitProvider + CIProvider 两层抽象，存量项目主力组合回归平台）；
 - **欠账**：堡垒机语义 + 终端审计回放（#20/#38）+ composable 抽取（#33）+ 版本化 migration（#9 延伸，开源化前置）。
 
 **现状锚点（起草时实测）**：ai 模块 `Complete` 为非流式单发；平台 SSE 仅容器日志一处（`resources/containers.go`），cron 实时日志为 2s 轮询、终端为 WebSocket；notify 为 webhook 单向出站（企微/钉钉/飞书群机器人）。——即：**流式对话链路基本全新**，且"日志 follow 死锁"有前科（审核留档 P1 项），SSE 治理必须设计先行。
@@ -30,10 +31,12 @@ M1 对话 UI（SSE 流式 + 双模式 + pack 挂载）
               └──> M3 Skill 声明式技能包 + 对话内工具调用（对话与 tools 会师）
                        └──> M4 NL→操作（确认层闭环）
 M5 配置拉取 API 方案 B（独立，仅复用 configs 模块，可与 M2~M4 并行）
+M7 AgileConfig 共存接入（依赖 M5 的应用级 token 基建与 configs 现状；可与 M3/M4 并行）
+M8 gitee+Jenkins 生态适配（独立轨道，自用刚需，建议前置或与 AI 主线穿插）
 M6 欠账批次（独立，裁剪线之后，但本阶段不清则再顺延一次）
 ```
 
-M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实现：意图解析→确认卡→执行）；M5/M6 相互独立。建议周期 6~8 周。
+M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实现：意图解析→确认卡→执行）；M5/M7/M8 相互独立。建议周期 8~12 周（M8 是否前置影响总长，见决策点 D5）。
 
 ## 二、前置事项（开工前完成，不占里程碑）
 
@@ -118,12 +121,52 @@ M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实
 - 鉴权：应用级 token（管理后台签发，只读限定 app×env 范围），不复用用户 token（服务间凭证与人凭证分离）；公开接口带限速；
 - 缓存：API 侧 60s 短缓存 + ETag；不做推送/长连接；
 - 与下发组合：同一份配置既能 SFTP 下发也能 API 拉取（拉取直读平台库当前版本，不经远端文件）；
-- **AgileConfig 决策收口**（见决策点 D1）：若定不做，本里程碑同步更新 roadmap §三/§六决策记录与 slot_overrides 欠账处置。
+- 应用级 token 签发基建（AES 落库/范围限定/吊销）同时是 M7 AgileConfig 接入的对账与凭证基础。
 
 **验收标准**：
 
 - 真机一例：业务服务启动时经拉取 API 取到合并后配置并正常启动；
 - token 越权（跨 app/env）403；合并冲突 key 返回明确报错；ETag 未变更时 304。
+
+### M7 AgileConfig 共存接入（约 1.5 周，可与 M3/M4 并行；用户 2026-10-04 定向：共存而非收缩）
+
+**共存设计（承 roadmap §三.3 决策记录展开，核心是"一个模型、两种底层、三种消费形态"）**：
+
+- **消费形态三分（应用按需自选，互不排斥）**：① SFTP 文件下发（R2 已交付，应用读文件）；② API 拉取（M5，应用启动 GET）；③ K/V SDK 热更（本里程碑，应用嵌 AgileConfig 客户端长连接）——同一"应用×环境"可同时持有文件配置与 K/V 配置；
+- **统一领域模型归一**：UI 与平台 API 只面向平台自有概念（应用/环境/配置文件/配置项/版本/审计/脱敏）；**AgileConfig 是纯后端 provider**，其特有概念（节点状态/客户端在线）降级为可选能力展示，不入模型；
+- **UI 形态**：配置管理页内"文件 / 键值"双视图切换（同一应用×环境下并列，不另开一级菜单）；
+- **同步方向：平台为真相源单向推 AgileConfig**（OpenAPI 写入）；AgileConfig 控制台手改视为漂移，提供对账检测（比对版本号，漂移仅告警不自动覆盖）；
+- **共享基建**：敏感值统一走平台脱敏管线（录入即过 DLP 清单）；审计走 server_events；权限走 casbin 既有 config 资源点扩展 `config_kv:*`；
+- **部署**：AgileConfig 服务本身走平台项目部署链路（dogfood 同 O2 先例，不直接操作服务器）。
+
+**止损判据（承 roadmap）**：若 AgileConfig OpenAPI 覆盖度不足密钥级权限控制，K/V 场景回退内建轻量存储（平台 KV 表 + M5 拉取 API 透出，UI 零改动）。
+
+**验收标准**：
+
+- 同一应用×环境：文件配置走 SFTP 下发、K/V 配置经 AgileConfig SDK 热更，各真机一例互不干扰；
+- 平台侧改 K/V 值 → AgileConfig 侧可见；AgileConfig 控制台手改 → 平台对账告警"检测到漂移"；
+- dev 角色在 UI 看不到敏感值明文；AgileConfig provider 凭证 AES 落库；
+- 抽掉 AgileConfig（停服/切回内建）：配置管理 UI 文件视图行为不变（解耦验证）。
+
+### M8 gitee+Jenkins 生态适配（约 3~4 周；用户存量项目主力组合，排期见决策点 D5）
+
+**现状耦合点（起草时逐处核实，全部 gitea 专属）**：① tag push webhook（HMAC X-Gitea-Signature）建 Build 记录；② Poller 30s 轮询 gitea commit status（act_runner 写回）；③ 构建日志走 gitea Actions API；④ 发布时从 gitea 取 tag 对应 compose 部署描述（RawClient）；⑤ `projects.RepoURL/RepoPath` 语义绑死 gitea。
+
+**组合支持方案（两层 provider，均满足 rule of two）**：
+
+- **GitProvider 接口**（roadmap §六已背书的高优先级抽象）：webhook 解析与签名校验 / tag→compose 部署描述 / 仓库元信息。gitea 既有实现迁入接口 + **gitee 适配器**（API v5，webhook 签名 X-Gitee-Token）；
+- **CIProvider 接口**（新增抽象，两实现确定要来：gitea Actions + Jenkins）：构建状态查询 / 日志拉取。**Jenkins 适配**（REST：`/job/{name}/api/json` 状态、`consoleText` 日志，CSRF crumb 处理）；
+- **projects 加 `provider` 字段**（gitea/gitee/jenkins 组合）路由到适配器，存量数据默认 gitea 零迁移；
+- **触发链（gitee+Jenkins 形态）**：gitee push tag → 平台 `/ci/webhook/gitee` 建 Build 记录；gitee 仓库同时 webhook 通知 Jenkins（gitee 插件）构建推 registry（**镜像 tag = git tag，与现有 tag 发布模型对齐**）；Poller 按 provider 分支查 Jenkins build 状态；发布门禁（查 BuildSuccess）与发布/回滚链路零改动；
+- 环境管理侧无额外适配：发布从 registry 拉镜像、SSH 部署，本身 provider 无关。
+
+**验收标准**：
+
+- gitee 仓库 + Jenkins 构建的项目：从建 Build 记录 → Jenkins 状态回读 → 日志在平台可看 → tag 发布到目标机，全链路真机一例；
+- 既有 gitea 项目回归不受影响（同一套 Build/发布链路双 provider 并行）；
+- Jenkins 不可达时状态查询降级为"未知"不阻塞已有成功记录的发布。
+
+**明确不做（本里程碑内）**：Jenkins 构建触发（平台只读状态，构建由 gitee webhook 驱动，避免平台成为 CI 控制面）；GitHub/GitLab 适配器（另立，roadmap 已注明工作量远大于观感）。
 
 ### M6 欠账批次（约 1~1.5 周，裁剪线之后，但本阶段必须清）
 
@@ -143,7 +186,9 @@ M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实
 - 代码执行型 Skill；
 - **MCP Client**（外部 MCP servers 注册表，P6 末~P7 再启动）；
 - IM 机器人双向（见决策点 D4，默认顺延）；
-- AgileConfig 接入与服务发现（见决策点 D1，默认收缩）；
+- AgileConfig **服务发现**（compose 期需求弱，P7 再评估；接入本身见 M7）；
+- Jenkins 构建触发与 pipeline 管理（平台只读 CI 状态，构建由 git webhook 驱动）；
+- GitHub/GitLab 适配器（M8 只做 gitee+Jenkins；roadmap 已注明其工作量远大于表格观感）；
 - k3s 主线（触发判据满足后另立计划）；
 - 工单/多租户等 roadmap §八清单项。
 
@@ -154,12 +199,14 @@ M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实
 | AI 工具协议 | MCP 标准协议即生态接口（Go SDK 选型见前置调研），不自研私有工具格式 |
 | 模型接入 | OpenAI 兼容协议已定（P5），不抽多 provider 接口 |
 | 对话流式 | SSE 标准协议；WebSocket 仅维持既有终端场景 |
-| 配置消费形态 | 文件下发 + API 拉取两种形态均内建；AgileConfig（K/V SDK 热更）判定"不来"（见决策点 D1），不抽 ConfigProvider |
+| 配置消费形态 | 文件下发 + API 拉取 + AgileConfig SDK 三种消费形态并存，但平台模型唯一、底层 provider 可插拔（roadmap 2026-10-01 决策：接缝服务于已明确的换底/共存需求，正当例外） |
+| Git 托管 | GitProvider 接口（roadmap §六背书）：gitea 迁入 + gitee 适配器，两实现确定 |
+| CI 引擎 | CIProvider 接口（新增）：gitea Actions + Jenkins 两实现确定，正当抽象 |
 
 ## 六、欠账消化安排
 
 - **本阶段必清**：#20/#38 终端审计回放、#33 composable 抽取、版本化 migration（均已顺延一次，M6 承载）；
-- **随决策收口**：slot_overrides 接管（随 D1：AgileConfig 不做则由"文件方案 + 拉取 API"评估覆盖或维持现状并销账）；
+- **随 M7 收口**：slot_overrides 接管（AgileConfig 接入后由 K/V 形态接管测试槽位配置，或经止损判据回退内建后由内建 KV 承接）；
 - **继续挂账**：生产尾巴两项（前置事项 3，运维操作非代码欠账）。
 
 ## 七、风险与前置调研
@@ -172,7 +219,9 @@ M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实
 | 模型端 function calling 能力参差 | M3 | 降级路径：不支持工具调用的模型禁用工具挂载并明示 |
 | 流式 Markdown 长对话渲染性能 | M1 | 分段渲染/虚拟滚动，超长会话提示新建 |
 | 对话上下文超出模型窗口 | M1/M3 | pack 分块 + 截断策略（保留最近 N 轮 + 挂载摘要） |
-| 阶段超期 | 持续 | 裁剪线：按序保 M1→M2→M4（对话→协议化→确认层为主线灵魂）；M3 可并入 M2 尾段或顺延 P7；M5 独立高价值建议随段并行；M6 不清则升级为 P7 首项（不再默顺延） |
+| 阶段超期 | 持续 | 裁剪线：AI 主线按序保 M1→M2→M4（对话→协议化→确认层）；M3 可并入 M2 尾段或顺延 P7；M5/M7 独立高价值建议随段并行；M8 按决策点 D5 定位置；M6 不清则升级为 P7 首项（不再默顺延） |
+| AgileConfig OpenAPI 覆盖度（密钥级权限） | M7 开工前 1 天调研 | 不足则走止损判据：K/V 回退内建轻量存储，UI 零改动 |
+| gitee webhook 签名/Jenkins CSRF 细节与版本差异 | M8 开工前 1 天调研 | 双候选先跑通 curl 级验证再写适配器 |
 
 ## 八、执行与验收纪律
 
@@ -183,7 +232,15 @@ M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实
 
 ## 九、待用户决策的讨论点
 
-- **D1｜AgileConfig 收缩**：方案 B 落地后其必要性收缩为"多语言 SDK 生态 + 推送热更"。**建议：整体降为 P7+/不做**（自用无 SDK 热更需求；文件下发 + API 拉取已构成两种消费形态，rule of two 无第三形态需求）；判据保留：自用出现"SDK 热更/多语言客户端拉取"真实需求再启动。
+- **D1｜AgileConfig 共存的关键取舍**（方向已定：共存，见 M7）：
+  - 同步方向建议**平台单向推 AgileConfig**（AgileConfig 只作运行时下发通道，控制面手改视为漂移仅告警）——若你希望双向同步（AgileConfig 控制台也能改回平台），复杂度显著上升，不建议；
+  - UI 形态建议**配置管理页内"文件/键值"双视图**（不另开一级菜单）；
+  - 首批范围建议**仅 K/V**（应用/环境/配置项/版本/审计/脱敏），AgileConfig 节点状态等降级为可选能力。
 - **D2｜对话 UI 前端形态**：独立一级菜单页（**建议**，参考"配置管理"先例，旗舰体验值得一级入口）vs 全局浮层（随时唤起但空间受限）。
 - **D3｜NL→操作首批白名单**：低危三件套（容器重启/cron 触发/配置下发，**建议**）是否足够？"发布/回滚"类高危操作建议 P7 观察三件套运行稳定后再议。
 - **D4｜IM 机器人双向**（查状态/确认告警）：对话 UI 已覆盖查询场景，IM 回调是新攻击面（防伪造/限速/凭证）。**建议：顺延 P7**，本阶段不做。
+- **D5｜gitee+Jenkins 适配排期**（工作量约 3~4 周，自用刚需）：
+  - 选项 A（**建议**）：**前置小阶段**——M1 动手前先做 M8，让存量 gitee+Jenkins 项目尽快接入平台（当下痛点是"项目上不来"），AI 主线随后；
+  - 选项 B：与 AI 主线**穿插并行**（生态轨道与 AI 轨道不同焦点，总周期拉长至 10~12 周）；
+  - 选项 C：顺延 P7（不建议：每新增一个 gitee+Jenkins 项目都在平台外多养一个月）。
+- **D6｜今日已顺手落地的修复**（无需决策，报备）：compose 重建/发布链路已前置 `docker compose pull`（pull 失败短路不重建，保现役容器；超时 3→10 分钟）——你反馈的"改 latest 后重建仍用旧镜像"问题。
