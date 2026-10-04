@@ -308,12 +308,15 @@ func (h *Handler) recreateCompose(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	// 先 pull 再 up：镜像 tag 为 latest/digest 未变时，up 不会主动拉取，会静默复用本地旧镜像。
+	// pull 失败（registry 不可达/镜像已删）则短路不重建，宁可保住现役容器也不跑旧镜像冒充新版。
 	cmd := fmt.Sprintf(
-		"cd %s && docker compose -p %s -f %s up -d --force-recreate --remove-orphans 2>&1; "+
+		"cd %s && docker compose -p %s -f %s pull 2>&1 && docker compose -p %s -f %s up -d --force-recreate --remove-orphans 2>&1; "+
 			"rc=$?; docker compose -p %s -f %s ps 2>&1; exit $rc",
 		shellQuote(filepath.Dir(in.Path)), shellQuote(in.Project), shellQuote(in.Path),
+		shellQuote(in.Project), shellQuote(in.Path),
 		shellQuote(in.Project), shellQuote(in.Path))
-	out, err := sshRunOutputWithStdin(srv, cred, cmd, "", 3*time.Minute)
+	out, err := sshRunOutputWithStdin(srv, cred, cmd, "", 10*time.Minute)
 	success := err == nil
 	h.svc.recordSimpleEvent(c.Request.Context(), srv.ID, "compose_deploy",
 		fmt.Sprintf("%s 重建 compose 项目 %s（%s）：%s", h.operator(c), in.Project, in.Path,
@@ -364,13 +367,14 @@ func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yaml
 	}
 	// 固定目录：同名重新部署 = 覆盖更新（旧文件自动备份）；目录名有白名单，直接拼接安全。
 	// --force-recreate：bind 挂载的伴随配置（如 vector.yaml）改动依赖容器重建才生效
+	// pull 先行同 recreateCompose：latest 标签必须拉到最新才 up；pull 失败短路，现役容器不动。
 	dir := deployRoot + "/" + name
 	const deployCmd = `mkdir -p %q && [ -f %q/compose.yaml ] && cp %q/compose.yaml %q/compose.yaml.bak.$(date +%%Y%%m%%d%%H%%M%%S) || true; ` +
 		`cat > %q/compose.yaml && ` +
-		`cd %q && docker compose -p %q -f compose.yaml up -d --force-recreate --remove-orphans 2>&1; ` +
+		`cd %q && docker compose -p %q -f compose.yaml pull 2>&1 && docker compose -p %q -f compose.yaml up -d --force-recreate --remove-orphans 2>&1; ` +
 		`rc=$?; docker compose -p %q -f compose.yaml ps 2>&1; exit $rc`
-	cmd := fmt.Sprintf(deployCmd, dir, dir, dir, dir, dir, dir, name, name)
-	out, err := sshRunOutputWithStdin(srv, cred, cmd, yamlContent, 3*time.Minute)
+	cmd := fmt.Sprintf(deployCmd, dir, dir, dir, dir, dir, dir, name, name, name)
+	out, err := sshRunOutputWithStdin(srv, cred, cmd, yamlContent, 10*time.Minute)
 	return out, dir, err
 }
 
