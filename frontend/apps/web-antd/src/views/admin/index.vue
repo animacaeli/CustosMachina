@@ -5,6 +5,7 @@ import AiConfig from './tabs/ai-config.vue';
 import AlertTemplates from './tabs/alert-templates.vue';
 import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
+import McpTokens from './tabs/mcp-tokens.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
 import NotifyRoutes from './tabs/notify-routes.vue';
 import Session from './tabs/session.vue';
@@ -41,6 +42,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="ai" tab="AI 中转层">
           <AiConfig />
+        </a-tab-pane>
+        <a-tab-pane key="mcp" tab="MCP 接入">
+          <McpTokens />
         </a-tab-pane>
         <a-tab-pane key="ci" tab="CI / 镜像仓库">
           <CiConfig />

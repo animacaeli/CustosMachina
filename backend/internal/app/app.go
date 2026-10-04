@@ -23,6 +23,7 @@ import (
 	cronmod "github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
+	mcpmod "github.com/custos-machina/backend/internal/modules/mcp"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/observ"
 	"github.com/custos-machina/backend/internal/modules/projects"
@@ -47,6 +48,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, certs.Models()...)
 	models = append(models, ai.Models()...)
 	models = append(models, ai.ChatModels()...)
+	models = append(models, mcpmod.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -75,6 +77,7 @@ func ProvideModules(
 	identity *identity.Handler,
 	rbac *rbac.Handler,
 	resources *resources.Handler,
+	resSvc *resources.Service,
 	notify *notify.Handler,
 	projects *projects.Handler,
 	ciMod *ci.Handler,
@@ -94,6 +97,8 @@ func ProvideModules(
 	aiDigest *ai.DigestService,
 	aiChatSvc *ai.ChatService,
 	aiChatH *ai.ChatHandler,
+	mcpSvc *mcpmod.Service,
+	mcpH *mcpmod.Handler,
 	db *gorm.DB,
 	backupSvc *backup.Service,
 	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
@@ -127,7 +132,9 @@ func ProvideModules(
 	observSvc.SetDigestor(aiDigest)
 	// 桥接（P6 M1）：对话挂载上下文供给（项目/发布/构建/主机/事件只读查询）
 	aiChatSvc.MountSource = &chatContextBridge{db: db}
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH}
+	// 桥接（P6 M2）：MCP tools 数据投影 + 上下文包供给（与对话同一套角色过滤）
+	mcpSvc.SetSources(&toolsBridge{db: db, res: resSvc}, aiChatSvc.MountSource)
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -158,6 +165,7 @@ var moduleSet = wire.NewSet(
 	slots.Set,
 	observ.Set,
 	cronmod.Set,
+	mcpmod.Set,
 	// canary 的 SSHRunner 由 resources.Service 实现（灰度承载层复用 SSH 通道）
 	wire.Bind(new(canary.SSHRunner), new(*resources.Service)),
 	// cron 的 Runner（SSH 执行 + 事件审计）同样由 resources.Service 实现
@@ -381,4 +389,68 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 		blocks = append(blocks, ai.ContextBlock{Source: "config_meta", Text: mb.String(), Sensitive: true})
 	}
 	return blocks
+}
+
+// toolsBridge mcp.ToolsSource 的 app 层实现：六类只读投影。
+// 容器查询经 resources.Service（docker over SSH）；其余直查同库业务表。
+type toolsBridge struct {
+	db  *gorm.DB
+	res *resources.Service
+}
+
+func (b *toolsBridge) ListServers(ctx context.Context) []map[string]any {
+	var rows []map[string]any
+	b.db.WithContext(ctx).Table("servers").
+		Select("id, name, host, status").Order("id").Limit(50).
+		Scan(&rows)
+	return rows
+}
+
+func (b *toolsBridge) ListProjects(ctx context.Context) []map[string]any {
+	var rows []map[string]any
+	b.db.WithContext(ctx).Table("projects").
+		Select("id, name, repo_path, provider").Order("id").Limit(50).
+		Scan(&rows)
+	return rows
+}
+
+func (b *toolsBridge) ListBuilds(ctx context.Context, projectID uint, limit int) []map[string]any {
+	q := b.db.WithContext(ctx).Table("builds").
+		Select("id, project_id, tag, env_type, status, builder, created_at").
+		Order("id DESC").Limit(limit)
+	if projectID > 0 {
+		q = q.Where("project_id = ?", projectID)
+	}
+	var rows []map[string]any
+	q.Scan(&rows)
+	return rows
+}
+
+func (b *toolsBridge) ListReleases(ctx context.Context, projectID uint, limit int) []map[string]any {
+	q := b.db.WithContext(ctx).Table("releases").
+		Select("id, project_id, tag, env_type, status, release_by, created_at").
+		Order("id DESC").Limit(limit)
+	if projectID > 0 {
+		q = q.Where("project_id = ?", projectID)
+	}
+	var rows []map[string]any
+	q.Scan(&rows)
+	return rows
+}
+
+func (b *toolsBridge) ListCronRuns(ctx context.Context, limit int) []map[string]any {
+	var rows []map[string]any
+	b.db.WithContext(ctx).Table("cron_runs").
+		Select("id, job_name, status, exit_code, created_at").
+		Order("id DESC").Limit(limit).Scan(&rows)
+	return rows
+}
+
+func (b *toolsBridge) ListContainers(ctx context.Context, serverID uint) ([]map[string]any, error) {
+	// resources.Service 的容器列表（docker over SSH）
+	out, err := b.res.ContainersBrief(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

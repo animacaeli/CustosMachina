@@ -365,3 +365,35 @@ func (h *Handler) operator(c *gin.Context) string {
 	}
 	return "unknown"
 }
+
+// ContainersBrief 主机容器简明清单（P6 M2：MCP tools 层复用，docker over SSH）。
+// 返回通用 map（id/name/image/state/status/compose 项目名），调用方为 mcp 模块。
+func (s *Service) ContainersBrief(ctx context.Context, serverID uint) ([]map[string]any, error) {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	cli, sshConn, err := dockerClientFor(srv, cred)
+	if err != nil {
+		return nil, err
+	}
+	defer sshConn.Close()
+	list, err := cli.ContainerList(ctx, dc.ContainerListOptions{All: true})
+	cli.Close()
+	if err != nil {
+		return nil, fmt.Errorf("Docker API 失败: %w", err)
+	}
+	out := make([]map[string]any, 0, len(list.Items))
+	for _, ct := range list.Items {
+		name := ""
+		if len(ct.Names) > 0 {
+			name = strings.TrimPrefix(ct.Names[0], "/")
+		}
+		out = append(out, map[string]any{
+			"id": ct.ID[:12], "name": name, "image": ct.Image,
+			"state": string(ct.State), "status": ct.Status,
+			"compose_project": ct.Labels["com.docker.compose.project"],
+		})
+	}
+	return out, nil
+}

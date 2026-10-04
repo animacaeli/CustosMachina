@@ -19,6 +19,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/modules/mcp"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/observ"
 	"github.com/custos-machina/backend/internal/modules/projects"
@@ -113,6 +114,8 @@ func InitializeServer() (*server.Server, func(), error) {
 	digestService := ai.NewDigestService(aiService, db)
 	chatService := ai.NewChatService(db, aiService)
 	chatHandler := ai.NewChatHandler(chatService)
+	mcpService := mcp.NewService(db)
+	mcpHandler := mcp.NewHandler(mcpService)
 	backupScheduler, cleanup6, err := backup.NewScheduler(backupService)
 	if err != nil {
 		cleanup5()
@@ -143,7 +146,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, aiHandler, digestService, chatService, chatHandler, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, resourcesService, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, aiHandler, digestService, chatService, chatHandler, mcpService, mcpHandler, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,
