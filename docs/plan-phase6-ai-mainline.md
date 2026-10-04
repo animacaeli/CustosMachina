@@ -1,8 +1,8 @@
 # 第六阶段计划：AI 主线（对话 UI / MCP Server / NL→操作）+ 配置双形态与生态适配 + 欠账收口
 
-> 状态：**已定稿**（v1.3，2026-10-04 当日两轮定稿：D1~D6 按建议拍板 + 用户追加 M9 生态适配批次全做；开工时序：M8 前置 → SSE 设计文档 → M1，等用户发起）
+> 状态：**已定稿**（v1.4，2026-10-04 当日三轮定稿：D1~D6 按建议拍板 + 追加 M9 生态适配批次 + 补 k3s 基建演进预研档 §十一与 D8；开工时序：M8 前置 → SSE 设计文档 → M1，等用户发起）
 > 范围决策记录（承 roadmap §四/§五/§六与 P5 收官留档，含定稿决策）：**对话 UI 为 AI 主线首项**（旗舰体验，独立一级菜单）；**MCP Server 化与对话 UI 同期**（对话 UI 本身就是"内置 MCP 客户端 + 界面"）；**NL→操作带人工确认层**（首批白名单低危三件套，高危 P7 观察后再议）；**配置拉取 API（方案 B）+ AgileConfig 共存接入**（一个模型/两种底层/三种消费形态；平台单向推送+漂移告警；首批仅 K/V）；**gitee+Jenkins 组合适配前置**（存量项目主力组合，自用刚需优先于 AI 主线）；**开源生态适配批次全做**（用户 2026-10-04 追加：GitHub/GitLab GitProvider + Telegram/SMTP 通知 + GitHub OAuth 登录，不留 backlog，见 M9）；**IM 机器人双向顺延 P7**；堡垒机语义/审计回放/composable 抽取/版本化 migration 四笔顺延欠账**本阶段必须清**（均已顺延一次）。
-> 阶段定位补充（定稿新增）：P6 是**功能开发的最后一个立项阶段**——收官后平台转入维护期（测试/微调/按需小项），大功能仅按触发判据重新立项，见 §十。
+> 阶段定位补充（v1.4 修正）：P6 是**功能开发的收官立项阶段**（运维功能面 + AI 主线 + 生态适配在此全部交付），收官后功能线转维护期（§十）；但**核心基建演进线独立于此**——compose MVP → k3s 的演进按判据/时间表触发另立 P7，见 §十一。
 > 上游依据：docs/roadmap.md §四（P6）、§五（AI 规划）、§六（生态抽象纪律）、§三.3（AgileConfig 决策记录）；docs/plan-phase5-services.md 收官状态。
 > 本阶段要回答的三个问题：
 > 1. **对话入口如何不做只读超权**——会话挂载 Context Pack 后，角色过滤与 casbin 既有资源点如何对齐（对话不得成为绕过权限模型的旁路）？
@@ -255,7 +255,7 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - 所有新表/新资源点过 casbin 三级角色矩阵评审；新公开接口一律带限速审视；
 - **AI 五铁律逐条对照进各里程碑验收**（M1 角色过滤与 DLP、M2 tools 层同套、M4 确认层与 casbin）。
 
-## 九、决策点拍板记录（2026-10-04 用户全部按建议落地）
+## 九、决策点拍板记录（2026-10-04 用户全部按建议落地；D8 待答复）
 
 - **D1｜AgileConfig 共存**：✅ 单向同步（平台推 AgileConfig，控制台手改=漂移仅告警）；✅ 配置管理页内"文件/键值"双视图（不另开菜单）；✅ 首批仅 K/V，节点状态等降级可选能力。
 - **D2｜对话 UI 形态**：✅ 独立一级菜单页。
@@ -264,20 +264,51 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - **D5｜gitee+Jenkins 排期**：✅ 前置小阶段（M8 执行顺序第一，M1 动手前完成）。
 - **D6｜compose pull 修复**：✅ 已落地发版（1d764ee），无需后续动作。
 - **D7｜开源生态适配批次**：✅ 用户 2026-10-04 追加拍板——roadmap §六剩余适配项（GitHub/GitLab GitProvider、Telegram/SMTP 通知、GitHub OAuth 登录）**全做进 M9，不留触发式 backlog**；唯 GitLab 适配器设裁剪线（GitHub 先行，余量不足随 M6 补）；ObservBackend（Grafana/Loki）维持 rule of two 判据不进本阶段。
+- **D8｜k3s 启动方式**（v1.4 补档，**待答复**）："真实滚动更新需求"判据已因 P4 自建蓝绿/灰度而显形，剩余看基础设施规划：
+  - 选项 A（**建议，默认**）：**判据触发 + P6 收尾评审重估**——P6 执行期按 §十一准备项保持出口干净，收官评审时按主机/弹性规划决定是否立 P7；
+  - 选项 B：**主动时间表**——P6 收官后即立 P7（适合你已有 ≥3 台主机或多机采购计划，或明确想让新项目直接走 k8s 载体）；
+  - 说明：k3s 演进不改变"P6 功能线收官"定位（§十），两条线独立。
 
-## 十、阶段后走向：P6 是功能开发的最后一个立项阶段（定稿）
+## 十、阶段后走向：功能线收官，基建线按 §十一演进
 
-P6 收官后，平台**转入维护期**——测试补齐、既有功能微调、按需小项，不再预先立项大功能阶段。roadmap 中残留的候选项全部转为**触发式 backlog**（判据满足或自用刚需出现才重新立项，届时另立计划）：
+P6 收官后，**功能线转入维护期**——测试补齐、既有功能微调、按需小项，不再预先立项大功能阶段。功能向残留候选全部转为**触发式 backlog**（判据满足或自用刚需出现才重新立项，届时另立计划）：
 
 | 候选项 | 触发判据（不满足就永远不做） |
 |---|---|
-| k3s 主线 | ≥3 台主机等多机需求 / 真实滚动更新需求 / 弹性调度需求 / 观测超 5 台主机（roadmap §一原判据） |
 | MCP Client（外部 MCP servers 接入） | 对话场景确需外部工具（拨测/文档检索）且平台自有 tools 无法覆盖 |
 | NL→操作高危白名单（发布/回滚） | 三件套真机运行 ≥1 个月无误操作 |
 | IM 机器人双向 | 对话 UI 稳定后仍有"IM 内直接查询/确认"的刚性场景 |
 | AgileConfig 服务发现 | 转 k3s 后（ConfigMap/Service 是免费答案前不碰） |
 | ObservBackend 抽象（Grafana/Loki 适配） | 开源用户真实需要 Grafana/Loki 替代 O2（rule of two 原判据） |
 
-> 注：Telegram/SMTP 通知、GitHub OAuth、GitHub/GitLab GitProvider 原属本表，D7 拍板后已进 M9 本阶段做掉。
+> 注：Telegram/SMTP 通知、GitHub OAuth、GitHub/GitLab GitProvider 原属本表，D7 拍板后已进 M9 本阶段做掉；k3s 主线不属功能 backlog，是核心基建演进线，见 §十一。
 
-维护期的既定动作：P6 收尾评审时同步改写 roadmap（标记主线完结 + backlog 判据表落档）、依赖 license 审计与 README 英文化（开源化收尾）、按审核留档清单滚动消化新增隐患。
+维护期的既定动作：P6 收尾评审时同步改写 roadmap（标记功能主线完结 + backlog 判据表落档 + §十一 k3s 判据重估）、依赖 license 审计与 README 英文化（开源化收尾）、按审核留档清单滚动消化新增隐患。
+
+## 十一、k3s 基建演进（预研档，v1.4 补档；触发后另立 plan-phase7-k3s.md）
+
+**定位（对 roadmap §一原则 3 的展开）**：平台根基是"自建调度与权限壳，复用成熟引擎"。compose 期平台自建了调度壳的 MVP（部署编排/蓝绿/灰度/槽位/载体网络），这些是**权宜自建**——k3s 期由 K8s 原生能力接管，平台自建面收缩、回归权限/审计/观测中转/AI 的本位。因此 k3s 不是普通功能候选，是**核心基建演进线**，独立于 §十的功能收官逻辑。
+
+**判据现状重估（关键）**：roadmap §一原判据（≥3 台主机 / 真实滚动更新需求 / 弹性调度 / 观测超 5 台主机）中，"真实滚动更新需求"已经显形——P4 自建了蓝绿（任务化进度/健康门禁/域名活跃色跟随）与 map/split_clients 灰度，**自建复杂度本身就证明需求真实**。剩余判据（多机/弹性）取决于用户基础设施规划，见决策点 D8。
+
+**现状耦合面盘点（2026-10-04 代码核实，16 文件涉及 compose）**：
+
+| 耦合点 | 现状 | k3s 期形态 |
+|---|---|---|
+| 灰度/蓝绿渲染 | **已适配器化预留**（CanaryRenderer 接口，canary/model.go 注释明示"k3s 期翻译成原生流量资源"）——唯一现成接缝 | 滚动=Deployment 策略（maxSurge/maxUnavailable）+ Service selector 切换；灰度=Ingress 权重；nginx conf 单写者/活跃色跟随/双 compose 域名切全部退役 |
+| 部署编排（resources/compose.go） | DeployComposeTo + compose-go 校验 + scale/recreate | manifest/chart 存储 + `kubectl apply`（镜像 tag→set image→apply），发布门禁/回滚语义复用 |
+| 容器/终端/指标 | docker API + docker exec WS | workload/pod API + kubectl exec（WS 协议新建） |
+| 观测组件 | 平台项目链路部署 compose（O2/vector/node-exporter/fluent-bit） | DaemonSet/manifest 部署 |
+| cron 执行 | SSH + run 载体 --network | K8s Job/CronJob（或维持 SSH——agentless 原则不变，非容器化脚本保留） |
+| 测试槽位 | slot_overrides 单机覆盖 | namespace 隔离（形态更自然，随 AgileConfig 接管欠账一并终结） |
+| 配置消费 | 文件 SFTP 下发 / API 拉取 / AgileConfig K/V（M5/M7） | **ConfigMap/Secret = 免费第四形态**（roadmap 原判语）；文件/拉取形态对非容器化目标保留 |
+| 证书 | lego + nginx -t/reload | cert-manager（或维持 lego + Ingress TLS，预研评估后定） |
+
+**双轨迁移策略**：项目级"部署载体"字段（compose/k8s）升为一等公民——P4 已有载体概念雏形（cron `--network`、任务按项目绑定 compose 载体自动解析部署目标），扩展即可；双轨期 compose 全链路保留（存量项目零迁移），新项目可选 k8s 载体；k3s 安装走 agentless SSH（单机 k3s 起步合法，多机按需加入，与"单实例轻量"不冲突——集群是目标机的事，平台仍单实例）。
+
+**P7 骨架（仅框架，触发后详细计划另立）**：M1 集群接入（agentless 装 k3s/kubeconfig/节点视图）→ M2 部署载体 k8s 化（manifest 存储+apply+发布门禁/回滚复用）→ M3 流量策略 K8s 化（CanaryRenderer 的 k3s 实现+蓝绿原生化）→ M4 观测/cron/终端/槽位迁移 → M5 存量项目迁移工具与文档。估 6~10 周。
+
+**P6 内的准备项（零/低成本，本阶段执行）**：
+
+- 纪律条款：P6 新代码不加深 compose 耦合（M8/M9 适配器与对话 UI 天然无关联；M5/M7 配置形态设计时预留"ConfigMap 是免费出口"——纯平台模型，不渗 compose 概念）；
+- P6 收尾评审固定议程：k3s 判据重估（D8 结论落档），满足即起草 plan-phase7-k3s.md。
