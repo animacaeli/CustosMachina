@@ -75,17 +75,20 @@ async function toggleDeleted(checked: any) {
   await loadConversations();
 }
 
-async function newConversation(mode: 'general' | 'platform') {
-  const c = await createConversationApi({ mode });
-  // 正在看别人的历史时新建会话：切回自己的视图（新会话归属当前管理员）
+// 惰性建会话：点「新对话/平台上下文」只进草稿态，首条消息发送才真正创建——
+// 新建后没开口的对话不落库、不进历史（空会话直接丢弃）
+const draftMode = ref<'general' | 'platform' | null>(null);
+const activeMode = computed(() => current.value?.mode ?? draftMode.value);
+
+function newConversation(mode: 'general' | 'platform') {
+  draftMode.value = mode;
+  currentId.value = null;
+  messages.value = [];
+  // 正在看别人的历史时新建：切回自己的视图（新会话归属当前管理员）
   if (isAdmin.value && filterUserId.value !== myId.value) {
     filterUserId.value = myId.value;
-    await loadConversations();
-  } else {
-    conversations.value.unshift(c);
+    loadConversations();
   }
-  currentId.value = c.id;
-  messages.value = [];
 }
 
 async function openConversation(id: number) {
@@ -93,6 +96,7 @@ async function openConversation(id: number) {
     antMessage.warning('当前会话回复进行中，请先停止');
     return;
   }
+  draftMode.value = null;
   currentId.value = id;
   messages.value = (await listMessagesApi(id)).map((m) => ({
     ...m,
@@ -145,8 +149,8 @@ async function send() {
     return;
   }
   let content = input.value.trim();
-  if ((!content && pendingFiles.value.length === 0) || streaming.value || !currentId.value)
-    return;
+  if ((!content && pendingFiles.value.length === 0) || streaming.value) return;
+  if (!currentId.value && !draftMode.value) return;
   // /命令解析：输入 /name 问题...（或已面板锁定）
   let skill = activeSkill.value?.name ?? '';
   const m = content.match(/^\/([a-z0-9_-]+)\s+([\s\S]*)$/i);
@@ -168,6 +172,15 @@ async function send() {
   slashOpen.value = false;
   const atts = [...pendingFiles.value];
   pendingFiles.value = [];
+  // 惰性建会话：首条消息发送才创建（空对话不保存）
+  let freshMode: 'general' | 'platform' | null = null;
+  if (!currentId.value) {
+    freshMode = draftMode.value;
+    const c = await createConversationApi({ mode: freshMode ?? 'general' });
+    conversations.value.unshift(c);
+    currentId.value = c.id;
+    draftMode.value = null;
+  }
   messages.value.push(
     {
       content,
@@ -207,6 +220,18 @@ async function send() {
       }
       antMessage.error(msg);
       finish();
+      // 新建的会话首条发送就失败且无产出：回收空壳会话（不留无效历史），
+      // 退回草稿态并把内容退回输入框供重试
+      if (freshMode && !assistant!.content) {
+        const failId = currentId.value;
+        currentId.value = null;
+        draftMode.value = freshMode;
+        input.value = content;
+        messages.value = [];
+        if (failId) {
+          deleteConversationApi(failId).then(() => loadConversations());
+        }
+      }
     },
     },
     atts,
@@ -493,14 +518,14 @@ onMounted(async () => {
     <div
       class="flex min-w-0 flex-1 flex-col rounded-lg border border-border bg-card"
     >
-      <template v-if="current">
+      <template v-if="current || draftMode">
         <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
-          <span class="text-sm font-medium">{{ current.title || '新对话' }}</span>
-          <a-tag v-if="current.mode === 'platform'" color="geekblue">
+          <span class="text-sm font-medium">{{ current?.title || '新对话' }}</span>
+          <a-tag v-if="activeMode === 'platform'" color="geekblue">
             平台上下文
           </a-tag>
-          <a-tag v-if="current.deleted" color="red">已删除 · 留档只读</a-tag>
-          <a-tag v-else-if="current.userId !== myId" color="orange">
+          <a-tag v-if="current?.deleted" color="red">已删除 · 留档只读</a-tag>
+          <a-tag v-else-if="current && current.userId !== myId" color="orange">
             他人会话 · 只读
           </a-tag>
           <div class="flex-1"></div>

@@ -379,3 +379,35 @@ func TestChatSoftDelete(t *testing.T) {
 		t.Fatalf("admin 删除应放行: %v", err)
 	}
 }
+
+// 空会话不进列表：新建未开口的对话直接丢弃（本人视图与 admin 留档视图一致）。
+func TestChatListSkipsEmpty(t *testing.T) {
+	db := chatTestDB(t)
+	svc := NewChatService(db, nil)
+
+	empty, err := svc.CreateConversation(t.Context(), 7, ChatModePlatform, nil)
+	if err != nil {
+		t.Fatalf("建空会话失败: %v", err)
+	}
+	filled, err := svc.CreateConversation(t.Context(), 7, ChatModeGeneral, nil)
+	if err != nil {
+		t.Fatalf("建会话失败: %v", err)
+	}
+	if err := db.Create(&ChatMessage{ConversationID: filled.ID, Role: "user", Content: "hi", Status: MsgDone}).Error; err != nil {
+		t.Fatalf("落消息失败: %v", err)
+	}
+
+	// 本人视图：仅 filled
+	list, err := svc.ListConversations(t.Context(), 7, false, 0, false)
+	if err != nil || len(list) != 1 || list[0].ID != filled.ID {
+		t.Fatalf("本人视图应仅含有消息的会话: %v %+v", err, list)
+	}
+	// 空会话即便被删除，admin 含已删视图也不出现（无留档价值）
+	if err := svc.DeleteConversation(t.Context(), 7, empty.ID, false); err != nil {
+		t.Fatalf("删除失败: %v", err)
+	}
+	alist, err := svc.ListConversations(t.Context(), 8, true, 7, true)
+	if err != nil || len(alist) != 1 || alist[0].ID != filled.ID {
+		t.Fatalf("admin 留档视图也应过滤空会话: %v %+v", err, alist)
+	}
+}

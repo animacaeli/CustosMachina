@@ -171,7 +171,10 @@ func (s *ChatService) ListConversations(ctx context.Context, userID uint, isAdmi
 		target = filterUserID
 	}
 	q := s.db.WithContext(ctx).Model(&Conversation{}).
-		Where("user_id = ?", target).Order("updated_at DESC").Limit(200)
+		Where("user_id = ?", target).
+		// 空会话（无任何消息）不进列表——新建未开口的对话直接丢弃，不留历史
+		Where("EXISTS (SELECT 1 FROM ai_messages WHERE ai_messages.conversation_id = ai_conversations.id)").
+		Order("updated_at DESC").Limit(200)
 	if isAdmin && includeDeleted {
 		q = q.Unscoped() // 含已软删（deleted 标记区分）
 	}
