@@ -1,0 +1,341 @@
+// chat.go P6-M1 AI 对话：会话持久化 + 双模式（通用/平台上下文挂载）+ SSE 流式。
+// 治理设计见 docs/design-chat-sse.md；AI 五铁律落点：角色过滤（BuildContextPack
+// Sensitive 块）+ DLP（ApplyDLP）+ 不可信输入围栏（Render）+ 会话归属本人。
+package ai
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/custos-machina/backend/internal/pkg/logger"
+)
+
+// 对话模式。
+const (
+	ChatModeGeneral  = "general"  // 通用对话：不接平台数据（兼作中转配置调试）
+	ChatModePlatform = "platform" // 平台上下文：会话挂载 Context Pack
+)
+
+// 消息状态（assistant 消息的终态）。
+const (
+	MsgDone    = "done"
+	MsgAborted = "aborted" // 客户端停止/断连，已生成部分落库
+	MsgError   = "error"
+)
+
+// Conversation 对话会话（归属用户）。
+type Conversation struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	UserID    uint           `gorm:"index;not null" json:"userId"`
+	Title     string         `gorm:"size:128" json:"title"` // 首条用户消息截断
+	Mode      string         `gorm:"size:16;not null;default:general" json:"mode"`
+	MountJSON string         `gorm:"type:text" json:"-"` // 挂载快照（platform 模式）
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (Conversation) TableName() string { return "ai_conversations" }
+
+// Mount 挂载快照（platform 模式）：重开会话才刷新，会话中途不重取。
+type Mount struct {
+	ProjectIDs []uint `json:"projectIds"`
+	ServerIDs  []uint `json:"serverIds"`
+	Hours      int    `json:"hours"` // 上下文时间窗（默认 24）
+}
+
+// ChatMessage 对话消息。
+type ChatMessage struct {
+	ID             uint      `gorm:"primarykey" json:"id"`
+	ConversationID uint      `gorm:"index;not null" json:"conversationId"`
+	Role           string    `gorm:"size:16;not null" json:"role"` // user | assistant
+	Content        string    `gorm:"type:text" json:"content"`
+	Status         string    `gorm:"size:16;not null;default:done" json:"status"`
+	PackRedactions int       `gorm:"not null;default:0" json:"packRedactions"` // 本轮 pack 拦截数（留痕）
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+func (ChatMessage) TableName() string { return "ai_messages" }
+
+// ChatContextSource 对话挂载上下文投影（app 层注入实现，避免 ai 直连业务表）。
+// Sensitive 标记与角色过滤语义见 BuildContextPack。
+type ChatContextSource interface {
+	MountContext(ctx context.Context, m Mount, viewerRoles []string) []ContextBlock
+}
+
+// ---- ChatService ----
+
+// chatSemCap 单实例同时活跃流上限（单实例轻量约束，见设计文档 §5）。
+const chatSemCap = 8
+
+// 历史窗口：最近 N 轮进 prompt（防超模型窗口），更早历史仅 UI 可见。
+const chatHistoryRounds = 12
+
+type ChatService struct {
+	db    *gorm.DB
+	relay *Service
+	// MountSource 挂载上下文源（app 层注入；nil = platform 模式无上下文可用）
+	MountSource ChatContextSource
+	// activeConvs 会话级互斥（同一会话同时只允许一个进行中的流）
+	activeConvs map[uint]struct{}
+	sem         chan struct{}
+}
+
+func NewChatService(db *gorm.DB, relay *Service) *ChatService {
+	return &ChatService{
+		db:          db,
+		relay:       relay,
+		activeConvs: map[uint]struct{}{},
+		sem:         make(chan struct{}, chatSemCap),
+	}
+}
+
+// ErrChatBusy / ErrConvActive 对话并发限制（设计文档 §5）。
+var (
+	ErrChatBusy    = errors.New("对话并发已达上限，请稍后再试")
+	ErrConvActive  = errors.New("该会话有进行中的回复")
+	ErrNotOwner    = errors.New("会话不存在或无权访问")
+	ErrNotConfigur = errors.New("AI 中转层未配置，请先在管理后台完成配置")
+)
+
+// ConversationsOut 列表视图（不含消息）。
+type ConversationsOut struct {
+	Conversation
+	Mount *Mount `json:"mount"`
+}
+
+// CreateConversation 新建会话。
+func (s *ChatService) CreateConversation(ctx context.Context, userID uint, mode string, mount *Mount) (*ConversationsOut, error) {
+	if mode == "" {
+		mode = ChatModeGeneral
+	}
+	if mode != ChatModeGeneral && mode != ChatModePlatform {
+		return nil, fmt.Errorf("mode 取值须为 general|platform")
+	}
+	c := Conversation{UserID: userID, Mode: mode}
+	if mode == ChatModePlatform && mount != nil {
+		b, err := json.Marshal(mount)
+		if err != nil {
+			return nil, err
+		}
+		c.MountJSON = string(b)
+	}
+	if err := s.db.WithContext(ctx).Create(&c).Error; err != nil {
+		return nil, err
+	}
+	return s.toOut(&c), nil
+}
+
+// UpdateMount 更新挂载（platform 模式；重开会话刷新语义由前端触发）。
+func (s *ChatService) UpdateMount(ctx context.Context, userID, id uint, mount *Mount) error {
+	c, err := s.owned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(mount)
+	if err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(c).Update("mount_json", string(b)).Error
+}
+
+// ListConversations 本人会话列表（最近在前）。
+func (s *ChatService) ListConversations(ctx context.Context, userID uint) ([]ConversationsOut, error) {
+	var cs []Conversation
+	if err := s.db.WithContext(ctx).Where("user_id = ?", userID).
+		Order("updated_at DESC").Limit(100).Find(&cs).Error; err != nil {
+		return nil, err
+	}
+	out := make([]ConversationsOut, len(cs))
+	for i := range cs {
+		out[i] = *s.toOut(&cs[i])
+	}
+	return out, nil
+}
+
+// DeleteConversation 删除会话及消息（硬删：软删行占索引且历史无留档价值）。
+func (s *ChatService) DeleteConversation(ctx context.Context, userID, id uint) error {
+	c, err := s.owned(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	if err := s.db.WithContext(ctx).Unscoped().Delete(&ChatMessage{}, "conversation_id = ?", c.ID).Error; err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Unscoped().Delete(c).Error
+}
+
+// Messages 会话消息（升序）。
+func (s *ChatService) Messages(ctx context.Context, userID, id uint) ([]ChatMessage, error) {
+	c, err := s.owned(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	var ms []ChatMessage
+	if err := s.db.WithContext(ctx).Where("conversation_id = ?", c.ID).
+		Order("id").Limit(500).Find(&ms).Error; err != nil {
+		return nil, err
+	}
+	return ms, nil
+}
+
+func (s *ChatService) owned(ctx context.Context, userID, id uint) (*Conversation, error) {
+	var c Conversation
+	if err := s.db.WithContext(ctx).First(&c, id).Error; err != nil {
+		return nil, ErrNotOwner
+	}
+	if c.UserID != userID {
+		return nil, ErrNotOwner
+	}
+	return &c, nil
+}
+
+func (s *ChatService) toOut(c *Conversation) *ConversationsOut {
+	out := &ConversationsOut{Conversation: *c}
+	if c.MountJSON != "" {
+		var m Mount
+		if json.Unmarshal([]byte(c.MountJSON), &m) == nil {
+			out.Mount = &m
+		}
+	}
+	return out
+}
+
+// acquire 会话互斥 + 全局并发闸（两把都拿到才算进入）。
+func (s *ChatService) acquire(convID uint) (release func(), err error) {
+	if _, dup := s.activeConvs[convID]; dup {
+		return nil, ErrConvActive
+	}
+	select {
+	case s.sem <- struct{}{}:
+	default:
+		return nil, ErrChatBusy
+	}
+	s.activeConvs[convID] = struct{}{}
+	return func() {
+		delete(s.activeConvs, convID)
+		<-s.sem
+	}, nil
+}
+
+// ChatStream 一轮流式对话：落用户消息 → 组 prompt（挂载 pack + 历史）→ 流式回调。
+// 返回值：assistant 消息落库结果（断连时 err=ErrConvAborted 语义由调用方判定）。
+// onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）。
+func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, viewerRoles []string, onDelta func(string)) (*ChatMessage, error) {
+	if !s.relay.Configured(ctx) {
+		return nil, ErrNotConfigur
+	}
+	c, err := s.owned(ctx, userID, convID)
+	if err != nil {
+		return nil, err
+	}
+	release, err := s.acquire(convID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	if c.Title == "" && content != "" {
+		title := []rune(content)
+		if len(title) > 32 {
+			title = title[:32]
+		}
+		s.db.WithContext(ctx).Model(c).Update("title", string(title))
+	}
+	userMsg := ChatMessage{ConversationID: c.ID, Role: "user", Content: content, Status: MsgDone}
+	if err := s.db.WithContext(ctx).Create(&userMsg).Error; err != nil {
+		return nil, err
+	}
+
+	msgs, err := s.buildPrompt(ctx, c, viewerRoles)
+	if err != nil {
+		return nil, err
+	}
+
+	// 整体 deadline 5min（设计文档 §2）；落库用 WithoutCancel
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	var redactions int
+	var assistant ChatMessage
+	out, rerr := s.relay.CompleteStream(ctx, "chat:"+fmt.Sprint(c.ID), msgs, 0, onDelta)
+
+	status := MsgDone
+	switch {
+	case rerr == nil:
+	case errors.Is(rerr, context.Canceled):
+		status = MsgAborted
+	case errors.Is(rerr, context.DeadlineExceeded):
+		status = MsgError
+	default:
+		status = MsgError
+	}
+	if out == "" && rerr != nil {
+		// 无任何产出：不落空 assistant 消息，返回错误
+		return nil, rerr
+	}
+	assistant = ChatMessage{ConversationID: c.ID, Role: "assistant", Content: out, Status: status, PackRedactions: redactions}
+	sctx := context.WithoutCancel(ctx)
+	if err := s.db.WithContext(sctx).Create(&assistant).Error; err != nil {
+		logger.Warnf("[ai-chat] 回复落库失败 conv=%d: %v", c.ID, err)
+	}
+	if rerr != nil && status == MsgAborted {
+		return &assistant, rerr // 断连：已落部分内容，调用方据此收尾
+	}
+	if rerr != nil {
+		return &assistant, rerr
+	}
+	return &assistant, nil
+}
+
+// buildPrompt 组 prompt：system（平台身份 + 挂载 pack 围栏）+ 最近 N 轮 + 本轮用户消息。
+func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string) ([]Message, error) {
+	var history []ChatMessage
+	if err := s.db.WithContext(ctx).Where("conversation_id = ?", c.ID).
+		Order("id DESC").Limit(chatHistoryRounds * 2).Find(&history).Error; err != nil {
+		return nil, err
+	}
+	// 反转为升序
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+
+	sys := "你是 CustosMachina 运维平台的对话助手。回答保持简洁、面向运维场景；"
+	sys += "平台数据仅以下方数据块为准，数据块之外不要臆造平台状态。"
+
+	if c.Mode == ChatModePlatform {
+		var m Mount
+		if c.MountJSON != "" {
+			_ = json.Unmarshal([]byte(c.MountJSON), &m)
+		}
+		if m.Hours <= 0 {
+			m.Hours = 24
+		}
+		if s.MountSource != nil {
+			if blocks := s.MountSource.MountContext(ctx, m, viewerRoles); len(blocks) > 0 {
+				if pack := BuildContextPack(viewerRoles, blocks); len(pack.Blocks) > 0 {
+					sys += "\n\n" + pack.Render()
+				}
+			}
+		}
+	}
+
+	msgs := []Message{{Role: "system", Content: sys}}
+	for _, h := range history {
+		if h.Content == "" {
+			continue
+		}
+		if h.Role == "user" || h.Role == "assistant" {
+			msgs = append(msgs, Message{Role: h.Role, Content: h.Content})
+		}
+	}
+	return msgs, nil
+}
+
+// ChatModels chat 模块自动迁移模型。
+func ChatModels() []any { return []any{&Conversation{}, &ChatMessage{}} }

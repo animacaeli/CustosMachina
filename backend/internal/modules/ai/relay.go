@@ -1,13 +1,16 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,7 +21,7 @@ import (
 
 // AI 中转层（P5 M6，roadmap AI 铁律第一条：后端中转）：
 // OpenAI 兼容协议（自托管小模型与云 API 通吃）；endpoint/model/key 可配（key AES）；
-// 用量记录 + 审计。本阶段仅请求-响应式（advisory 摘要）；SSE 流式属 P6 对话 UI。
+// 用量记录 + 审计。P6-M1 起补 CompleteStream（SSE 流式，OpenAI stream 语义）。
 
 const (
 	settingEndpoint = "ai.endpoint" // 如 https://api.deepseek.com 或 http://ollama:11434/v1
@@ -208,6 +211,133 @@ func (s *Service) Test(ctx context.Context) error {
 	}
 	logger.Infof("[ai] 连通性测试成功: %.60s", out)
 	return nil
+}
+
+// CompleteStream 流式补全（M1 对话）：OpenAI 兼容 stream 语义，每个增量回调
+// onDelta；返回聚合完整回复（ctx 取消时聚合的部分内容仍随 err 返回——调用方
+// 落库用）。治理设计见 docs/design-chat-sse.md。
+func (s *Service) CompleteStream(ctx context.Context, caller string, messages []Message, maxTokens int, onDelta func(string)) (string, error) {
+	cfg, ok := s.config(ctx)
+	if !ok {
+		return "", fmt.Errorf("AI 中转层未配置")
+	}
+	start := time.Now()
+	out, err := s.doCompleteStream(ctx, cfg, messages, maxTokens, onDelta)
+	canceled := errors.Is(err, context.Canceled)
+	u := Usage{Caller: caller, Model: cfg.Model,
+		PromptCh: promptChars(messages), OutputCh: len(out),
+		LatencyMs: time.Since(start).Milliseconds(), OK: err == nil || canceled}
+	if err != nil && !canceled {
+		u.Error = truncStr(err.Error(), 500)
+	}
+	// 用量留痕不受客户端断连影响（best-effort）
+	s.db.WithContext(context.WithoutCancel(ctx)).Create(&u)
+	return out, err
+}
+
+func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messages []Message, maxTokens int, onDelta func(string)) (string, error) {
+	body := map[string]any{
+		"model":    cfg.Model,
+		"messages": messages,
+		"stream":   true,
+	}
+	if maxTokens > 0 {
+		body["max_tokens"] = maxTokens
+	}
+	b, _ := json.Marshal(body)
+	url := strings.TrimRight(cfg.Endpoint, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	// 流式回答无固定时长，整体 deadline 由调用方（chat 5min）控制；空闲超时用
+	// 看门狗 goroutine cancel 内部 ctx——Scanner 阻塞在读上，select 检查不了时钟。
+	// defer 为 LIFO：注册顺序必须保证 cancel 先于 <-watchdogDone 执行，
+	// 否则正常返回也要干等看门狗的 60s 空闲超时（单测实测复现过）
+	watchdogDone := make(chan struct{})
+	defer func() { <-watchdogDone }() // 最后执行：收尸等待
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel() // 先于上一条执行：触发看门狗退出
+	req = req.WithContext(cctx)
+	var lastDelta atomic.Int64
+	lastDelta.Store(time.Now().Unix())
+	go func() {
+		defer close(watchdogDone)
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-cctx.Done():
+				return
+			case <-t.C:
+				if time.Since(time.Unix(lastDelta.Load(), 0)) > 60*time.Second {
+					cancel() // 解除 Scanner 的阻塞读
+					return
+				}
+			}
+		}
+	}()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("中转层 HTTP %d: %.300s", resp.StatusCode, raw)
+	}
+
+	var aggregated strings.Builder
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for {
+		if !sc.Scan() {
+			if err := sc.Err(); err != nil {
+				// 读被 cancel 打断：区分父 ctx（客户端断开/整体超时）与看门狗（空闲超时）
+				if ctx.Err() != nil {
+					return aggregated.String(), ctx.Err()
+				}
+				if cctx.Err() != nil {
+					return aggregated.String(), errors.New("中转层空闲超时（60s 无增量）")
+				}
+				return aggregated.String(), err
+			}
+			return aggregated.String(), nil // 流正常关闭
+		}
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, ":") { // 空行/SSE 注释（上游保活）
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "[DONE]" {
+			return aggregated.String(), nil
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue // 心跳/非标准块，跳过
+		}
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			lastDelta.Store(time.Now().Unix())
+			aggregated.WriteString(chunk.Choices[0].Delta.Content)
+			if onDelta != nil {
+				onDelta(chunk.Choices[0].Delta.Content)
+			}
+		}
+	}
 }
 
 func (s *Service) setting(ctx context.Context, key string) (string, error) {

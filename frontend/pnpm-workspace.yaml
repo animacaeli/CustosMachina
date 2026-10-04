@@ -38,6 +38,9 @@ overrides:
 
 catalog:
   '@ant-design/icons-vue': ^7.0.1
+  'ant-design-x-vue': ^1.6.0
+  dompurify: ^3
+  marked: ^16
   '@ast-grep/napi': ^0.45.2
   '@changesets/changelog-github': ^1.0.1
   '@changesets/cli': ^3.0.3

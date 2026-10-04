@@ -73,6 +73,32 @@ type PackInput struct {
 	ViewerRoles        []string
 }
 
+// ContextBlock 通用上下文块（M1 对话挂载 / M2 MCP tools 层共用）。
+type ContextBlock struct {
+	Source    string
+	Text      string
+	Sensitive bool // true = 仅 admin/superadmin/ops 可见（配置明文/原始日志等）
+}
+
+// BuildContextPack 通用组装：角色过滤（Sensitive 块对非特权角色剔除）→ DLP →
+// 同一数据围栏渲染。与 BuildPack 共享脱敏管线与注入对策语义。
+func BuildContextPack(viewerRoles []string, blocks []ContextBlock) *Pack {
+	p := &Pack{DLPHits: map[string]int{}}
+	privileged := hasAnyRole(viewerRoles, "admin", "superadmin", "ops")
+	for _, blk := range blocks {
+		if blk.Sensitive && !privileged {
+			continue
+		}
+		cleaned, hits := ApplyDLP(blk.Text)
+		for k, v := range hits {
+			p.DLPHits[k] += v
+			p.Redactions += v
+		}
+		p.Blocks = append(p.Blocks, PackBlock{Source: blk.Source, Text: cleaned})
+	}
+	return p
+}
+
 // BuildPack 组装：角色过滤 → DLP → 数据块声明。
 // 角色过滤语义：ViewerRoles 不含 admin/superadmin/ops 时，配置快照与原始
 // 日志行被剔除（只保留告警主体与统计）——对话入口不得成为绕过 casbin 的只读超权。

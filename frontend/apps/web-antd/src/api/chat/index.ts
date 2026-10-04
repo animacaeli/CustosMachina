@@ -1,0 +1,155 @@
+import { useAccessStore } from '@vben/stores';
+
+import { apiURL, requestClient } from '#/api/request';
+
+/** AI 对话（P6 M1）：会话 CRUD + SSE 流式 */
+
+export type ChatMode = 'general' | 'platform';
+
+export interface Mount {
+  hours: number;
+  projectIds: number[];
+  serverIds: number[];
+}
+
+export interface Conversation {
+  createdAt: string;
+  id: number;
+  mode: ChatMode;
+  mount?: Mount | null;
+  title: string;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  content: string;
+  conversationId: number;
+  createdAt: string;
+  id: number;
+  packRedactions: number;
+  role: 'assistant' | 'user';
+  status: 'aborted' | 'done' | 'error';
+}
+
+export async function listConversationsApi() {
+  return requestClient.get<Conversation[]>('/ai/chat/conversations');
+}
+
+export async function createConversationApi(data: {
+  mode?: ChatMode;
+  mount?: Mount;
+}) {
+  return requestClient.post<Conversation>('/ai/chat/conversations', data);
+}
+
+export async function deleteConversationApi(id: number) {
+  return requestClient.delete(`/ai/chat/conversations/${id}`);
+}
+
+export async function updateMountApi(id: number, mount: Mount) {
+  return requestClient.put(`/ai/chat/conversations/${id}/mount`, { mount });
+}
+
+export async function listMessagesApi(id: number) {
+  return requestClient.get<ChatMessage[]>(
+    `/ai/chat/conversations/${id}/messages`,
+  );
+}
+
+export interface ChatStreamHandlers {
+  onDelta: (text: string) => void;
+  onDone: (status: string, messageId?: number) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * SSE 流式对话：POST + ReadableStream 逐行解析（EventSource 不支持
+ * POST/自定义头）。事件：delta / done / error / ping（心跳，忽略）。
+ * 返回 abort 函数（前端"停止生成"= 断连，已生成部分由后端落库）。
+ */
+export async function chatStreamApi(
+  conversationId: number,
+  content: string,
+  handlers: ChatStreamHandlers,
+): Promise<() => void> {
+  const token = useAccessStore().accessToken;
+  const controller = new AbortController();
+  try {
+    const resp = await fetch(
+      `${apiURL}/ai/chat/conversations/${conversationId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+        signal: controller.signal,
+      },
+    );
+    if (!resp.ok || !resp.body) {
+      let msg = `HTTP ${resp.status}`;
+      try {
+        const j = await resp.json();
+        msg = j?.message ?? msg;
+      } catch {
+        /* 非 JSON 错误体 */
+      }
+      handlers.onError(msg);
+      return () => controller.abort();
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    // 后台解析循环：按空行分帧，每帧解析 event:/data: 两行
+    (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            let event = 'message';
+            let data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) {
+                event = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                data += line.slice(5).trim();
+              }
+            }
+            if (event === 'ping' || event === 'message') continue;
+            let payload: Record<string, any> = {};
+            try {
+              payload = JSON.parse(data) as Record<string, any>;
+            } catch {
+              continue;
+            }
+            if (event === 'delta') {
+              handlers.onDelta(String(payload.text ?? ''));
+            } else if (event === 'done') {
+              handlers.onDone(
+                String(payload.status ?? 'done'),
+                payload.messageId,
+              );
+              return;
+            } else if (event === 'error') {
+              handlers.onError(String(payload.message ?? '未知错误'));
+              return;
+            }
+          }
+        }
+        // 流关闭但无 done 事件（异常断开）
+        handlers.onError('连接已断开');
+      } catch {
+        // AbortError：用户停止生成，静默（后端已落库 partial）
+      }
+    })();
+  } catch (error: any) {
+    handlers.onError(error?.message ?? '请求失败');
+  }
+  return () => controller.abort();
+}

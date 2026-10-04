@@ -46,6 +46,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, configs.Models()...)
 	models = append(models, certs.Models()...)
 	models = append(models, ai.Models()...)
+	models = append(models, ai.ChatModels()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
 	models = append(models, release.Models()...)
@@ -91,6 +92,8 @@ func ProvideModules(
 	certsSched *certs.Scheduler, // 拉起 certs:sched 到期扫描（哨兵依赖）
 	aiH *ai.Handler,
 	aiDigest *ai.DigestService,
+	aiChatSvc *ai.ChatService,
+	aiChatH *ai.ChatHandler,
 	db *gorm.DB,
 	backupSvc *backup.Service,
 	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
@@ -122,7 +125,9 @@ func ProvideModules(
 	aiDigest.SetNotifier(notifySvc)
 	aiDigest.SetContextSource(&alertContextBridge{db: db})
 	observSvc.SetDigestor(aiDigest)
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH}
+	// 桥接（P6 M1）：对话挂载上下文供给（项目/发布/构建/主机/事件只读查询）
+	aiChatSvc.MountSource = &chatContextBridge{db: db}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。
@@ -228,4 +233,152 @@ func (b *alertContextBridge) AlertDigestContext(ctx context.Context, _ string, _
 		_ = c2rows.Close()
 	}
 	return ev.String(), cronB.String(), cfgB.String()
+}
+
+// chatContextBridge ai.ChatContextSource 的 app 层实现：对话挂载上下文只读查询。
+// 块的 Sensitive 标记决定角色过滤（BuildContextPack）：配置元信息与主机事件
+// 仅 admin 可见——dev 的 pack 不含这些（AI 铁律：对话不成为只读超权）。
+type chatContextBridge struct {
+	db *gorm.DB
+}
+
+func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []string) []ai.ContextBlock {
+	since := time.Now().Add(-time.Duration(m.Hours) * time.Hour)
+	var blocks []ai.ContextBlock
+
+	if len(m.ProjectIDs) > 0 {
+		var pb strings.Builder
+		prows, err := b.db.WithContext(ctx).Table("projects").
+			Select("id, name, repo_path, provider, default_branch").
+			Where("id IN ?", m.ProjectIDs).Rows()
+		if err == nil {
+			for prows.Next() {
+				var id uint
+				var name, repo, provider, branch string
+				_ = prows.Scan(&id, &name, &repo, &provider, &branch)
+				fmt.Fprintf(&pb, "#%d %s（%s，%s，默认分支 %s）\n", id, name, repo, provider, branch)
+			}
+			_ = prows.Close()
+		}
+		if pb.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "project_overview", Text: pb.String()})
+
+			// 近期失败构建（挂载项目范围）
+			var bb strings.Builder
+			brows, err := b.db.WithContext(ctx).Table("builds").
+				Select("project_id, tag, env_type, status, created_at").
+				Where("project_id IN ? AND status = ? AND created_at > ?", m.ProjectIDs, "failed", since).
+				Order("id DESC").Limit(8).Rows()
+			if err == nil {
+				for brows.Next() {
+					var pid uint
+					var tag, env, status string
+					var ts time.Time
+					_ = brows.Scan(&pid, &tag, &env, &status, &ts)
+					fmt.Fprintf(&bb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
+				}
+				_ = brows.Close()
+			}
+			if bb.Len() > 0 {
+				blocks = append(blocks, ai.ContextBlock{Source: "recent_build_failures", Text: bb.String()})
+			}
+
+			// 近期发布（挂载项目范围）
+			var rb strings.Builder
+			rrows, err := b.db.WithContext(ctx).Table("releases").
+				Select("project_id, tag, env_type, status, created_at").
+				Where("project_id IN ? AND created_at > ?", m.ProjectIDs, since).
+				Order("id DESC").Limit(8).Rows()
+			if err == nil {
+				for rrows.Next() {
+					var pid uint
+					var tag, env, status string
+					var ts time.Time
+					_ = rrows.Scan(&pid, &tag, &env, &status, &ts)
+					fmt.Fprintf(&rb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
+				}
+				_ = rrows.Close()
+			}
+			if rb.Len() > 0 {
+				blocks = append(blocks, ai.ContextBlock{Source: "recent_releases", Text: rb.String()})
+			}
+		}
+	}
+
+	if len(m.ServerIDs) > 0 {
+		var sb strings.Builder
+		srows, err := b.db.WithContext(ctx).Table("servers").
+			Select("id, name, host, status").
+			Where("id IN ?", m.ServerIDs).Rows()
+		if err == nil {
+			for srows.Next() {
+				var id uint
+				var name, host string
+				var status any
+				_ = srows.Scan(&id, &name, &host, &status)
+				fmt.Fprintf(&sb, "#%d %s（%s）\n", id, name, host)
+			}
+			_ = srows.Close()
+		}
+		if sb.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "server_inventory", Text: sb.String()})
+
+			// 挂载主机的近期事件（Sensitive：含操作与命令记录）
+			var eb strings.Builder
+			erows, err := b.db.WithContext(ctx).Table("server_events").
+				Select("server_id, type, message, created_at").
+				Where("server_id IN ? AND created_at > ?", m.ServerIDs, since).
+				Order("id DESC").Limit(12).Rows()
+			if err == nil {
+				for erows.Next() {
+					var sid uint
+					var typ, msg string
+					var ts time.Time
+					_ = erows.Scan(&sid, &typ, &msg, &ts)
+					fmt.Fprintf(&eb, "server#%d %s %s %s\n", sid, typ, msg, ts.Format(time.DateTime))
+				}
+				_ = erows.Close()
+			}
+			if eb.Len() > 0 {
+				blocks = append(blocks, ai.ContextBlock{Source: "server_events_window", Text: eb.String(), Sensitive: true})
+			}
+		}
+	}
+
+	// 近期 cron 失败（全平台，非敏感摘要）
+	var cb strings.Builder
+	crows, err := b.db.WithContext(ctx).Table("cron_runs").
+		Select("job_name, status, created_at").
+		Where("status IN ? AND created_at > ?", []string{"failed", "timeout"}, since).
+		Order("id DESC").Limit(8).Rows()
+	if err == nil {
+		for crows.Next() {
+			var name, status string
+			var ts time.Time
+			_ = crows.Scan(&name, &status, &ts)
+			fmt.Fprintf(&cb, "%s %s %s\n", name, status, ts.Format(time.DateTime))
+		}
+		_ = crows.Close()
+	}
+	if cb.Len() > 0 {
+		blocks = append(blocks, ai.ContextBlock{Source: "cron_failures_recent", Text: cb.String()})
+	}
+
+	// 配置文件元信息（Sensitive：路径暴露部署拓扑）
+	var mb strings.Builder
+	mrows, err := b.db.WithContext(ctx).Table("config_files").
+		Select("name, path, format, updated_at").Order("updated_at DESC").Limit(8).Rows()
+	if err == nil {
+		for mrows.Next() {
+			var name, path, format string
+			var ts time.Time
+			_ = mrows.Scan(&name, &path, &format, &ts)
+			fmt.Fprintf(&mb, "%s（%s，%s，更新于 %s）\n", name, path, format, ts.Format(time.DateTime))
+		}
+		_ = mrows.Close()
+	}
+	if mb.Len() > 0 {
+		blocks = append(blocks, ai.ContextBlock{Source: "config_meta", Text: mb.String(), Sensitive: true})
+	}
+	return blocks
 }

@@ -111,6 +111,8 @@ func InitializeServer() (*server.Server, func(), error) {
 	aiService := ai.NewService(db, cipher)
 	aiHandler := ai.NewHandler(aiService)
 	digestService := ai.NewDigestService(aiService, db)
+	chatService := ai.NewChatService(db, aiService)
+	chatHandler := ai.NewChatHandler(chatService)
 	backupScheduler, cleanup6, err := backup.NewScheduler(backupService)
 	if err != nil {
 		cleanup5()
@@ -141,7 +143,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, aiHandler, digestService, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, certsHandler, certsService, certsScheduler, aiHandler, digestService, chatService, chatHandler, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

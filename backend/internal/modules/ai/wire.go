@@ -7,4 +7,6 @@ var Set = wire.NewSet(
 	NewService,
 	NewHandler,
 	NewDigestService,
+	NewChatService,
+	NewChatHandler,
 )

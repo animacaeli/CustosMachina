@@ -113,6 +113,7 @@ function fmtDuration(secs: number, status: string) {
 
 const columns = computed(() => {
   const base = [
+    { title: '来源', key: 'provider', width: 80 },
     { title: '构建人', dataIndex: 'builder', width: 100 },
     { title: '时间', key: 'time', width: 170 },
     { title: '耗时', key: 'duration', width: 90 },
@@ -186,6 +187,10 @@ function fmtTime(v: string) {
         </template>
         <template v-else-if="column.key === 'slot'">
           {{ splitTag(record.tag).slot }}
+        </template>
+        <template v-else-if="column.key === 'provider'">
+          <a-tag v-if="record.provider === 'gitee'" color="blue">gitee</a-tag>
+          <a-tag v-else color="cyan">gitea</a-tag>
         </template>
         <template v-else-if="column.key === 'time'">
           {{ fmtTime(record.createdAt) }}
