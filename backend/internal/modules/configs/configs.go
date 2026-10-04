@@ -88,7 +88,7 @@ type Version struct {
 
 func (Version) TableName() string { return "config_versions" }
 
-func Models() []any { return []any{&File{}, &Version{}} }
+func Models() []any { return []any{&File{}, &Version{}, &PullToken{}} }
 
 // Executor resources.Service 的最小投影（避免反向依赖）。
 type Executor interface {

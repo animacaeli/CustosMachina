@@ -9,6 +9,7 @@ import ImConfig from './tabs/im-config.vue';
 import McpTokens from './tabs/mcp-tokens.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
 import NotifyRoutes from './tabs/notify-routes.vue';
+import PullTokens from './tabs/pull-tokens.vue';
 import Session from './tabs/session.vue';
 
 defineOptions({ name: 'AdminConsole' });
@@ -46,6 +47,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="mcp" tab="MCP 接入">
           <McpTokens />
+        </a-tab-pane>
+        <a-tab-pane key="pull-tokens" tab="配置拉取">
+          <PullTokens />
         </a-tab-pane>
         <a-tab-pane key="skills" tab="AI 技能">
           <AiSkills />

@@ -2,19 +2,37 @@ package configs
 
 import (
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
+	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
 )
 
 type Handler struct {
 	svc *Service
+	// 公开拉取接口限速（P5 M1 纪律：新公开接口一律带限速）
+	pullLimiter *ratelimit.Window
+	// 60s 拉取短缓存（方案 B：不做推送/长连接）
+	pullCache sync.Map // "app|env" -> pullCacheEntry
 }
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+type pullCacheEntry struct {
+	body    []byte
+	version string
+	format  string
+	files   int
+	at      time.Time
+}
+
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc, pullLimiter: ratelimit.NewWindow(60, time.Minute)}
+}
 
 func (h *Handler) Name() string { return "configs" }
 
@@ -33,6 +51,16 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.POST("/:id/rollback", h.rollback)
 		g.POST("/env-sync", h.envSync)
 	}
+	// P6-M5 拉取凭证管理（admin，casbin v17）
+	pt := r.Authed.Group("/config-pull-tokens")
+	{
+		pt.GET("", h.listPullTokens)
+		pt.POST("", h.createPullToken)
+		pt.PUT("/:id/enabled", h.setPullTokenEnabled)
+	}
+	// 公开拉取接口：服务启动调用（非用户凭证），应用 token 鉴权 + 限速
+	pub := r.Public.Group("/config")
+	pub.GET("/:app/:env", h.pullConfig)
 }
 
 // actor 当前登录人（审计留名）。
@@ -202,4 +230,119 @@ func (h *Handler) envSync(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, gin.H{"created": created, "updated": updated})
+}
+
+// ---- P6-M5 配置拉取（方案 B） ----
+
+func (h *Handler) listPullTokens(c *gin.Context) {
+	list, err := h.svc.ListPullTokens(c.Request.Context())
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
+
+func (h *Handler) createPullToken(c *gin.Context) {
+	var in struct {
+		App  string `json:"app" binding:"required"`
+		Envs string `json:"envs" binding:"required"`
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if in.Name == "" {
+		in.Name = in.App
+	}
+	out, err := h.svc.IssuePullToken(c.Request.Context(), in.Name, in.App, in.Envs)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) setPullTokenEnabled(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.FailBadRequest(c, "id 无效")
+		return
+	}
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SetPullTokenEnabled(c.Request.Context(), uint(id), in.Enabled); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
+}
+
+// pullConfig GET /api/config/{app}/{env}：应用级聚合拉取。
+// 鉴权 Bearer/X-Config-Token（应用级凭证）；ETag/304 + 60s 短缓存。
+func (h *Handler) pullConfig(c *gin.Context) {
+	if !h.pullLimiter.Allow(c.ClientIP()) {
+		c.JSON(429, gin.H{"code": 429, "message": "请求过于频繁，请稍后再试"})
+		return
+	}
+	app, env := c.Param("app"), c.Param("env")
+	tok := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if tok == "" {
+		tok = c.GetHeader("X-Config-Token")
+	}
+	if tok == "" {
+		c.JSON(401, gin.H{"code": 401, "message": "缺少拉取凭证（Authorization: Bearer 或 X-Config-Token）"})
+		return
+	}
+	if _, err := h.svc.VerifyPullToken(c.Request.Context(), tok, app, env); err != nil {
+		if strings.Contains(err.Error(), "不适用于") {
+			c.JSON(403, gin.H{"code": 403, "message": err.Error()})
+		} else {
+			c.JSON(401, gin.H{"code": 401, "message": err.Error()})
+		}
+		return
+	}
+
+	// 60s 短缓存（鉴权在缓存前：吊销/越权不因缓存放过）
+	var out *PullOut
+	if e, ok := h.pullCache.Load(app + "|" + env); ok {
+		entry := e.(pullCacheEntry)
+		if time.Since(entry.at) < time.Minute {
+			out = &PullOut{Body: entry.body, Version: entry.version, Format: entry.format, Files: entry.files}
+		}
+	}
+	if out == nil {
+		var err error
+		out, err = h.svc.PullConfig(c.Request.Context(), app, env)
+		if err != nil {
+			c.JSON(404, gin.H{"code": 404, "message": err.Error()})
+			return
+		}
+		h.pullCache.Store(app+"|"+env, pullCacheEntry{
+			body: out.Body, version: out.Version, format: out.Format, files: out.Files, at: time.Now(),
+		})
+	}
+
+	etag := `"` + out.Version + `"`
+	c.Header("X-Config-Version", out.Version)
+	c.Header("ETag", etag)
+	if c.Request.Header.Get("If-None-Match") == etag {
+		c.Status(304)
+		return
+	}
+	ct := "text/plain; charset=utf-8"
+	switch out.Format {
+	case "json":
+		ct = "application/json; charset=utf-8"
+	case FormatTOML:
+		ct = "application/toml; charset=utf-8"
+	}
+	c.Header("Cache-Control", "public, max-age=60")
+	c.Data(200, ct, out.Body)
 }

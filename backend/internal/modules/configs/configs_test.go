@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -309,5 +310,138 @@ func TestEnvSync(t *testing.T) {
 	}
 	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "canary"}, "t"); err == nil {
 		t.Fatal("未绑定目标环境应拒绝")
+	}
+}
+
+// ---- P6-M5 拉取 API（方案 B）----
+
+func pullTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("打开内存库失败: %v", err)
+	}
+	if err := db.AutoMigrate(&File{}, &PullToken{}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatalf("建 projects 表失败: %v", err)
+	}
+	return db
+}
+
+func pullSeed(t *testing.T, db *gorm.DB, files ...File) {
+	t.Helper()
+	db.Exec(`INSERT INTO projects (id, name) VALUES (1, 'demo')`)
+	for i := range files {
+		f := files[i]
+		f.ProjectID = 1
+		if err := db.Create(&f).Error; err != nil {
+			t.Fatalf("seed file 失败: %v", err)
+		}
+	}
+}
+
+func TestPullMergeYAML(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "基础", RelPath: "prod/app.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "server:\n  port: 8080\nlog_level: info\n"},
+		File{Name: "扩展", RelPath: "prod/extra.yaml", Path: "/x/b.yaml", Format: FormatYAML, Content: "server:\n  host: 0.0.0.0\nfeature_x: true\n"},
+	)
+	svc := &Service{db: db}
+	out, err := svc.PullConfig(t.Context(), "demo", "prod")
+	if err != nil {
+		t.Fatalf("拉取失败: %v", err)
+	}
+	if out.Files != 2 || out.Version == "" {
+		t.Fatalf("聚合异常: %+v", out)
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(out.Body, &m); err != nil {
+		t.Fatalf("合并结果非合法 yaml: %v\n%s", err, out.Body)
+	}
+	srv := m["server"].(map[string]any)
+	if srv["port"] != 8080 || srv["host"] != "0.0.0.0" || m["feature_x"] != true {
+		t.Fatalf("深合并结果异常: %s", out.Body)
+	}
+}
+
+func TestPullConflictKey(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "a", RelPath: "prod/a.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "port: 1\n"},
+		File{Name: "b", RelPath: "prod/b.yaml", Path: "/x/b.yaml", Format: FormatYAML, Content: "port: 2\n"},
+	)
+	svc := &Service{db: db}
+	_, err := svc.PullConfig(t.Context(), "demo", "prod")
+	if err == nil || !strings.Contains(err.Error(), "冲突") {
+		t.Fatalf("同 key 冲突应报错, got %v", err)
+	}
+}
+
+func TestPullFlatENV(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "a", RelPath: "test/a.env", Path: "/x/a.env", Format: "env", Content: "DB_HOST=localhost\n# 注释\nDB_PORT=5432\n"},
+		File{Name: "b", RelPath: "test/b.env", Path: "/x/b.env", Format: "env", Content: "CACHE=redis\n"},
+	)
+	svc := &Service{db: db}
+	out, err := svc.PullConfig(t.Context(), "demo", "test")
+	if err != nil {
+		t.Fatalf("拉取失败: %v", err)
+	}
+	body := string(out.Body)
+	for _, kv := range []string{"DB_HOST=localhost", "DB_PORT=5432", "CACHE=redis"} {
+		if !strings.Contains(body, kv) {
+			t.Fatalf("平铺合并缺 %s: %s", kv, body)
+		}
+	}
+}
+
+func TestPullMixedFormatFamily(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "a", RelPath: "prod/a.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "a: 1\n"},
+		File{Name: "b", RelPath: "prod/b.env", Path: "/x/b.env", Format: "env", Content: "A=1\n"},
+	)
+	svc := &Service{db: db}
+	if _, err := svc.PullConfig(t.Context(), "demo", "prod"); err == nil || !strings.Contains(err.Error(), "不可合并") {
+		t.Fatalf("跨格式族应报错, got %v", err)
+	}
+}
+
+func TestPullTokenScope(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db, File{Name: "a", RelPath: "prod/a.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "a: 1\n"})
+	svc := &Service{db: db}
+	out, err := svc.IssuePullToken(t.Context(), "demo 拉取", "demo", "prod,test")
+	if err != nil {
+		t.Fatalf("签发失败: %v", err)
+	}
+	if !strings.HasPrefix(out.Plaintext, "pull_") {
+		t.Fatalf("明文形态异常: %s", out.Plaintext)
+	}
+	// 合法范围
+	if _, err := svc.VerifyPullToken(t.Context(), out.Plaintext, "demo", "test"); err != nil {
+		t.Fatalf("范围内应放行: %v", err)
+	}
+	// 跨应用
+	if _, err := svc.VerifyPullToken(t.Context(), out.Plaintext, "other", "prod"); err == nil || !strings.Contains(err.Error(), "不适用于应用") {
+		t.Fatalf("跨应用应拒: %v", err)
+	}
+	// 跨环境
+	if _, err := svc.VerifyPullToken(t.Context(), out.Plaintext, "demo", "canary"); err == nil || !strings.Contains(err.Error(), "不适用于环境") {
+		t.Fatalf("跨环境应拒: %v", err)
+	}
+	// 吊销即失效
+	if err := svc.SetPullTokenEnabled(t.Context(), out.ID, false); err != nil {
+		t.Fatalf("吊销失败: %v", err)
+	}
+	if _, err := svc.VerifyPullToken(t.Context(), out.Plaintext, "demo", "prod"); err == nil {
+		t.Fatal("吊销后应拒")
+	}
+	// 幻觉应用名
+	if _, err := svc.IssuePullToken(t.Context(), "x", "不存在应用", "*"); err == nil {
+		t.Fatal("幻觉应用名应拒")
 	}
 }
