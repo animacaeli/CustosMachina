@@ -1,7 +1,7 @@
 # 第六阶段计划：AI 主线（对话 UI / MCP Server / NL→操作）+ 配置双形态与生态适配 + 欠账收口
 
-> 状态：**已定稿**（v1.2，2026-10-04 讨论稿当日评审定稿；决策点 D1~D6 全部按建议拍板落地，见 §九。开工时序：M8 前置 → SSE 设计文档 → M1，等用户发起）
-> 范围决策记录（承 roadmap §四/§五与 P5 收官留档，含定稿决策）：**对话 UI 为 AI 主线首项**（旗舰体验，独立一级菜单）；**MCP Server 化与对话 UI 同期**（对话 UI 本身就是"内置 MCP 客户端 + 界面"）；**NL→操作带人工确认层**（首批白名单低危三件套，高危 P7 观察后再议）；**配置拉取 API（方案 B）+ AgileConfig 共存接入**（一个模型/两种底层/三种消费形态；平台单向推送+漂移告警；首批仅 K/V）；**gitee+Jenkins 组合适配前置**（存量项目主力组合，自用刚需优先于 AI 主线）；**IM 机器人双向顺延 P7**；堡垒机语义/审计回放/composable 抽取/版本化 migration 四笔顺延欠账**本阶段必须清**（均已顺延一次）。
+> 状态：**已定稿**（v1.3，2026-10-04 当日两轮定稿：D1~D6 按建议拍板 + 用户追加 M9 生态适配批次全做；开工时序：M8 前置 → SSE 设计文档 → M1，等用户发起）
+> 范围决策记录（承 roadmap §四/§五/§六与 P5 收官留档，含定稿决策）：**对话 UI 为 AI 主线首项**（旗舰体验，独立一级菜单）；**MCP Server 化与对话 UI 同期**（对话 UI 本身就是"内置 MCP 客户端 + 界面"）；**NL→操作带人工确认层**（首批白名单低危三件套，高危 P7 观察后再议）；**配置拉取 API（方案 B）+ AgileConfig 共存接入**（一个模型/两种底层/三种消费形态；平台单向推送+漂移告警；首批仅 K/V）；**gitee+Jenkins 组合适配前置**（存量项目主力组合，自用刚需优先于 AI 主线）；**开源生态适配批次全做**（用户 2026-10-04 追加：GitHub/GitLab GitProvider + Telegram/SMTP 通知 + GitHub OAuth 登录，不留 backlog，见 M9）；**IM 机器人双向顺延 P7**；堡垒机语义/审计回放/composable 抽取/版本化 migration 四笔顺延欠账**本阶段必须清**（均已顺延一次）。
 > 阶段定位补充（定稿新增）：P6 是**功能开发的最后一个立项阶段**——收官后平台转入维护期（测试/微调/按需小项），大功能仅按触发判据重新立项，见 §十。
 > 上游依据：docs/roadmap.md §四（P6）、§五（AI 规划）、§六（生态抽象纪律）、§三.3（AgileConfig 决策记录）；docs/plan-phase5-services.md 收官状态。
 > 本阶段要回答的三个问题：
@@ -35,10 +35,11 @@ M1 对话 UI（SSE 流式 + 双模式 + pack 挂载）
                        └──> M4 NL→操作（确认层闭环）
 M5 配置拉取 API 方案 B（独立，仅复用 configs 模块，可与 M2~M4 并行）
 M7 AgileConfig 共存接入（依赖 M5 的应用级 token 基建与 configs 现状；可与 M3/M4 并行）
+M9 开源生态适配批次（GitProvider/CIProvider 扩展依赖 M8 接口；通知/OAuth 两块独立，可全程并行）
 M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一次）
 ```
 
-**执行顺序（定稿）**：M8（3~4 周）→ SSE 设计文档 → M1 → M2 → M3 → M4 主线推进；M5/M7 与主线并行插入；M6 收尾段清账。M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实现：意图解析→确认卡→执行）；M5/M7 相互独立。总周期约 9~12 周。
+**执行顺序（定稿）**：M8（3~4 周）→ SSE 设计文档 → M1 → M2 → M3 → M4 主线推进；M5/M7/M9 与主线并行插入（M9 的通知/OAuth 块无前置依赖可最早开始，GitProvider 扩展块排在 M8 之后）；M6 收尾段清账。M4 对 M3 为虚线依赖（NL→操作可不经"对话内工具调用"独立实现：意图解析→确认卡→执行）。总周期约 12~17 周。
 
 ## 二、前置事项（开工前完成，不占里程碑）
 
@@ -169,7 +170,26 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - 既有 gitea 项目回归不受影响（同一套 Build/发布链路双 provider 并行）；
 - Jenkins 不可达时状态查询降级为"未知"不阻塞已有成功记录的发布。
 
-**明确不做（本里程碑内）**：Jenkins 构建触发（平台只读状态，构建由 gitee webhook 驱动，避免平台成为 CI 控制面）；GitHub/GitLab 适配器（另立，roadmap 已注明工作量远大于观感）。
+**明确不做（本里程碑内）**：Jenkins 构建触发（平台只读状态，构建由 gitee webhook 驱动，避免平台成为 CI 控制面）；GitHub/GitLab 适配器归 M9（不在本里程碑赶工）。
+
+### M9 开源生态适配批次（约 3~5 周；用户 2026-10-04 追加拍板：全做，不留 backlog）
+
+**范围（roadmap §六生态通用化表格中仅剩的未完成适配项，逐块独立）**：
+
+- **Telegram Bot + SMTP 邮件通知**（0.5~1 周）：notify sender 渠道泛化——`notify_groups` 加渠道类型（webhook / telegram / smtp，现有按 webhook 域名探测厂商的逻辑只对 webhook 型生效）；Telegram 走 Bot API `sendMessage`（bot token + chat id，解析模式与截断规则对齐企微调研结论）；SMTP 走标准发信（标题 + 正文，markdown 降级纯文本）；UI 通知群表单加渠道选择；限速与 DLP 同既有链路；
+- **OAuthProvider 接口化 + GitHub OAuth 登录**（约 1 周）：auth 既有企微 CorpApp / 钉钉扫码路径抽 OAuthProvider 接口（authorize URL 构造 / code 换 token / 身份映射 / 绑定解绑），GitHub OAuth App 走标准 code 流（`/login/oauth/access_token` + `/user`）；登录页"第三方登录"区块按已配置项渲染（未配置即隐藏）；回调公共接口过限速与伪造审视（对齐 M1 欠账清偿纪律）；
+- **GitHub + GitLab 适配器**（1.5~2 周/家，roadmap 明示工作量远大于表格观感：webhook 语义、commit status 回写、token 模型差异，排期单列）：
+  - GitProvider 扩展：GitHub（webhook `X-Hub-Signature-256`、tag push 解析、contents API 取 compose 部署描述、commit status）；GitLab（`X-Gitlab-Token`、repository files API）；
+  - CIProvider 扩展：GitHub Actions（check runs / workflow runs API 状态与日志）、GitLab CI（pipelines/jobs API）——开源用户在这两家的 CI 形态即各自内置 CI，适配器成对出现；
+  - **裁剪线：先 GitHub**（开源门面最大），GitLab 视阶段余量，余量不足则 GitLab 单独留为 M9 尾巴随 M6 收尾段补齐；
+  - 两块均依赖 M8 已抽好的 GitProvider/CIProvider 接口，纯加实现，存量 gitea/gitee 零扰动。
+
+**验收标准**：
+
+- Telegram 群与 SMTP 邮箱各真机收到一条告警通知（格式可读、截断规则生效）；
+- GitHub OAuth 登录 → 绑定 → 解绑真机一例；企微/钉钉既有扫码登录回归不受影响；
+- GitHub 仓库 + Actions 项目全链路真机一例：tag push 建 Build 记录 → 状态回读 → 日志在平台可看 → tag 发布到目标机；gitee+Jenkins 与 gitea 项目回归；
+- 未配置的渠道/登录方式在 UI 优雅隐藏（能力探测 + 配置驱动，未配置降级）。
 
 ### M6 欠账批次（约 1~1.5 周，裁剪线之后，但本阶段必须清）
 
@@ -191,7 +211,6 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - IM 机器人双向（D4 拍板：顺延 P7，见 §十触发判据）；
 - AgileConfig **服务发现**（compose 期需求弱，P7 再评估；接入本身见 M7）；
 - Jenkins 构建触发与 pipeline 管理（平台只读 CI 状态，构建由 git webhook 驱动）；
-- GitHub/GitLab 适配器（M8 只做 gitee+Jenkins；roadmap 已注明其工作量远大于表格观感）；
 - k3s 主线（触发判据满足后另立计划）；
 - 工单/多租户等 roadmap §八清单项。
 
@@ -203,8 +222,10 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 | 模型接入 | OpenAI 兼容协议已定（P5），不抽多 provider 接口 |
 | 对话流式 | SSE 标准协议；WebSocket 仅维持既有终端场景 |
 | 配置消费形态 | 文件下发 + API 拉取 + AgileConfig SDK 三种消费形态并存，但平台模型唯一、底层 provider 可插拔（roadmap 2026-10-01 决策：接缝服务于已明确的换底/共存需求，正当例外） |
-| Git 托管 | GitProvider 接口（roadmap §六背书）：gitea 迁入 + gitee 适配器，两实现确定 |
-| CI 引擎 | CIProvider 接口（新增）：gitea Actions + Jenkins 两实现确定，正当抽象 |
+| Git 托管 | GitProvider 接口（roadmap §六背书）：gitea 迁入 + gitee（M8）、GitHub/GitLab（M9）适配器，实现确定要来，正当抽象 |
+| CI 引擎 | CIProvider 接口（新增）：gitea Actions + Jenkins（M8）、GitHub Actions + GitLab CI（M9），实现确定要来，正当抽象 |
+| IM 通知 | 企微/钉钉/飞书已是插件式；M9 补 Telegram/SMTP 适配器（通知渠道类型泛化，非新抽象） |
+| IM 扫码/第三方登录 | OAuthProvider 接口（M9）：企微/钉钉迁入 + GitHub OAuth，正当抽象 |
 
 ## 六、欠账消化安排
 
@@ -225,6 +246,7 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 | 阶段超期 | 持续 | 裁剪线：AI 主线按序保 M1→M2→M4（对话→协议化→确认层）；M3 可并入 M2 尾段或顺延 P7；M5/M7 独立高价值建议随段并行；M8 按决策点 D5 定位置；M6 不清则升级为 P7 首项（不再默顺延） |
 | AgileConfig OpenAPI 覆盖度（密钥级权限） | M7 开工前 1 天调研 | 不足则走止损判据：K/V 回退内建轻量存储，UI 零改动 |
 | gitee webhook 签名/Jenkins CSRF 细节与版本差异 | M8 开工前 1 天调研 | 双候选先跑通 curl 级验证再写适配器 |
+| GitHub/GitLab webhook 语义与 commit status 回写差异（roadmap 警告工作量远大于观感） | M9 GitProvider 扩展块开工前 1 天调研 | 同上 curl 级验证；GitLab 设裁剪线（视余量，不足随 M6 收尾段补） |
 
 ## 八、执行与验收纪律
 
@@ -241,6 +263,7 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - **D4｜IM 机器人双向**：✅ 顺延 P7，本阶段不做。
 - **D5｜gitee+Jenkins 排期**：✅ 前置小阶段（M8 执行顺序第一，M1 动手前完成）。
 - **D6｜compose pull 修复**：✅ 已落地发版（1d764ee），无需后续动作。
+- **D7｜开源生态适配批次**：✅ 用户 2026-10-04 追加拍板——roadmap §六剩余适配项（GitHub/GitLab GitProvider、Telegram/SMTP 通知、GitHub OAuth 登录）**全做进 M9，不留触发式 backlog**；唯 GitLab 适配器设裁剪线（GitHub 先行，余量不足随 M6 补）；ObservBackend（Grafana/Loki）维持 rule of two 判据不进本阶段。
 
 ## 十、阶段后走向：P6 是功能开发的最后一个立项阶段（定稿）
 
@@ -253,7 +276,8 @@ P6 收官后，平台**转入维护期**——测试补齐、既有功能微调�
 | NL→操作高危白名单（发布/回滚） | 三件套真机运行 ≥1 个月无误操作 |
 | IM 机器人双向 | 对话 UI 稳定后仍有"IM 内直接查询/确认"的刚性场景 |
 | AgileConfig 服务发现 | 转 k3s 后（ConfigMap/Service 是免费答案前不碰） |
-| GitHub/GitLab 适配器 | 开源社区真实贡献需求出现（roadmap §六已注明工作量远大于观感） |
-| Telegram/SMTP 通知适配 | 海外用户真实出现 |
+| ObservBackend 抽象（Grafana/Loki 适配） | 开源用户真实需要 Grafana/Loki 替代 O2（rule of two 原判据） |
+
+> 注：Telegram/SMTP 通知、GitHub OAuth、GitHub/GitLab GitProvider 原属本表，D7 拍板后已进 M9 本阶段做掉。
 
 维护期的既定动作：P6 收尾评审时同步改写 roadmap（标记主线完结 + backlog 判据表落档）、依赖 license 审计与 README 英文化（开源化收尾）、按审核留档清单滚动消化新增隐患。
