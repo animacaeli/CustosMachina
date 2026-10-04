@@ -91,38 +91,36 @@ func (h *Handler) listContainers(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
-// ContainerAction 执行容器动作（start|stop|restart）并留痕事件。
-// P6-M4：AI 对话确认层复用（与 handler.containerAction 同链路——SSH docker
-// client + server_events 审计，operator 标注发起人）。
-func (s *Service) ContainerAction(ctx context.Context, serverID uint, cid, action, operator string) error {
+// ContainerLogsTail 容器日志尾部文本（只读查询；AI 对话工具复用，与
+// handler.containerLogs 非 follow 路径同链路）。
+func (s *Service) ContainerLogsTail(ctx context.Context, serverID uint, cid string, tail int) (string, error) {
 	srv, cred, err := s.serverWithCredential(ctx, serverID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cli, sshConn, err := dockerClientFor(srv, cred)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer sshConn.Close()
-	actx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	var aerr error
-	switch action {
-	case "start":
-		_, aerr = cli.ContainerStart(actx, cid, dc.ContainerStartOptions{})
-	case "stop":
-		_, aerr = cli.ContainerStop(actx, cid, dc.ContainerStopOptions{})
-	case "restart":
-		_, aerr = cli.ContainerRestart(actx, cid, dc.ContainerRestartOptions{})
-	default:
-		return fmt.Errorf("不支持的操作 %q", action)
+	reader, err := cli.ContainerLogs(ctx, cid, dc.ContainerLogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(tail),
+	})
+	if err != nil {
+		cli.Close()
+		return "", err
 	}
-	cli.Close()
-	if aerr != nil {
-		return aerr
-	}
-	s.recordSimpleEvent(actx, srv.ID, "container_op", fmt.Sprintf("%s 容器 %s %s", operator, cid, action))
-	return nil
+	defer cli.Close()
+	defer reader.Close()
+	// 非 TTY 容器日志是 8 字节头的双路复用流，需解复用
+	demuxR, demuxW := io.Pipe()
+	go func() {
+		_ = demuxDockerStream(demuxW, reader)
+		demuxW.Close()
+	}()
+	buf := &strings.Builder{}
+	_, _ = io.Copy(buf, io.LimitReader(demuxR, 256*1024))
+	return buf.String(), nil
 }
 
 func (h *Handler) containerAction(c *gin.Context) {

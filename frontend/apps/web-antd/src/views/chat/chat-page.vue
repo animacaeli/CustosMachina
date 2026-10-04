@@ -4,6 +4,7 @@ import type { AiSkill } from '#/api/chat/skills';
 import type { PlatformUser } from '#/api/system/user';
 
 import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { useUserStore } from '@vben/stores';
 
@@ -13,12 +14,9 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
 import {
-  cancelActionApi,
   chatStreamApi,
-  confirmActionApi,
   createConversationApi,
   deleteConversationApi,
-  listActionsApi,
   listConversationsApi,
   listMessagesApi,
 } from '#/api/chat';
@@ -103,55 +101,19 @@ async function openConversation(id: number) {
   currentId.value = id;
   messages.value = (await listMessagesApi(id)).map((m) => ({
     ...m,
-    actions: (m.actions ?? []).map((a) => ({ ...a, status: 'pending' })),
+    actions: m.actions ?? undefined,
     attachments: m.attachments ?? undefined,
     skill: m.skill ?? undefined,
     tools: m.tools ?? undefined,
   }));
-  // 操作卡状态刷新（消息里只留了 id/type/summary，终态从服务端取）
-  const ids = messages.value.flatMap((m) => (m.actions ?? []).map((a) => a.id));
-  if (ids.length > 0) {
-    try {
-      const acts = await listActionsApi(ids);
-      const byId = new Map(acts.map((a) => [a.id, a]));
-      for (const m of messages.value) {
-        if (!m.actions) continue;
-        m.actions = m.actions.map((a) => {
-          const fresh = byId.get(a.id);
-          return fresh ? { ...a, result: fresh.result, status: fresh.status } : a;
-        });
-      }
-    } catch {
-      /* 状态刷新失败不阻塞会话打开 */
-    }
-  }
   await nextTick();
   scrollToBottom();
 }
 
-// ---- M4 操作卡：确认/取消（仅发起人；执行走后端 casbin 判权） ----
-async function confirmActionCard(a: UiAction) {
-  try {
-    const out = await confirmActionApi(a.id);
-    a.status = out.status;
-    a.result = out.result;
-    if (out.status === 'done') {
-      antMessage.success(out.result || '已执行');
-    } else {
-      antMessage.error(out.result || '执行失败');
-    }
-  } catch (e: any) {
-    antMessage.error(e?.response?.data?.message ?? '确认失败');
-  }
-}
-
-async function cancelActionCard(a: UiAction) {
-  try {
-    const out = await cancelActionApi(a.id);
-    a.status = out.status;
-  } catch (e: any) {
-    antMessage.error(e?.response?.data?.message ?? '取消失败');
-  }
+// 建议卡「去处理」：跳转平台对应页面，用户自行操作（AI 不执行）
+const router = useRouter();
+function goHandle(a: UiAction) {
+  if (a.route) router.push(a.route);
 }
 
 async function removeConversation(id: number) {
@@ -169,12 +131,10 @@ async function removeConversation(id: number) {
 }
 
 // ---- 消息与流式 ----
-// 操作卡（M4 确认层）：AI 生成意图 → 用户确认才执行；状态实时（pending 可操作，
-// 终态只读展示）
+// 操作建议卡（用户定调：AI 只建议不执行——不论身份）：展示建议 + 「去处理」
+// 跳转平台对应页面，用户自行操作
 interface UiAction {
-  id: number;
-  result?: string;
-  status: string;
+  route?: string;
   summary: string;
   type: string;
 }
@@ -267,11 +227,8 @@ async function send() {
       scrollToBottom();
     },
     onAction: (a) => {
-      // M4 确认层：生成待确认操作卡（不自动执行，用户点确认）
-      assistant!.actions = [
-        ...(assistant!.actions ?? []),
-        { id: a.id, result: a.result, status: a.status, summary: a.summary, type: a.type },
-      ];
+      // 操作建议卡：AI 只建议不执行，「去处理」由用户自行跳转操作
+      assistant!.actions = [...(assistant!.actions ?? []), a];
       scrollToBottom();
     },
     onDone: (status) => {
@@ -633,46 +590,28 @@ onMounted(async () => {
                   🔧 {{ t.name }}
                 </a-tag>
               </div>
-              <!-- M4 操作确认卡：AI 生成意图 → 人确认才执行 -->
+              <!-- M4 操作建议卡：AI 只建议不执行，「去处理」跳转平台页面 -->
               <div
                 v-if="m.role === 'assistant' && m.actions?.length"
                 class="mb-2 space-y-1.5"
               >
                 <div
-                  v-for="a in m.actions"
-                  :key="a.id"
-                  class="rounded-md border px-3 py-2 text-xs"
-                  :class="
-                    a.status === 'pending'
-                      ? 'border-amber-500/50 bg-amber-500/5'
-                      : a.status === 'done'
-                        ? 'border-green-500/50 bg-green-500/5'
-                        : a.status === 'failed'
-                          ? 'border-red-500/50 bg-red-500/5'
-                          : 'border-border bg-muted/40'
-                  "
+                  v-for="(a, ai) in m.actions"
+                  :key="ai"
+                  class="rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs"
                 >
                   <div class="flex items-center gap-2">
                     <span class="font-medium text-foreground">
-                      {{ a.type === 'restart_container' ? '🔄 重启容器' : a.type === 'trigger_cron' ? '⏱️ 触发定时任务' : a.type === 'deploy_config' ? '📤 下发配置' : a.type }}
+                      {{ a.type === 'restart_container' ? '🔄 容器重启建议' : a.type === 'trigger_cron' ? '⏱️ 定时任务触发建议' : a.type === 'deploy_config' ? '📤 配置下发建议' : a.type }}
                     </span>
-                    <span v-if="a.status === 'pending'" class="text-amber-600">待确认</span>
-                    <span v-else-if="a.status === 'done'" class="text-green-600">已执行</span>
-                    <span v-else-if="a.status === 'failed'" class="text-red-500">执行失败</span>
-                    <span v-else class="text-muted-foreground">
-                      {{ a.status === 'cancelled' ? '已取消' : '已过期' }}
-                    </span>
+                    <span class="text-primary">操作建议</span>
                   </div>
                   <div class="mt-1 text-muted-foreground">{{ a.summary }}</div>
-                  <div v-if="a.result" class="mt-1 break-all text-muted-foreground">
-                    {{ a.result }}
-                  </div>
-                  <div v-if="a.status === 'pending'" class="mt-2 flex gap-2">
-                    <a-button danger size="small" type="primary" @click="confirmActionCard(a)">
-                      确认执行
+                  <div class="mt-2 flex items-center gap-2">
+                    <a-button v-if="a.route" size="small" type="primary" @click="goHandle(a)">
+                      去处理
                     </a-button>
-                    <a-button size="small" @click="cancelActionCard(a)">取消</a-button>
-                    <span class="self-center text-muted-foreground">5 分钟内有效</span>
+                    <span class="text-muted-foreground">由你手动操作，AI 不会执行变更</span>
                   </div>
                 </div>
               </div>

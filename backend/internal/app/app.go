@@ -145,11 +145,9 @@ func ProvideModules(
 	tools := &toolsBridge{db: db, res: resSvc}
 	aiChatSvc.ToolSource = tools
 	mcpSvc.SetSources(tools, aiChatSvc.MountSource)
-	// 桥接（P6 M4）：NL→操作确认层——白名单三件套执行器（既有 service +
-	// casbin 判权 + 审计，与 REST 同链路；AI 只生成意图，执行权在人）
-	aiChatSvc.ActionExecutor = &chatActionBridge{
-		db: db, res: resSvc, cronSvc: cronSvc, cfgSvc: cfgSvc, enf: casbinEnf,
-	}
+	// 桥接（P6 M4，建议卡定调）：NL→操作建议——白名单三件套只生成建议卡
+	// （校验对象真实存在 + 跳转路由），AI 不执行任何变更
+	aiChatSvc.ActionSource = &chatActionBridge{db: db, res: resSvc}
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH}
 }
 
@@ -658,6 +656,50 @@ func (b *toolsBridge) ChatTools(ctx context.Context, viewerRoles []string) []ai.
 				return rowsToText(rows), nil
 			},
 		},
+		{
+			Name:        "container_logs",
+			Description: "查看指定主机上某容器最近的日志尾部（只读，排障用——用户报错时先看日志）",
+			Parameters: schema(map[string]any{
+				"server_id": intProp("必填，主机 ID"),
+				"container": map[string]any{"type": "string", "description": "必填，容器名或 ID 前缀（list_containers 可查）"},
+				"lines":     intProp("可选，尾部行数，默认 100，最大 500"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				sid := argUint(args, "server_id")
+				cname := actionArgStr(args, "container")
+				if sid == 0 || cname == "" {
+					return "", errors.New("server_id 与 container 均必填")
+				}
+				cons, err := b.ListContainers(ctx, sid)
+				if err != nil {
+					return "", err
+				}
+				cid := ""
+				for _, c := range cons {
+					name, _ := c["name"].(string)
+					id, _ := c["id"].(string)
+					if name == cname || strings.HasPrefix(id, cname) {
+						cid = id
+						break
+					}
+				}
+				if cid == "" {
+					return "", fmt.Errorf("主机上不存在容器 %q", cname)
+				}
+				lines := lim(args["lines"])
+				if lines > 500 {
+					lines = 500
+				}
+				out, err := b.res.ContainerLogsTail(ctx, sid, cid, lines)
+				if err != nil {
+					return "", err
+				}
+				if out == "" {
+					return "（无日志输出）", nil
+				}
+				return out, nil
+			},
+		},
 	}
 }
 
@@ -694,11 +736,8 @@ func seedSkills(db *gorm.DB) {
 // casbin 资源点判权（dev 触发 admin 级操作被拒——与中间件同语义：admin 直放，
 // 其余角色走种子矩阵），再经既有 service 执行并审计（标注"AI 对话发起"）。
 type chatActionBridge struct {
-	db      *gorm.DB
-	res     *resources.Service
-	cronSvc *cronmod.Service
-	cfgSvc  *configs.Service
-	enf     *casbin.SyncedEnforcer
+	db  *gorm.DB
+	res *resources.Service
 }
 
 func actionArgUint(args map[string]any, key string) uint {
@@ -727,34 +766,37 @@ func (b *chatActionBridge) ChatActions() []ai.ChatActionDef {
 	return []ai.ChatActionDef{
 		{
 			Type:        ai.ActRestartContainer,
-			Description: "重启指定主机上的容器。写操作：只生成待确认操作卡，须用户在界面确认后才执行。先用 list_servers/list_containers 查到真实 server_id 与容器名再调用",
+			Description: "为用户生成「重启容器」的操作建议卡（你不执行任何变更，卡上「去处理」引导用户到平台页面自行操作）。当用户表达重启容器意图时调用；先用 list_servers/list_containers 查到真实 server_id 与容器名",
 			Parameters: objSchema(map[string]any{
 				"server_id": map[string]any{"type": "integer", "description": "主机 ID（list_servers 可查）"},
 				"container": map[string]any{"type": "string", "description": "容器名或 ID 前缀（list_containers 可查）"},
 			}, "server_id", "container"),
 			Summary: func(p map[string]any) string {
-				return fmt.Sprintf("重启主机「%v」上的容器「%v」", p["_server_name"], p["container"])
+				return fmt.Sprintf("建议重启主机「%v」上的容器「%v」", p["_server_name"], p["container"])
 			},
+			Route: func(_ map[string]any) string { return "/resources/servers" },
 		},
 		{
 			Type:        ai.ActTriggerCron,
-			Description: "手动触发一次定时任务。写操作：只生成待确认操作卡，须用户在界面确认后才执行。先用 list_cron_jobs 查到真实 job_id 再调用",
+			Description: "为用户生成「手动触发定时任务」的操作建议卡（你不执行任何变更，卡上「去处理」引导用户到平台页面自行操作）。当用户表达触发任务意图时调用；先用 list_cron_jobs 查到真实 job_id",
 			Parameters: objSchema(map[string]any{
 				"job_id": map[string]any{"type": "integer", "description": "定时任务 ID（list_cron_jobs 可查）"},
 			}, "job_id"),
 			Summary: func(p map[string]any) string {
-				return fmt.Sprintf("手动触发定时任务「%v」（#%v）", p["_job_name"], p["job_id"])
+				return fmt.Sprintf("建议手动触发定时任务「%v」（#%v）", p["_job_name"], p["job_id"])
 			},
+			Route: func(_ map[string]any) string { return "/cron" },
 		},
 		{
 			Type:        ai.ActDeployConfig,
-			Description: "把配置文件下发到目标主机（含生效动作）。写操作：只生成待确认操作卡，须用户在界面确认后才执行。先用 list_configs 查到真实 file_id 再调用",
+			Description: "为用户生成「下发配置文件」的操作建议卡（你不执行任何变更，卡上「去处理」引导用户到平台页面自行操作）。当用户表达配置下发意图时调用；先用 list_configs 查到真实 file_id",
 			Parameters: objSchema(map[string]any{
 				"file_id": map[string]any{"type": "integer", "description": "配置文件 ID（list_configs 可查）"},
 			}, "file_id"),
 			Summary: func(p map[string]any) string {
-				return fmt.Sprintf("下发配置「%v」到 %v", p["_file_name"], p["_path"])
+				return fmt.Sprintf("建议下发配置「%v」到 %v", p["_file_name"], p["_path"])
 			},
+			Route: func(_ map[string]any) string { return "/configs" },
 		},
 	}
 }
@@ -825,70 +867,6 @@ func (b *chatActionBridge) ValidateChatAction(ctx context.Context, typ string, p
 				return def.Summary(params), nil
 			}
 		}
-	}
-	return "", fmt.Errorf("未知操作类型 %q", typ)
-}
-
-// ExecuteChatAction 用户确认后的真实执行：casbin 判权（REST 同款资源点）→
-// 既有 service 执行 → 审计标注 AI 对话发起。
-func (b *chatActionBridge) ExecuteChatAction(ctx context.Context, userID uint, operator, rolesCSV, typ string, params map[string]any) (string, error) {
-	roles := identity.ParseRoleList(rolesCSV)
-	admin := false
-	for _, r := range roles {
-		if r == "admin" || r == "superadmin" {
-			admin = true
-		}
-	}
-	can := func(obj, act string) bool {
-		if admin {
-			return true // 与 REST 中间件 claims.IsAdmin 直放同语义
-		}
-		ok, err := rbac.EnforceAny(b.enf, roles, obj, act)
-		return err == nil && ok
-	}
-	deny := func(typ string) error {
-		return fmt.Errorf("无权执行该操作（角色 %s 被 casbin 拒绝）", rolesCSV)
-	}
-
-	switch typ {
-	case ai.ActRestartContainer:
-		sid := actionArgUint(params, "server_id")
-		cid, _ := params["_cid"].(string)
-		if sid == 0 || cid == "" {
-			return "", fmt.Errorf("参数缺失（server_id/cid）")
-		}
-		if !can(fmt.Sprintf("/server-containers/%d/%s/restart", sid, cid), "POST") {
-			return "", deny(typ)
-		}
-		if err := b.res.ContainerAction(ctx, sid, cid, "restart", operator+"（AI 对话发起）"); err != nil {
-			return "", err
-		}
-		return "容器重启指令已下发并执行", nil
-	case ai.ActTriggerCron:
-		jid := actionArgUint(params, "job_id")
-		if jid == 0 {
-			return "", fmt.Errorf("参数缺失（job_id）")
-		}
-		if !can(fmt.Sprintf("/cron-jobs/%d/trigger", jid), "POST") {
-			return "", deny(typ)
-		}
-		run, err := b.cronSvc.Trigger(ctx, jid, cronmod.TriggerManualAI)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("已触发（执行记录 #%d，触发方式 manual_ai，可稍后查执行历史看结果）", run.ID), nil
-	case ai.ActDeployConfig:
-		fid := actionArgUint(params, "file_id")
-		if fid == 0 {
-			return "", fmt.Errorf("参数缺失（file_id）")
-		}
-		if !can(fmt.Sprintf("/config-files/%d/deploy", fid), "POST") {
-			return "", deny(typ)
-		}
-		if err := b.cfgSvc.Deploy(ctx, fid, operator+"（AI 对话发起）"); err != nil {
-			return "", err
-		}
-		return "配置已下发到目标主机（含生效动作）", nil
 	}
 	return "", fmt.Errorf("未知操作类型 %q", typ)
 }

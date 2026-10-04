@@ -37,7 +37,6 @@ const (
 const (
 	TriggerSchedule = "schedule"
 	TriggerManual   = "manual"
-	TriggerManualAI = "manual_ai" // AI 对话确认层发起（P6-M4；审计可区分人点按钮与 AI 意图确认）
 	TriggerRetry    = "retry"
 )
 
