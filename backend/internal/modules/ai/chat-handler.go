@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -121,9 +122,14 @@ func viewerAdmin(c *gin.Context) bool {
 
 func (h *ChatHandler) listConvs(c *gin.Context) {
 	claims := jwt.ClaimsFromContext(c)
-	// all=1：仅 admin 生效（全平台会话含归属人；普通用户忽略该参数）
-	all := c.Query("all") == "1" && viewerAdmin(c)
-	list, err := h.svc.ListConversations(c.Request.Context(), claims.UserID, viewerAdmin(c), all)
+	// user_id：admin 查看指定用户的对话历史（缺省=当前用户；普通用户该参数被忽略）
+	// deleted=1：admin 含已软删会话（留档视图；普通用户忽略）
+	filter := claims.UserID
+	if v, err := strconv.ParseUint(c.Query("user_id"), 10, 64); err == nil && v > 0 && viewerAdmin(c) {
+		filter = uint(v)
+	}
+	includeDeleted := c.Query("deleted") == "1" && viewerAdmin(c)
+	list, err := h.svc.ListConversations(c.Request.Context(), claims.UserID, viewerAdmin(c), filter, includeDeleted)
 	if err != nil {
 		httpx.FailServer(c, err)
 		return

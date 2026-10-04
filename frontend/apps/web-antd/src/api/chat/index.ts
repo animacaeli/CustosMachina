@@ -14,6 +14,7 @@ export interface Mount {
 
 export interface Conversation {
   createdAt: string;
+  deleted?: boolean; // 软删除标记（admin 全量视图返回）
   id: number;
   mode: ChatMode;
   mount?: Mount | null;
@@ -41,9 +42,15 @@ export interface ChatMessage {
   status: 'aborted' | 'done' | 'error';
 }
 
-export async function listConversationsApi(all = false) {
+/** admin 可查看指定用户（userId）并可选包含已软删会话（deleted）；普通用户忽略 */
+export async function listConversationsApi(
+  opts: { deleted?: boolean; userId?: number } = {},
+) {
+  const params: Record<string, any> = {};
+  if (opts.userId) params.user_id = opts.userId;
+  if (opts.deleted) params.deleted = 1;
   return requestClient.get<Conversation[]>('/ai/chat/conversations', {
-    params: all ? { all: 1 } : undefined,
+    params: Object.keys(params).length > 0 ? params : undefined,
   });
 }
 

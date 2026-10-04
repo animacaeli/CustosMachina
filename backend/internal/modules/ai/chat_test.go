@@ -313,3 +313,69 @@ func TestSkillChat(t *testing.T) {
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && strings.Contains(s, sub)
 }
+
+// 软删除语义：本人删除后不可见不可访问；admin 可按用户查看、可含已删（deleted
+// 标记）、仍能查看消息（合规留档）；普通用户的过滤参数被忽略。
+func TestChatSoftDelete(t *testing.T) {
+	db := chatTestDB(t)
+	svc := NewChatService(db, nil)
+
+	conv, err := svc.CreateConversation(t.Context(), 7, ChatModeGeneral, nil)
+	if err != nil {
+		t.Fatalf("建会话失败: %v", err)
+	}
+	if err := db.Create(&ChatMessage{ConversationID: conv.ID, Role: "user", Content: "hi", Status: MsgDone}).Error; err != nil {
+		t.Fatalf("落消息失败: %v", err)
+	}
+
+	// 本人软删
+	if err := svc.DeleteConversation(t.Context(), 7, conv.ID, false); err != nil {
+		t.Fatalf("删除失败: %v", err)
+	}
+	// 消息保留（留档）
+	var cnt int64
+	db.Model(&ChatMessage{}).Where("conversation_id = ?", conv.ID).Count(&cnt)
+	if cnt != 1 {
+		t.Fatalf("软删后消息应保留, got %d", cnt)
+	}
+
+	// 本人列表不含（filterUserID/includeDeleted 对普通用户无效）
+	if list, _ := svc.ListConversations(t.Context(), 7, false, 0, true); len(list) != 0 {
+		t.Fatalf("本人列表应不含已删会话, got %d", len(list))
+	}
+	// 普通用户带 filterUserID 也只能看自己
+	if list, _ := svc.ListConversations(t.Context(), 9, false, 7, true); len(list) != 0 {
+		t.Fatalf("普通用户 filterUserID 应被忽略, got %d", len(list))
+	}
+	if _, err := svc.Messages(t.Context(), 7, conv.ID, false); err == nil {
+		t.Fatal("本人访问已删会话应被拒")
+	}
+	if err := svc.DeleteConversation(t.Context(), 9, conv.ID, false); err == nil {
+		t.Fatal("他人删除应被拒")
+	}
+
+	// admin 按用户查看：不含已删 → 空；含已删 → 1 条带 deleted 标记
+	if fl, _ := svc.ListConversations(t.Context(), 8, true, 7, false); len(fl) != 0 {
+		t.Fatalf("admin 查用户 7（不含已删）应为空, got %d", len(fl))
+	}
+	fl, err := svc.ListConversations(t.Context(), 8, true, 7, true)
+	if err != nil || len(fl) != 1 {
+		t.Fatalf("admin 查用户 7（含已删）应 1 条: %v %d", err, len(fl))
+	}
+	if !fl[0].Deleted || fl[0].ID != conv.ID {
+		t.Fatalf("deleted 标记异常: %+v", fl[0])
+	}
+	// admin 查不存在用户 → 空
+	if fl, _ := svc.ListConversations(t.Context(), 8, true, 999, true); len(fl) != 0 {
+		t.Fatalf("查不存在用户应为空, got %d", len(fl))
+	}
+	// admin 仍可查看消息（留档）
+	if _, err := svc.Messages(t.Context(), 8, conv.ID, true); err != nil {
+		t.Fatalf("admin 查看已删会话消息应放行: %v", err)
+	}
+
+	// admin 再删（对已删会话幂等）不报错
+	if err := svc.DeleteConversation(t.Context(), 8, conv.ID, true); err != nil {
+		t.Fatalf("admin 删除应放行: %v", err)
+	}
+}

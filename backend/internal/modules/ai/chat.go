@@ -119,11 +119,12 @@ var (
 	ErrNotConfigur = errors.New("AI 中转层未配置，请先在管理后台完成配置")
 )
 
-// ConversationsOut 列表视图（不含消息；Owner 仅 admin 全量视图填充）。
+// ConversationsOut 列表视图（不含消息；Owner/Deleted 仅 admin 全量视图填充）。
 type ConversationsOut struct {
 	Conversation
-	Mount *Mount `json:"mount"`
-	Owner string `json:"owner,omitempty"`
+	Mount   *Mount `json:"mount"`
+	Owner   string `json:"owner,omitempty"`
+	Deleted bool   `json:"deleted"` // 软删除标记（admin 留档视图可见）
 }
 
 // CreateConversation 新建会话。
@@ -161,12 +162,18 @@ func (s *ChatService) UpdateMount(ctx context.Context, userID, id uint, mount *M
 	return s.db.WithContext(ctx).Model(c).Update("mount_json", string(b)).Error
 }
 
-// ListConversations 会话列表（最近在前）。admin 且 all=true 时返回全平台会话
-// （含归属人），否则仅本人——各用户对话历史相对独立，管理员可查看全部。
-func (s *ChatService) ListConversations(ctx context.Context, userID uint, isAdmin, all bool) ([]ConversationsOut, error) {
-	q := s.db.WithContext(ctx).Model(&Conversation{}).Order("updated_at DESC").Limit(200)
-	if !(isAdmin && all) {
-		q = q.Where("user_id = ?", userID)
+// ListConversations 会话列表（最近在前）。admin 可查看任意用户（filterUserID，
+// 前端默认当前用户）并可选包含已软删会话（合规留档）；普通用户恒本人未删除
+// 会话（filterUserID/includeDeleted 被忽略）。各用户对话历史相对独立。
+func (s *ChatService) ListConversations(ctx context.Context, userID uint, isAdmin bool, filterUserID uint, includeDeleted bool) ([]ConversationsOut, error) {
+	target := userID
+	if isAdmin && filterUserID > 0 {
+		target = filterUserID
+	}
+	q := s.db.WithContext(ctx).Model(&Conversation{}).
+		Where("user_id = ?", target).Order("updated_at DESC").Limit(200)
+	if isAdmin && includeDeleted {
+		q = q.Unscoped() // 含已软删（deleted 标记区分）
 	}
 	var cs []Conversation
 	if err := q.Find(&cs).Error; err != nil {
@@ -176,7 +183,7 @@ func (s *ChatService) ListConversations(ctx context.Context, userID uint, isAdmi
 	for i := range cs {
 		out[i] = *s.toOut(&cs[i])
 	}
-	if isAdmin && all {
+	if isAdmin {
 		s.fillOwners(ctx, out)
 	}
 	return out, nil
@@ -214,17 +221,15 @@ func (s *ChatService) fillOwners(ctx context.Context, out []ConversationsOut) {
 	}
 }
 
-// DeleteConversation 删除会话及消息（硬删：软删行占索引且历史无留档价值）。
+// DeleteConversation 软删除会话（消息保留）：本人视角即刻消失且不可再访问；
+// admin 全量视图仍可查（带 deleted 标记）——对话内容合规留档语义。
 // 本人或 admin（管理权）。
 func (s *ChatService) DeleteConversation(ctx context.Context, userID, id uint, isAdmin bool) error {
 	c, err := s.accessible(ctx, userID, id, isAdmin)
 	if err != nil {
 		return err
 	}
-	if err := s.db.WithContext(ctx).Unscoped().Delete(&ChatMessage{}, "conversation_id = ?", c.ID).Error; err != nil {
-		return err
-	}
-	return s.db.WithContext(ctx).Unscoped().Delete(c).Error
+	return s.db.WithContext(ctx).Delete(c).Error
 }
 
 // Messages 会话消息（升序）。本人或 admin。
@@ -241,20 +246,21 @@ func (s *ChatService) Messages(ctx context.Context, userID, id uint, isAdmin boo
 	return ms, nil
 }
 
-// accessible 归属校验：admin 跨用户放行（查看/管理），普通用户仅本人。
+// accessible 归属校验：admin 跨用户放行（查看/管理，含已软删会话——留档审阅）；
+// 普通用户仅本人且未删除（Unscoped 查出后判定，软删会话对本人等同不存在）。
 func (s *ChatService) accessible(ctx context.Context, userID, id uint, isAdmin bool) (*Conversation, error) {
 	var c Conversation
-	if err := s.db.WithContext(ctx).First(&c, id).Error; err != nil {
+	if err := s.db.WithContext(ctx).Unscoped().First(&c, id).Error; err != nil {
 		return nil, ErrNotOwner
 	}
-	if c.UserID != userID && !isAdmin {
+	if (c.UserID != userID || c.DeletedAt.Valid) && !isAdmin {
 		return nil, ErrNotOwner
 	}
 	return &c, nil
 }
 
 func (s *ChatService) toOut(c *Conversation) *ConversationsOut {
-	out := &ConversationsOut{Conversation: *c}
+	out := &ConversationsOut{Conversation: *c, Deleted: c.DeletedAt.Valid}
 	if c.MountJSON != "" {
 		var m Mount
 		if json.Unmarshal([]byte(c.MountJSON), &m) == nil {
