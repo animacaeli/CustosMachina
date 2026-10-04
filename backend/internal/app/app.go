@@ -254,8 +254,10 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 	since := time.Now().Add(-time.Duration(m.Hours) * time.Hour)
 	var blocks []ai.ContextBlock
 
+	// 项目概况：挂载 = 指定项目详情；未挂载 = 全部项目简要清单（平台级问题
+	// 如"有多少个项目"不要求用户先挂载——挂载是聚焦，不是数据开关）
+	var pb strings.Builder
 	if len(m.ProjectIDs) > 0 {
-		var pb strings.Builder
 		prows, err := b.db.WithContext(ctx).Table("projects").
 			Select("id, name, repo_path, provider, default_branch").
 			Where("id IN ?", m.ProjectIDs).Rows()
@@ -268,88 +270,115 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 			}
 			_ = prows.Close()
 		}
-		if pb.Len() > 0 {
-			blocks = append(blocks, ai.ContextBlock{Source: "project_overview", Text: pb.String()})
+	} else {
+		var total int64
+		b.db.WithContext(ctx).Table("projects").Count(&total)
+		prows, err := b.db.WithContext(ctx).Table("projects").
+			Select("id, name, provider").Order("id").Limit(20).Rows()
+		if err == nil {
+			fmt.Fprintf(&pb, "平台共 %d 个项目（最多列 20 个；详情可挂载具体项目）：\n", total)
+			for prows.Next() {
+				var id uint
+				var name, provider string
+				_ = prows.Scan(&id, &name, &provider)
+				fmt.Fprintf(&pb, "#%d %s（%s）\n", id, name, provider)
+			}
+			_ = prows.Close()
+		}
+	}
+	if pb.Len() > 0 {
+		blocks = append(blocks, ai.ContextBlock{Source: "project_overview", Text: pb.String()})
+	}
 
-			// 近期失败构建（挂载项目范围）
-			var bb strings.Builder
-			brows, err := b.db.WithContext(ctx).Table("builds").
-				Select("project_id, tag, env_type, status, created_at").
-				Where("project_id IN ? AND status = ? AND created_at > ?", m.ProjectIDs, "failed", since).
-				Order("id DESC").Limit(8).Rows()
-			if err == nil {
-				for brows.Next() {
-					var pid uint
-					var tag, env, status string
-					var ts time.Time
-					_ = brows.Scan(&pid, &tag, &env, &status, &ts)
-					fmt.Fprintf(&bb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
-				}
-				_ = brows.Close()
+	// 近期构建与发布：挂载 = 指定项目聚焦；未挂载 = 全平台最近摘要
+	// （"各项目最近构建情况"是平台级问题，不要求用户先挂载）
+	{
+		var bb strings.Builder
+		bq := b.db.WithContext(ctx).Table("builds").
+			Select("project_id, tag, env_type, status, created_at").
+			Order("id DESC").Limit(8)
+		if len(m.ProjectIDs) > 0 {
+			bq = bq.Where("project_id IN ?", m.ProjectIDs)
+		}
+		brows, err := bq.Rows()
+		if err == nil {
+			for brows.Next() {
+				var pid uint
+				var tag, env, status string
+				var ts time.Time
+				_ = brows.Scan(&pid, &tag, &env, &status, &ts)
+				fmt.Fprintf(&bb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
 			}
-			if bb.Len() > 0 {
-				blocks = append(blocks, ai.ContextBlock{Source: "recent_build_failures", Text: bb.String()})
-			}
+			_ = brows.Close()
+		}
+		if bb.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "recent_builds", Text: bb.String()})
+		}
 
-			// 近期发布（挂载项目范围）
-			var rb strings.Builder
-			rrows, err := b.db.WithContext(ctx).Table("releases").
-				Select("project_id, tag, env_type, status, created_at").
-				Where("project_id IN ? AND created_at > ?", m.ProjectIDs, since).
-				Order("id DESC").Limit(8).Rows()
-			if err == nil {
-				for rrows.Next() {
-					var pid uint
-					var tag, env, status string
-					var ts time.Time
-					_ = rrows.Scan(&pid, &tag, &env, &status, &ts)
-					fmt.Fprintf(&rb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
-				}
-				_ = rrows.Close()
+		var rb strings.Builder
+		rq := b.db.WithContext(ctx).Table("releases").
+			Select("project_id, tag, env_type, status, created_at").
+			Order("id DESC").Limit(8)
+		if len(m.ProjectIDs) > 0 {
+			rq = rq.Where("project_id IN ?", m.ProjectIDs)
+		}
+		rrows, err := rq.Rows()
+		if err == nil {
+			for rrows.Next() {
+				var pid uint
+				var tag, env, status string
+				var ts time.Time
+				_ = rrows.Scan(&pid, &tag, &env, &status, &ts)
+				fmt.Fprintf(&rb, "项目#%d %s %s %s %s\n", pid, tag, env, status, ts.Format(time.DateTime))
 			}
-			if rb.Len() > 0 {
-				blocks = append(blocks, ai.ContextBlock{Source: "recent_releases", Text: rb.String()})
-			}
+			_ = rrows.Close()
+		}
+		if rb.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "recent_releases", Text: rb.String()})
 		}
 	}
 
+	// 主机清单：挂载 = 指定主机；未挂载 = 全部主机简要（name/host 非敏感）
+	var sb strings.Builder
+	sq := b.db.WithContext(ctx).Table("servers").
+		Select("id, name, host, status").Order("id").Limit(20)
 	if len(m.ServerIDs) > 0 {
-		var sb strings.Builder
-		srows, err := b.db.WithContext(ctx).Table("servers").
-			Select("id, name, host, status").
-			Where("id IN ?", m.ServerIDs).Rows()
-		if err == nil {
-			for srows.Next() {
-				var id uint
-				var name, host string
-				var status any
-				_ = srows.Scan(&id, &name, &host, &status)
-				fmt.Fprintf(&sb, "#%d %s（%s）\n", id, name, host)
-			}
-			_ = srows.Close()
+		sq = sq.Where("id IN ?", m.ServerIDs)
+	}
+	srows, err := sq.Rows()
+	if err == nil {
+		for srows.Next() {
+			var id uint
+			var name, host string
+			var status any
+			_ = srows.Scan(&id, &name, &host, &status)
+			fmt.Fprintf(&sb, "#%d %s（%s）\n", id, name, host)
 		}
-		if sb.Len() > 0 {
-			blocks = append(blocks, ai.ContextBlock{Source: "server_inventory", Text: sb.String()})
+		_ = srows.Close()
+	}
+	if sb.Len() > 0 {
+		blocks = append(blocks, ai.ContextBlock{Source: "server_inventory", Text: sb.String()})
+	}
 
-			// 挂载主机的近期事件（Sensitive：含操作与命令记录）
-			var eb strings.Builder
-			erows, err := b.db.WithContext(ctx).Table("server_events").
-				Select("server_id, type, message, created_at").
-				Where("server_id IN ? AND created_at > ?", m.ServerIDs, since).
-				Order("id DESC").Limit(12).Rows()
-			if err == nil {
-				for erows.Next() {
-					var sid uint
-					var typ, msg string
-					var ts time.Time
-					_ = erows.Scan(&sid, &typ, &msg, &ts)
-					fmt.Fprintf(&eb, "server#%d %s %s %s\n", sid, typ, msg, ts.Format(time.DateTime))
-				}
-				_ = erows.Close()
+	// 挂载主机的近期事件（Sensitive：含操作与命令记录；仅挂载时提供）
+	if len(m.ServerIDs) > 0 {
+		var eb strings.Builder
+		erows, err := b.db.WithContext(ctx).Table("server_events").
+			Select("server_id, type, message, created_at").
+			Where("server_id IN ? AND created_at > ?", m.ServerIDs, since).
+			Order("id DESC").Limit(12).Rows()
+		if err == nil {
+			for erows.Next() {
+				var sid uint
+				var typ, msg string
+				var ts time.Time
+				_ = erows.Scan(&sid, &typ, &msg, &ts)
+				fmt.Fprintf(&eb, "server#%d %s %s %s\n", sid, typ, msg, ts.Format(time.DateTime))
 			}
-			if eb.Len() > 0 {
-				blocks = append(blocks, ai.ContextBlock{Source: "server_events_window", Text: eb.String(), Sensitive: true})
-			}
+			_ = erows.Close()
+		}
+		if eb.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "server_events_window", Text: eb.String(), Sensitive: true})
 		}
 	}
 
