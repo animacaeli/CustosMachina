@@ -48,6 +48,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, certs.Models()...)
 	models = append(models, ai.Models()...)
 	models = append(models, ai.ChatModels()...)
+	models = append(models, ai.SkillModels()...)
 	models = append(models, mcpmod.Models()...)
 	models = append(models, projects.Models()...)
 	models = append(models, ci.Models()...)
@@ -97,6 +98,7 @@ func ProvideModules(
 	aiDigest *ai.DigestService,
 	aiChatSvc *ai.ChatService,
 	aiChatH *ai.ChatHandler,
+	aiSkillSvc *ai.SkillService,
 	mcpSvc *mcpmod.Service,
 	mcpH *mcpmod.Handler,
 	db *gorm.DB,
@@ -132,6 +134,9 @@ func ProvideModules(
 	observSvc.SetDigestor(aiDigest)
 	// 桥接（P6 M1）：对话挂载上下文供给（项目/发布/构建/主机/事件只读查询）
 	aiChatSvc.MountSource = &chatContextBridge{db: db}
+	// 桥接（P6 M3）：/命令技能注入
+	aiChatSvc.Skills = aiSkillSvc
+	seedSkills(db)
 	// 桥接（P6 M2）：MCP tools 数据投影 + 上下文包供给（与对话同一套角色过滤）
 	mcpSvc.SetSources(&toolsBridge{db: db, res: resSvc}, aiChatSvc.MountSource)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH}
@@ -507,4 +512,30 @@ func (b *toolsBridge) ListContainers(ctx context.Context, serverID uint) ([]map[
 		return nil, err
 	}
 	return out, nil
+}
+
+// seedSkills 内置技能种子（P6 M3）：首次启动种入；管理员可在后台改删。
+func seedSkills(db *gorm.DB) {
+	var n int64
+	db.Model(&ai.Skill{}).Count(&n)
+	if n > 0 {
+		return
+	}
+	seeds := []ai.Skill{
+		{
+			Name: "troubleshoot", Title: "故障排查", Enabled: true,
+			Description: "按 runbook 结构化排查：先读上下文数据块，再定位、假设、验证",
+			Prompt:      "用户报告了以下问题：{{q}}\n请按以下流程回答：1) 从上方平台数据块中提取与该问题相关的事实（构建/发布/事件/任务/配置变更）；2) 列出 2~3 个最可能的假设并按可能性排序；3) 给出每个假设的验证方法（可执行的查询或命令）；4) 明确指出数据块中缺失、需要用户补充的信息。不要臆造数据块之外的状态。",
+			Runbook:     "## 通用排查顺序\n1. 最近 30 分钟的主机事件与 cron 失败\n2. 最近构建/发布是否失败、失败时间与问题出现时间的相关性\n3. 配置元信息近期是否有变更\n4. 以上都正常时考虑上游依赖（数据库/缓存/网络）",
+		},
+		{
+			Name: "release-check", Title: "发布检查", Enabled: true,
+			Description: "发布前体检：构建状态、环境隔离、部署目标、回滚路径",
+			Prompt:      "用户即将发布或刚完成发布，诉求：{{q}}\n请基于平台数据块做发布检查：1) 目标项目最近的构建是否全部通过（列出失败项）；2) 部署目标主机与环境是否正常（单点/隔离风险）；3) 上一次发布的版本与状态（回滚基线）；4) 给出 GO / NO-GO 结论与理由。数据块之外的信息向用户询问，不要假设。",
+			Runbook:     "## 发布检查单\n- 构建门禁：最近构建全绿\n- 部署目标：目标环境存在且主机可达\n- 回滚基线：上一成功版本已知\n- 观测就绪：O2 告警规则已覆盖该服务",
+		},
+	}
+	for i := range seeds {
+		db.Create(&seeds[i])
+	}
 }

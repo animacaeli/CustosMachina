@@ -95,6 +95,8 @@ var defaultPolicies = [][]string{
 	// AI 对话（P6 M1）：会话归属本人、挂载经角色过滤与 DLP，dev 可用
 	{"dev", "/ai/chat", "GET|POST"},
 	{"dev", "/ai/chat/*", "GET|POST|PUT|DELETE"},
+	// AI 技能（P6 M3）：列表全角色（命令面板），写操作仅 admin（上方 admin 通配已覆盖）
+	{"dev", "/ai/skills", "GET"},
 	// v5：项目与通知群资源点（projects / notify 模块，第三阶段 M1）
 	{"admin", "/projects", "GET|POST|PUT|DELETE"},
 	{"admin", "/projects/*", "GET|PUT|DELETE"},
@@ -109,7 +111,7 @@ var defaultPolicies = [][]string{
 	{"admin", "/notify-rules/*", "GET|PUT|DELETE|POST"},
 	// v13：AI 中转层配置（P5 M6）——仅 admin（API key 管理）
 	{"admin", "/ai", "GET|PUT|POST"},
-	{"admin", "/ai/*", "GET|PUT|POST"},
+	{"admin", "/ai/*", "GET|PUT|POST|DELETE"},
 	{"admin", "/mcp/tokens", "GET|POST"},
 	{"admin", "/mcp/tokens/*", "POST"},
 	// v12：证书管理（P5 M5）——admin/ops（DNS 凭证属密钥管理，dev 不可见）
@@ -221,7 +223,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "15" // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "16" // v16：ai/skills 写操作 admin（M3 技能 CRUD；GET 全角色放行） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，

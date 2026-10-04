@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 
 import AiConfig from './tabs/ai-config.vue';
+import AiSkills from './tabs/ai-skills.vue';
 import AlertTemplates from './tabs/alert-templates.vue';
 import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
@@ -45,6 +46,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="mcp" tab="MCP 接入">
           <McpTokens />
+        </a-tab-pane>
+        <a-tab-pane key="skills" tab="AI 技能">
+          <AiSkills />
         </a-tab-pane>
         <a-tab-pane key="ci" tab="CI / 镜像仓库">
           <CiConfig />

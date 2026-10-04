@@ -37,6 +37,71 @@ func (h *ChatHandler) RegisterRoutes(r server.Router) {
 		g.GET("/conversations/:id/messages", h.messages)
 		g.POST("/conversations/:id/messages", h.chat) // SSE 流式回复
 	}
+	// 技能：GET 全角色（命令面板列自己可用的）；写操作 admin（casbin v16）
+	sk := r.Authed.Group("/ai/skills")
+	{
+		sk.GET("", h.listSkills)
+		sk.POST("", h.createSkill)
+		sk.PUT("/:id", h.updateSkill)
+		sk.DELETE("/:id", h.deleteSkill)
+	}
+}
+
+func (h *ChatHandler) listSkills(c *gin.Context) {
+	var roles []string
+	if c.Query("admin") != "1" || !viewerAdmin(c) {
+		roles = viewerRoles(c) // 普通请求只看自己可用的
+	}
+	list, err := h.svc.Skills.List(c.Request.Context(), roles)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
+
+func (h *ChatHandler) createSkill(c *gin.Context) {
+	var in SaveSkillInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	out, err := h.svc.Skills.Save(c.Request.Context(), 0, in)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *ChatHandler) updateSkill(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	var in SaveSkillInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	out, err := h.svc.Skills.Save(c.Request.Context(), id, in)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *ChatHandler) deleteSkill(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.Skills.Delete(c.Request.Context(), id); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
 }
 
 // viewerRoles 会话视角：admin 布尔映射三级角色语义（superadmin/admin 同归
@@ -146,6 +211,7 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	}
 	var in struct {
 		Content     string           `json:"content" binding:"required,max=32000"`
+		Skill       string           `json:"skill" binding:"omitempty,max=64"`
 		Attachments []ChatAttachment `json:"attachments" binding:"omitempty,max=3,dive"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -173,7 +239,7 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	go func() {
 		defer wg.Done()
 		// 生产者：CompleteStream 的 onDelta 投递；断连时靠 reqCtx 解除阻塞
-		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Attachments, viewerRoles(c), func(delta string) {
+		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Skill, in.Attachments, viewerRoles(c), func(delta string) {
 			select {
 			case ch <- chatEvent{"delta", gin.H{"text": delta}}:
 			case <-reqCtx.Done():

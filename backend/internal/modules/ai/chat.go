@@ -66,6 +66,7 @@ type ChatMessage struct {
 	Role           string    `gorm:"size:16;not null" json:"role"` // user | assistant
 	Content        string    `gorm:"type:text" json:"content"`
 	Attachments    string    `gorm:"type:text" json:"attachments,omitempty"` // JSON []ChatAttachment（user 消息可带）
+	Skill          string    `gorm:"size:64" json:"skill,omitempty"`         // 本轮触发的技能名（/命令）
 	Status         string    `gorm:"size:16;not null;default:done" json:"status"`
 	PackRedactions int       `gorm:"not null;default:0" json:"packRedactions"` // 本轮 pack 拦截数（留痕）
 	CreatedAt      time.Time `json:"createdAt"`
@@ -92,6 +93,8 @@ type ChatService struct {
 	relay *Service
 	// MountSource 挂载上下文源（app 层注入；nil = platform 模式无上下文可用）
 	MountSource ChatContextSource
+	// Skills 技能服务（/命令触发；nil = 技能不可用）
+	Skills *SkillService
 	// 会话级互斥（同一会话同时只允许一个进行中的流）；
 	// HTTP 请求并发到达，map 读写必须持锁
 	mu          sync.Mutex
@@ -287,7 +290,7 @@ func (s *ChatService) acquire(convID uint) (release func(), err error) {
 // ChatStream 一轮流式对话：落用户消息（可带附件）→ 组 prompt（挂载 pack + 历史）→ 流式回调。
 // 返回值：assistant 消息落库结果（断连时 err=ErrConvAborted 语义由调用方判定）。
 // onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）。
-func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string)) (*ChatMessage, error) {
+func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string)) (*ChatMessage, error) {
 	if !s.relay.Configured(ctx) {
 		return nil, ErrNotConfigur
 	}
@@ -301,6 +304,15 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	}
 	defer release()
 
+	// /命令触发：解析技能并对角色校验（越权与不存在同语义）
+	var skill *Skill
+	if skillName != "" && s.Skills != nil {
+		skill, err = s.Skills.LookupFor(ctx, skillName, viewerRoles)
+		if err != nil {
+			return nil, fmt.Errorf("技能 /%s 不可用（不存在、已禁用或不在你的可用范围）", skillName)
+		}
+	}
+
 	if c.Title == "" && content != "" {
 		title := []rune(content)
 		if len(title) > 32 {
@@ -309,6 +321,9 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		s.db.WithContext(ctx).Model(c).Update("title", string(title))
 	}
 	userMsg := ChatMessage{ConversationID: c.ID, Role: "user", Content: content, Status: MsgDone}
+	if skill != nil {
+		userMsg.Skill = skill.Name
+	}
 	if len(attachments) > 0 {
 		if b, err := json.Marshal(attachments); err == nil {
 			userMsg.Attachments = string(b)
@@ -318,7 +333,7 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		return nil, err
 	}
 
-	msgs, redactions, err := s.buildPrompt(ctx, c, viewerRoles)
+	msgs, redactions, err := s.buildPrompt(ctx, c, viewerRoles, skill, content)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +375,7 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 
 // buildPrompt 组 prompt：system（平台身份 + 挂载 pack 围栏）+ 最近 N 轮 + 本轮用户消息。
 // 第二返回值 = pack 的 DLP 拦截数（消息留痕用）。
-func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string) ([]Message, int, error) {
+func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string, skill *Skill, userQuery string) ([]Message, int, error) {
 	var history []ChatMessage
 	if err := s.db.WithContext(ctx).Where("conversation_id = ?", c.ID).
 		Order("id DESC").Limit(chatHistoryRounds * 2).Find(&history).Error; err != nil {
@@ -394,6 +409,10 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 				}
 			}
 		}
+	}
+
+	if skill != nil {
+		sys += "\n\n" + RenderSkill(skill, userQuery)
 	}
 
 	msgs := []Message{{Role: "system", Content: sys}}

@@ -9,4 +9,5 @@ var Set = wire.NewSet(
 	NewDigestService,
 	NewChatService,
 	NewChatHandler,
+	NewSkillService,
 )

@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { ChatAttachment, Conversation } from '#/api/chat';
+import type { AiSkill } from '#/api/chat/skills';
 
 import { computed, nextTick, onMounted, ref } from 'vue';
 
@@ -17,6 +18,7 @@ import {
   listConversationsApi,
   listMessagesApi,
 } from '#/api/chat';
+import { listSkillsApi } from '#/api/chat/skills';
 
 defineOptions({ name: 'AiChat' });
 
@@ -67,6 +69,7 @@ async function openConversation(id: number) {
   messages.value = (await listMessagesApi(id)).map((m) => ({
     ...m,
     attachments: m.attachments ?? undefined,
+    skill: m.skill ?? undefined,
   }));
   await nextTick();
   scrollToBottom();
@@ -86,6 +89,7 @@ interface UiMessage {
   attachments?: ChatAttachment[];
   content: string;
   role: string;
+  skill?: string;
   status?: string;
   streaming?: boolean;
 }
@@ -103,18 +107,38 @@ function scrollToBottom() {
 }
 
 async function send() {
-  const content = input.value.trim();
+  let content = input.value.trim();
+  if (slashOpen.value) return; // 面板开着时 Enter = 选中技能（slashKeydown 已处理）
   if ((!content && pendingFiles.value.length === 0) || streaming.value || !currentId.value)
     return;
+  // /命令解析：输入 /name 问题...（或已面板锁定）
+  let skill = activeSkill.value?.name ?? '';
+  const m = content.match(/^\/([a-z0-9_-]+)\s+([\s\S]*)$/i);
+  if (m) {
+    skill = m[1]!.toLowerCase();
+    content = m[2]!.trim();
+    const sk = skills.value.find((x) => x.name === skill);
+    activeSkill.value = sk ?? null;
+  } else if (activeSkill.value) {
+    skill = activeSkill.value.name;
+  }
+  if (content === '' && skill === '') return;
   if (pendingFiles.value.some((f) => !f.data)) {
     antMessage.warning('附件仍在读取中');
     return;
   }
   input.value = '';
+  activeSkill.value = null;
+  slashOpen.value = false;
   const atts = [...pendingFiles.value];
   pendingFiles.value = [];
   messages.value.push(
-    { content, role: 'user', attachments: atts.length > 0 ? atts : undefined },
+    {
+      content,
+      role: 'user',
+      skill: skill || undefined,
+      attachments: atts.length > 0 ? atts : undefined,
+    },
     { content: '', role: 'assistant', streaming: true },
   );
   streaming.value = true;
@@ -150,6 +174,7 @@ async function send() {
     },
     },
     atts,
+    skill,
   );
 }
 
@@ -169,6 +194,72 @@ function stop() {
     assistant.status = 'aborted';
   }
   finish();
+}
+
+// ---- / 命令面板（Claude Code 风格）：首字符 / 弹出管理员安装的技能 ----
+const skills = ref<AiSkill[]>([]);
+const slashOpen = ref(false);
+const slashFilter = ref('');
+const slashIndex = ref(0);
+// 当前选中的技能（输入框首段 /name 已匹配时锁定）
+const activeSkill = ref<AiSkill | null>(null);
+
+async function loadSkills() {
+  skills.value = await listSkillsApi();
+}
+
+const slashMatches = computed(() => {
+  const kw = slashFilter.value.toLowerCase();
+  return skills.value.filter((sk) => kw === '' || sk.name.includes(kw));
+});
+
+function onInputForSlash() {
+  const v = input.value;
+  const m = v.match(/^\/([a-z0-9_-]*)(\s|$)/i);
+  if (m === null) {
+    // 不以 / 开头：关闭面板，清除锁定（除非此前已锁定并带空格——保留到发送）
+    slashOpen.value = false;
+    if (!activeSkill.value) return;
+    return;
+  }
+  const namePart = m[1] ?? '';
+  if (m[2] === ' ' || (namePart && activeSkill.value?.name === namePart.toLowerCase())) {
+    // 已锁定（/name + 空格 后继续输入问题）
+    slashOpen.value = false;
+    return;
+  }
+  activeSkill.value = null;
+  slashFilter.value = namePart;
+  slashIndex.value = 0;
+  slashOpen.value = skills.value.length > 0;
+}
+
+function pickSkill(sk: AiSkill) {
+  activeSkill.value = sk;
+  input.value = `/${sk.name} `;
+  slashOpen.value = false;
+  const box = document.querySelector<HTMLTextAreaElement>(
+    'textarea[placeholder*="输入问题"]',
+  );
+  box?.focus();
+}
+
+function slashKeydown(e: KeyboardEvent) {
+  if (!slashOpen.value || slashMatches.value.length === 0) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    slashIndex.value = (slashIndex.value + 1) % slashMatches.value.length;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    slashIndex.value =
+      (slashIndex.value - 1 + slashMatches.value.length) % slashMatches.value.length;
+  } else if (e.key === 'Tab' || (e.key === 'Enter' && activeSkill.value === null)) {
+    // 面板开着 Tab/Enter = 选中高亮项（不发送）
+    e.preventDefault();
+    pickSkill(slashMatches.value[slashIndex.value]!);
+  } else if (e.key === 'Escape') {
+    slashOpen.value = false;
+  }
 }
 
 // ---- 附件上传（多模态）：≤3 个、单文件 ≤4MB；图片随消息 image_url、文本类并入正文 ----
@@ -225,7 +316,7 @@ function renderMd(md: string): string {
 }
 
 onMounted(async () => {
-  await loadConversations();
+  await Promise.all([loadConversations(), loadSkills()]);
 });
 </script>
 
@@ -346,6 +437,9 @@ onMounted(async () => {
                 v-html="renderMd(m.content || (m.streaming ? '' : '（无内容）'))"
               ></div>
               <template v-else>
+                <a-tag v-if="m.skill" class="mb-1" color="purple">
+                  ⚡ /{{ m.skill }}
+                </a-tag>
                 <div v-if="m.attachments?.length" class="mb-1.5 flex flex-wrap gap-1.5">
                   <img
                     v-for="(a, ai) in m.attachments"
@@ -400,13 +494,43 @@ onMounted(async () => {
                 <PaperClipOutlined />
               </a-button>
             </a-upload>
-            <a-textarea
-              v-model:value="input"
-              :auto-size="{ minRows: 1, maxRows: 6 }"
-              :disabled="streaming"
-              placeholder="输入问题，Enter 发送（Shift+Enter 换行）"
-              @keydown.enter.exact.prevent="send"
-            />
+            <div class="relative min-w-0 flex-1">
+              <!-- / 命令面板（Claude Code 风格） -->
+              <div
+                v-if="slashOpen"
+                class="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded-md border border-border bg-popover shadow-lg"
+              >
+                <div class="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+                  技能命令（↑↓ 选择、Tab/Enter 确认、Esc 关闭）
+                </div>
+                <div
+                  v-for="(sk, i) in slashMatches"
+                  :key="sk.id"
+                  class="cursor-pointer px-3 py-2 text-sm"
+                  :class="i === slashIndex ? 'bg-accent' : ''"
+                  @click="pickSkill(sk)"
+                  @mouseenter="slashIndex = i"
+                >
+                  <span class="font-mono text-primary">/{{ sk.name }}</span>
+                  <span class="ml-2">{{ sk.title }}</span>
+                  <span class="ml-2 text-xs text-muted-foreground">{{
+                    sk.description
+                  }}</span>
+                </div>
+                <div v-if="slashMatches.length === 0" class="px-3 py-2 text-sm text-muted-foreground">
+                  没有匹配的技能
+                </div>
+              </div>
+              <a-textarea
+                v-model:value="input"
+                :auto-size="{ minRows: 1, maxRows: 6 }"
+                :disabled="streaming"
+                placeholder="输入问题，Enter 发送；/ 触发技能命令"
+                @input="onInputForSlash"
+                @keydown="slashKeydown"
+                @keydown.enter.exact.prevent="send"
+              />
+            </div>
             <a-button
               v-if="!streaming"
               :disabled="!input.trim() && pendingFiles.length === 0"

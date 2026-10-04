@@ -37,6 +37,7 @@ export interface ChatMessage {
   id: number;
   packRedactions: number;
   role: 'assistant' | 'user';
+  skill?: null | string;
   status: 'aborted' | 'done' | 'error';
 }
 
@@ -83,6 +84,7 @@ export async function chatStreamApi(
   content: string,
   handlers: ChatStreamHandlers,
   attachments: ChatAttachment[] = [],
+  skill = '',
 ): Promise<() => void> {
   const token = useAccessStore().accessToken;
   const controller = new AbortController();
@@ -95,9 +97,11 @@ export async function chatStreamApi(
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(
-          attachments.length > 0 ? { content, attachments } : { content },
-        ),
+        body: JSON.stringify({
+          content,
+          skill: skill || undefined,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        }),
         signal: controller.signal,
       },
     );

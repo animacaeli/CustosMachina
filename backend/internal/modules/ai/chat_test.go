@@ -127,7 +127,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var deltas atomic.Int32
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", nil, []string{"admin"}, func(string) { deltas.Add(1) })
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) })
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 	}
 	// 会话互斥：进行中重复发消息被拒——串行场景下第二次正常（上轮已结束），
 	// 互斥行为由 handler 层并发触发，此处验证会话可继续
-	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", nil, []string{"dev"}, nil); err != nil {
+	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil); err != nil {
 		t.Fatalf("第二轮对话失败: %v", err)
 	}
 }
@@ -178,7 +178,7 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 	db.Create(conv)
 	db.Create(&ChatMessage{ConversationID: 1, Role: "user", Content: "看下状态"})
 
-	msgs, _, err := svc.buildPrompt(t.Context(), conv, []string{"dev"})
+	msgs, _, err := svc.buildPrompt(t.Context(), conv, []string{"dev"}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 		t.Fatal("dev 视角不应包含 Sensitive 块")
 	}
 	// admin 视角两块都在
-	msgs, _, _ = svc.buildPrompt(t.Context(), conv, []string{"admin"})
+	msgs, _, _ = svc.buildPrompt(t.Context(), conv, []string{"admin"}, nil, "")
 	sysAdmin, _ := msgs[0].Content.(string)
 	if !strings.Contains(sysAdmin, "exec uptime") {
 		t.Fatal("admin 视角应包含 Sensitive 块")
@@ -252,4 +252,64 @@ func TestMessageContentMultimodal(t *testing.T) {
 	if got3 := messageContent(ChatMessage{Content: "plain"}); got3 != "plain" {
 		t.Fatalf("无附件应原样: %v", got3)
 	}
+}
+
+// /命令技能：触发注入、{{q}} 替换、角色 allowlist、越权同不存在语义。
+func TestSkillChat(t *testing.T) {
+	db := chatTestDB(t)
+	if err := db.AutoMigrate(&Skill{}); err != nil {
+		t.Fatal(err)
+	}
+	skills := NewSkillService(db)
+	svc := NewChatService(db, nil)
+	svc.Skills = skills
+
+	in := SaveSkillInput{Name: "troubleshoot", Title: "故障排查", Prompt: "排查：{{q}}，按 runbook 走"}
+	enabled := true
+	in.Enabled = &enabled
+	sk, err := skills.Save(t.Context(), 0, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk.Name != "troubleshoot" {
+		t.Fatalf("技能名异常: %s", sk.Name)
+	}
+	// 大写触发名归一
+	lookup, err := skills.LookupFor(t.Context(), "TroubleShoot", []string{"dev"})
+	if err != nil || lookup.ID != sk.ID {
+		t.Fatalf("触发名归一失败: %v", err)
+	}
+	// 渲染：{{q}} 替换
+	if got := RenderSkill(lookup, "demo 挂了"); !contains(got, "排查：demo 挂了") {
+		t.Fatalf("{{q}} 未替换: %s", got)
+	}
+	// buildPrompt 注入（经 buildPrompt 间接断言 system 含技能块）
+	conv := &Conversation{ID: 9, UserID: 7, Mode: ChatModeGeneral}
+	db.Create(conv)
+	msgs, _, err := svc.buildPrompt(t.Context(), conv, []string{"dev"}, lookup, "demo 挂了")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys, _ := msgs[0].Content.(string)
+	if !contains(sys, "/troubleshoot 显式触发") || !contains(sys, "排查：demo 挂了") {
+		t.Fatalf("技能块未注入 system: %.200s", sys)
+	}
+
+	// 角色 allowlist：限定 ops 后 dev 不可见
+	sk.Roles = "ops"
+	db.Save(sk)
+	if _, err := skills.LookupFor(t.Context(), "troubleshoot", []string{"dev"}); err == nil {
+		t.Fatal("dev 越权触发应拒绝")
+	}
+	if _, err := skills.LookupFor(t.Context(), "troubleshoot", []string{"ops"}); err != nil {
+		t.Fatalf("ops 应可用: %v", err)
+	}
+	// 非法名拒绝
+	if _, err := skills.Save(t.Context(), 0, SaveSkillInput{Name: "Bad Name", Title: "x", Prompt: "p"}); err == nil {
+		t.Fatal("非法技能名应拒绝")
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && strings.Contains(s, sub)
 }
