@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +58,7 @@ type projectRow struct {
 	ID                uint
 	Name              string
 	RepoPath          string
+	Provider          string
 	ComposePath       string
 	TestSlotCount     int
 	SlotGraceDays     int
@@ -78,7 +76,7 @@ func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
 // viewToRow projects.View → 本模块投影。
 func viewToRow(v *projects.View) *projectRow {
 	return &projectRow{
-		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, ComposePath: v.ComposePath,
+		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, Provider: v.Provider, ComposePath: v.ComposePath,
 		TestSlotCount: v.TestSlotCount, SlotGraceDays: v.SlotGraceDays,
 		NotifyTestGroupID: v.NotifyTestGroupID,
 	}
@@ -344,30 +342,14 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 	s.notifySlot(ctx, p, slot, fmt.Sprintf("%s：槽位 %s（分支 %s，触发 %s）\n%s", verb, slot.SlotName, slot.Branch, source, truncate(output, 400)))
 }
 
+// fetchCompose 按分支取部署描述（gitea/gitee 按 provider 路由）。
 func (s *Service) fetchCompose(ctx context.Context, p *projectRow, branch string) (string, error) {
 	if p.ComposePath == "" {
 		return "", errors.New("项目未配置部署描述文件路径")
 	}
-	raw, base, err := s.ci.RawClient(ctx, p.RepoPath)
+	body, err := s.ci.RawFile(ctx, p.Provider, p.RepoPath, p.ComposePath, branch)
 	if err != nil {
-		return "", err
-	}
-	url := fmt.Sprintf("%s/api/v1/repos/%s/raw/%s?ref=%s", base, p.RepoPath, strings.TrimPrefix(p.ComposePath, "/"), branch)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := raw.HTTPDo(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("取部署描述失败：gitea %d（分支 %s）", resp.StatusCode, branch)
+		return "", fmt.Errorf("取部署描述失败（分支 %s）: %w", branch, err)
 	}
 	return string(body), nil
 }

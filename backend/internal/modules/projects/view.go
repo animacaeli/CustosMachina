@@ -15,6 +15,8 @@ type View struct {
 	ID                  uint
 	Name                string
 	RepoPath            string
+	Provider            string
+	CIJob               string
 	ComposePath         string
 	DefaultBranch       string
 	TestSlotCount       int
@@ -29,7 +31,7 @@ type View struct {
 var ErrViewNotFound = errors.New("项目不存在")
 
 // viewCols 显式列出投影列（而非 SELECT *）：消费方与测试只需保证这些列存在。
-const viewCols = "id, name, repo_path, compose_path, default_branch, test_slot_count, slot_grace_days, traffic_cap, notify_on_success, notify_prod_group_id, notify_canary_group_id, notify_test_group_id"
+const viewCols = "id, name, repo_path, provider, ci_job, compose_path, default_branch, test_slot_count, slot_grace_days, traffic_cap, notify_on_success, notify_prod_group_id, notify_canary_group_id, notify_test_group_id"
 
 // ViewByID 按主键取投影。
 func (s *Service) ViewByID(ctx context.Context, id uint) (*View, error) {

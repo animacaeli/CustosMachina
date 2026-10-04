@@ -114,6 +114,8 @@ export interface Project {
   notifyOnSuccess: boolean;
   notifyProdGroupId: null | number;
   notifyTestGroupId: null | number;
+  provider: 'gitea' | 'gitee';
+  ciJob: string;
   repoPath: string;
   repoUrl: string;
   slotGraceDays: number;
@@ -130,6 +132,8 @@ export interface SaveProjectInput {
   notifyOnSuccess?: boolean;
   notifyProdGroupId?: null | number;
   notifyTestGroupId?: null | number;
+  provider?: 'gitea' | 'gitee';
+  ciJob?: string; // provider=gitee 时的 Jenkins job 名
   repoPath: string;
   repoUrl: string;
   slotGraceDays?: number;

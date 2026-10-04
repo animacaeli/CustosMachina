@@ -69,8 +69,10 @@ watch(
 // ---- 配置表单 ----
 const config = reactive({
   ciToken: '',
+  ciJob: '',
   composePath: '',
   defaultBranch: 'main',
+  provider: 'gitea' as 'gitea' | 'gitee',
   notifyOnSuccess: false,
   notifyProdGroupId: undefined as number | undefined,
   notifyTestGroupId: undefined as number | undefined,
@@ -88,6 +90,8 @@ function fillConfig(p: Project) {
   config.composePath = p.composePath;
   config.defaultBranch = p.defaultBranch;
   config.ciToken = '';
+  config.provider = p.provider || 'gitea';
+  config.ciJob = p.ciJob || '';
   config.notifyProdGroupId =
     p.notifyProdGroupId ?? p.notifyCanaryGroupId ?? undefined;
   config.notifyTestGroupId = p.notifyTestGroupId ?? undefined;
@@ -110,6 +114,8 @@ async function saveConfig() {
   try {
     project.value = await updateProjectApi(props.projectId, {
       ciToken: config.ciToken || undefined,
+      ciJob: config.ciJob,
+      provider: config.provider,
       composePath: config.composePath,
       defaultBranch: config.defaultBranch,
       name: project.value.name,
@@ -200,8 +206,29 @@ function close() {
                 style="width: 240px"
               />
             </a-form-item>
+            <a-form-item label="Git 托管" extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins">
+              <a-radio-group
+                v-model:value="config.provider"
+                :options="[
+                  { label: 'gitea', value: 'gitea' },
+                  { label: 'gitee', value: 'gitee' },
+                ]"
+                option-type="button"
+              />
+            </a-form-item>
             <a-form-item
-              label="项目级 gitea token（可选）"
+              v-if="config.provider === 'gitee'"
+              label="Jenkins job 名"
+              extra="job 需参数化构建（参数名 TAG=git 标签），由 gitee Webhook 驱动"
+            >
+              <a-input
+                v-model:value="config.ciJob"
+                placeholder="demo-build"
+                style="width: 320px"
+              />
+            </a-form-item>
+            <a-form-item
+              label="项目级访问 token（可选）"
               extra="留空使用平台全局凭据；填写后覆盖（仅保存时提交）"
             >
               <a-input-password

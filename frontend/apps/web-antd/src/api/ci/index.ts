@@ -1,11 +1,19 @@
 import { requestClient } from '#/api/request';
 
-/** CI 全局配置（token/secret 只回传存在性） */
+/** CI 全局配置（token/secret 只回传存在性；gitee/Jenkins 为 P6-M8 新增段） */
 export interface CiGlobal {
   giteaBaseUrl: string;
   hasGiteaToken: boolean;
   webhookHint: string;
   webhookSet: boolean;
+  giteeBaseUrl: string;
+  hasGiteeToken: boolean;
+  giteeWebhookHint: string;
+  giteeWebhookSet: boolean;
+  jenkinsUrl: string;
+  jenkinsUser: string;
+  hasJenkinsToken: boolean;
+  jenkinsJobHint: string;
 }
 
 export async function getCiGlobalApi() {
@@ -16,6 +24,12 @@ export async function saveCiGlobalApi(data: {
   giteaBaseUrl?: string;
   giteaToken?: string;
   webhookSecret?: string;
+  giteeBaseUrl?: string;
+  giteeToken?: string;
+  giteeWebhookPass?: string;
+  jenkinsUrl?: string;
+  jenkinsUser?: string;
+  jenkinsToken?: string;
 }) {
   return requestClient.put<CiGlobal>('/ci/global', data);
 }
@@ -70,6 +84,7 @@ export interface Build {
   id: number;
   logUrl: string;
   projectId: number;
+  provider: 'gitea' | 'gitee';
   sha: string;
   source: string;
   status: 'failed' | 'pending' | 'running' | 'success';
@@ -87,7 +102,7 @@ export async function getBuildsApi(params: {
   });
 }
 
-/** 内嵌拉取某次构建的 gitea 流水线日志（纯文本） */
+/** 内嵌拉取某次构建的流水线日志（gitea Actions / Jenkins console，纯文本） */
 export async function getBuildLogApi(buildId: number) {
   return requestClient.get<string>(`/builds/${buildId}/log`);
 }

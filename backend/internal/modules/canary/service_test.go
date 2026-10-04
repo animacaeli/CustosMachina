@@ -36,6 +36,8 @@ type projectTbl struct {
 	ID                  uint `gorm:"primarykey"`
 	Name                string
 	RepoPath            string
+	Provider            string
+	CIJob               string
 	ComposePath         string
 	DefaultBranch       string
 	TestSlotCount       int

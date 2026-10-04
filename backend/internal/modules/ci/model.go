@@ -1,7 +1,7 @@
-// Package ci CI 集成（第三阶段 M2）：gitea + runner 单场景。
-// 交互面收窄为"观测 + 触发"：构建由项目仓库里的公共流水线驱动（监听标签推送），
-// 平台接收 webhook 落构建记录、轮询 commit status 更新状态、失败/成功推通知。
-// 多 CI 平台（Jenkins/GHA）是后续扩展：CiProvider 小接口只注册 gitea 实现。
+// Package ci CI 集成（第三阶段 M2 起步为 gitea 单场景，P6-M8 起 GitProvider/CIProvider 多生态）。
+// 交互面收窄为"观测 + 触发"：构建由项目仓库里的流水线驱动（监听标签推送），
+// 平台接收 webhook 落构建记录、按 provider 轮询状态、失败/成功推通知。
+// 已接组合：gitea+gitea Actions、gitee+Jenkins；适配器见 provider.go。
 package ci
 
 import (
@@ -29,13 +29,14 @@ type Build struct {
 	ProjectID    uint           `gorm:"index:idx_proj_env;not null" json:"projectId"`
 	EnvType      string         `gorm:"index:idx_proj_env;size:16;not null" json:"envType"` // prod | canary | test
 	Tag          string         `gorm:"size:128;not null" json:"tag"`
-	SHA          string         `gorm:"size:64" json:"sha"` // 标签指向的提交（轮询 commit status 用）
+	SHA          string         `gorm:"size:64" json:"sha"`                             // 标签指向的提交（轮询 commit status 用）
+	Provider     string         `gorm:"size:16;not null;default:gitea" json:"provider"` // gitea | gitee（CI 引擎由映射决定，历史构建不随项目配置漂移）
 	Builder      string         `gorm:"size:64" json:"builder"`
 	Source       string         `gorm:"size:16;not null" json:"source"`
-	Status       string         `gorm:"size:16;not null;default=pending" json:"status"`
+	Status       string         `gorm:"size:16;not null;default:pending" json:"status"`
 	DurationSecs int            `json:"durationSecs"`                    // 终态时计算；running 期由前端用 started_at 差值显示
 	FailCount    int            `gorm:"not null;default:0" json:"-"`     // 防抖：连续 N 次非 success 才标 failed（commit status 在 job 切换间隙可能短暂回落）
-	LogURL       string         `gorm:"size:512" json:"logUrl"`          // gitea Actions 页面（外链兜底）
+	LogURL       string         `gorm:"size:512" json:"logUrl"`          // CI Web UI 页面（外链兜底）
 	Notified     bool           `gorm:"not null;default:false" json:"-"` // 终态是否已通知
 	StartedAt    time.Time      `json:"startedAt"`
 	CreatedAt    time.Time      `json:"createdAt"`
@@ -61,11 +62,18 @@ type Registry struct {
 func (Registry) TableName() string { return "registries" }
 
 // GlobalConfig 平台全局 CI 配置（单行表 id=1）。
+// P6-M8 扩展：gitee（git 托管）与 Jenkins（CI 引擎）独立凭证——各生态账号体系不同，不共用。
 type GlobalConfig struct {
 	ID            uint      `gorm:"primarykey" json:"id"`
 	GiteaBaseURL  string    `gorm:"size:255" json:"giteaBaseUrl"`
 	GiteaToken    string    `gorm:"type:text" json:"-"` // 加密后的全局 token
-	WebhookSecret string    `gorm:"size:128" json:"-"`  // webhook HMAC 密钥（明文存取，仅服务端校验用）
+	WebhookSecret string    `gorm:"size:128" json:"-"`  // gitea webhook HMAC 密钥（明文存取，仅服务端校验用）
+	GiteeBaseURL  string    `gorm:"size:255" json:"giteeBaseUrl"`
+	GiteeToken    string    `gorm:"type:text" json:"-"`          // 加密后的 gitee 全局 token
+	GiteeWebhook  string    `gorm:"size:128" json:"-"`           // gitee webhook 密码（X-Gitee-Token 明文比对）
+	JenkinsURL    string    `gorm:"size:255" json:"jenkinsUrl"`  // 如 https://jenkins.example.com
+	JenkinsUser   string    `gorm:"size:128" json:"jenkinsUser"` // API token 所属账号
+	JenkinsToken  string    `gorm:"type:text" json:"-"`          // 加密后的 Jenkins API token
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }

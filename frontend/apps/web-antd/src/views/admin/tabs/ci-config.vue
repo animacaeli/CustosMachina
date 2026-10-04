@@ -16,23 +16,51 @@ import {
 
 defineOptions({ name: 'AdminCiConfig' });
 
-// ---- gitea 全局配置 ----
+// ---- git 托管与 CI 引擎全局配置（gitea / gitee+Jenkins 双段，一次保存） ----
 const globalForm = reactive({
   giteaBaseUrl: '',
   giteaToken: '',
   webhookSecret: '',
+  giteeBaseUrl: '',
+  giteeToken: '',
+  giteeWebhookPass: '',
+  jenkinsUrl: '',
+  jenkinsUser: '',
+  jenkinsToken: '',
 });
-const globalState = reactive({ hasToken: false, webhookSet: false, hint: '' });
+const globalState = reactive({
+  hasGiteaToken: false,
+  webhookSet: false,
+  giteaHint: '',
+  hasGiteeToken: false,
+  giteeWebhookSet: false,
+  giteeHint: '',
+  hasJenkinsToken: false,
+  jenkinsHint: '',
+});
 const globalSaving = ref(false);
 
 async function loadGlobal() {
   const g = await getCiGlobalApi();
   globalForm.giteaBaseUrl = g.giteaBaseUrl;
+  globalForm.giteeBaseUrl = g.giteeBaseUrl;
+  globalForm.jenkinsUrl = g.jenkinsUrl;
+  globalForm.jenkinsUser = g.jenkinsUser;
   globalForm.giteaToken = '';
   globalForm.webhookSecret = '';
-  globalState.hasToken = g.hasGiteaToken;
-  globalState.webhookSet = g.webhookSet;
-  globalState.hint = g.webhookHint;
+  globalForm.giteeToken = '';
+  globalForm.giteeWebhookPass = '';
+  globalForm.jenkinsToken = '';
+  Object.assign(globalState, {
+    hasGiteaToken: g.hasGiteaToken,
+    webhookSet: g.webhookSet,
+    giteaHint: g.webhookHint,
+    hasGiteeToken: g.hasGiteeToken,
+    giteeWebhookSet: g.giteeWebhookSet,
+    giteeHint: g.giteeWebhookHint,
+    hasJenkinsToken: g.hasJenkinsToken,
+    jenkinsHint: g.jenkinsJobHint,
+  });
 }
 
 async function saveGlobal() {
@@ -42,10 +70,21 @@ async function saveGlobal() {
       giteaBaseUrl: globalForm.giteaBaseUrl,
       giteaToken: globalForm.giteaToken || undefined,
       webhookSecret: globalForm.webhookSecret || undefined,
+      giteeBaseUrl: globalForm.giteeBaseUrl,
+      giteeToken: globalForm.giteeToken || undefined,
+      giteeWebhookPass: globalForm.giteeWebhookPass || undefined,
+      jenkinsUrl: globalForm.jenkinsUrl,
+      jenkinsUser: globalForm.jenkinsUser,
+      jenkinsToken: globalForm.jenkinsToken || undefined,
     });
-    globalState.hasToken = g.hasGiteaToken;
+    globalState.hasGiteaToken = g.hasGiteaToken;
     globalState.webhookSet = g.webhookSet;
-    globalState.hint = g.webhookHint;
+    globalState.giteaHint = g.webhookHint;
+    globalState.hasGiteeToken = g.hasGiteeToken;
+    globalState.giteeWebhookSet = g.giteeWebhookSet;
+    globalState.giteeHint = g.giteeWebhookHint;
+    globalState.hasJenkinsToken = g.hasJenkinsToken;
+    globalState.jenkinsHint = g.jenkinsJobHint;
     message.success('CI 全局配置已保存');
   } finally {
     globalSaving.value = false;
@@ -137,10 +176,10 @@ onMounted(async () => {
 <template>
   <div>
     <a-form layout="vertical" class="max-w-2xl" style="padding-top: 0.5rem">
-      <a-divider orientation="left" plain>gitea 全局配置</a-divider>
+      <a-divider orientation="left" plain>gitea（CI = gitea Actions）</a-divider>
       <a-form-item
         label="gitea 地址"
-        extra="如 https://gitea.internal（不带末尾斜杠）"
+        extra="如 https://gitea.internal（不带末尾斜杠）；不用 gitea 可留空"
       >
         <a-input
           v-model:value="globalForm.giteaBaseUrl"
@@ -153,12 +192,12 @@ onMounted(async () => {
       >
         <a-input-password
           v-model:value="globalForm.giteaToken"
-          :placeholder="globalState.hasToken ? '已配置，留空保留' : '未配置'"
+          :placeholder="globalState.hasGiteaToken ? '已配置，留空保留' : '未配置'"
         />
       </a-form-item>
       <a-form-item
         label="Webhook 密钥"
-        :extra="`${globalState.hint}；密钥与 gitea 仓库 Webhook 配置保持一致`"
+        :extra="`${globalState.giteaHint}；密钥与 gitea 仓库 Webhook 配置保持一致`"
       >
         <a-input-password
           v-model:value="globalForm.webhookSecret"
@@ -166,6 +205,61 @@ onMounted(async () => {
             globalState.webhookSet
               ? '已配置，留空保留'
               : '未配置（webhook 将被拒绝）'
+          "
+        />
+      </a-form-item>
+
+      <a-divider orientation="left" plain>
+        gitee + Jenkins（P6-M8 新增）
+      </a-divider>
+      <a-form-item label="gitee 地址" extra="公有云填 https://gitee.com">
+        <a-input
+          v-model:value="globalForm.giteeBaseUrl"
+          placeholder="https://gitee.com"
+        />
+      </a-form-item>
+      <a-form-item
+        label="gitee 私人令牌"
+        extra="留空保留；gitee → 设置 → 私人令牌（需仓库读取权限）"
+      >
+        <a-input-password
+          v-model:value="globalForm.giteeToken"
+          :placeholder="globalState.hasGiteeToken ? '已配置，留空保留' : '未配置'"
+        />
+      </a-form-item>
+      <a-form-item
+        label="Webhook 密码"
+        :extra="`${globalState.giteeHint}；密码与 gitee 仓库 WebHooks 配置保持一致`"
+      >
+        <a-input-password
+          v-model:value="globalForm.giteeWebhookPass"
+          :placeholder="
+            globalState.giteeWebhookSet
+              ? '已配置，留空保留'
+              : '未配置（webhook 将被拒绝）'
+          "
+        />
+      </a-form-item>
+      <a-form-item
+        label="Jenkins 地址"
+        extra="gitee 项目的 CI 引擎；构建由 gitee 仓库 Webhook 驱动 Jenkins，平台只读状态与日志"
+      >
+        <a-input
+          v-model:value="globalForm.jenkinsUrl"
+          placeholder="https://jenkins.example.com"
+        />
+      </a-form-item>
+      <a-form-item label="Jenkins 账号" extra="使用 API token 的账号">
+        <a-input v-model:value="globalForm.jenkinsUser" placeholder="admin" />
+      </a-form-item>
+      <a-form-item
+        label="Jenkins API token"
+        :extra="`留空保留。${globalState.jenkinsHint}`"
+      >
+        <a-input-password
+          v-model:value="globalForm.jenkinsToken"
+          :placeholder="
+            globalState.hasJenkinsToken ? '已配置，留空保留' : '未配置'
           "
         />
       </a-form-item>

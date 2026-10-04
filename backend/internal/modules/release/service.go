@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -88,6 +86,8 @@ type projectRow struct {
 	ID                  uint
 	Name                string
 	RepoPath            string
+	Provider            string
+	CIJob               string
 	ComposePath         string
 	NotifyProdGroupID   *uint
 	NotifyCanaryGroupID *uint
@@ -100,7 +100,8 @@ func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
 		return nil, errors.New("项目不存在")
 	}
 	return &projectRow{
-		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, ComposePath: v.ComposePath,
+		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, Provider: v.Provider, CIJob: v.CIJob,
+		ComposePath:       v.ComposePath,
 		NotifyProdGroupID: v.NotifyProdGroupID, NotifyCanaryGroupID: v.NotifyCanaryGroupID,
 		NotifyTestGroupID: v.NotifyTestGroupID,
 	}, nil
@@ -206,31 +207,14 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 	return &rel, nil
 }
 
-// fetchCompose 按标签从 gitea raw 接口取部署描述文件。
+// fetchCompose 按标签从 git 托管 raw 接口取部署描述文件（gitea/gitee 按 provider 路由）。
 func (s *Service) fetchCompose(ctx context.Context, p *projectRow, tag string) (string, error) {
 	if p.ComposePath == "" {
 		return "", errors.New("项目未配置部署描述文件路径（项目管理 → 配置）")
 	}
-	client, base, err := s.ci.RawClient(ctx, p.RepoPath)
+	body, err := s.ci.RawFile(ctx, p.Provider, p.RepoPath, p.ComposePath, tag)
 	if err != nil {
-		return "", err
-	}
-	url := fmt.Sprintf("%s/api/v1/repos/%s/raw/%s?ref=%s", base, p.RepoPath, strings.TrimPrefix(p.ComposePath, "/"), tag)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.HTTPDo(req)
-	if err != nil {
-		return "", fmt.Errorf("取部署描述失败: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("取部署描述失败：gitea %d（检查文件路径 %s 与标签 %s）", resp.StatusCode, p.ComposePath, tag)
+		return "", fmt.Errorf("取部署描述失败（检查文件路径 %s 与标签 %s）: %w", p.ComposePath, tag, err)
 	}
 	if len(body) == 0 {
 		return "", fmt.Errorf("标签 %s 的部署描述文件为空", tag)

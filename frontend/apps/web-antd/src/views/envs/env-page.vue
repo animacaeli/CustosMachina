@@ -130,6 +130,7 @@ const editingId = ref<null | number>(null);
 const form = reactive({
   defaultBranch: 'main',
   name: '',
+  provider: 'gitea' as 'gitea' | 'gitee',
   repoPath: '',
   repoUrl: '',
 });
@@ -140,6 +141,7 @@ function openCreate() {
     name: '',
     repoUrl: '',
     repoPath: '',
+    provider: 'gitea',
     defaultBranch: 'main',
   });
   formOpen.value = true;
@@ -151,6 +153,7 @@ function openEdit(p: Project) {
     name: p.name,
     repoUrl: p.repoUrl,
     repoPath: p.repoPath,
+    provider: p.provider || 'gitea',
     defaultBranch: p.defaultBranch,
   });
   formOpen.value = true;
@@ -301,16 +304,30 @@ async function onDelete(p: Project) {
         <a-form-item label="项目名" required>
           <a-input v-model:value="form.name" placeholder="如 custos-machina" />
         </a-form-item>
-        <a-form-item label="仓库地址（gitea）" required>
+        <a-form-item label="Git 托管" extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins">
+          <a-radio-group
+            v-model:value="form.provider"
+            :options="[
+              { label: 'gitea', value: 'gitea' },
+              { label: 'gitee', value: 'gitee' },
+            ]"
+            option-type="button"
+          />
+        </a-form-item>
+        <a-form-item label="仓库地址" required>
           <a-input
             v-model:value="form.repoUrl"
-            placeholder="https://gitea.internal/org/repo"
+            :placeholder="
+              form.provider === 'gitee'
+                ? 'https://gitee.com/org/repo'
+                : 'https://gitea.internal/org/repo'
+            "
           />
         </a-form-item>
         <a-form-item
           label="仓库路径"
           required
-          extra="org/repo，调 gitea API 用"
+          extra="org/repo，调 git 托管 API 用"
         >
           <a-input v-model:value="form.repoPath" placeholder="org/repo" />
         </a-form-item>

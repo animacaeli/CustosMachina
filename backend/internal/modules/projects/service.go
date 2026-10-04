@@ -39,7 +39,9 @@ type SaveProjectInput struct {
 	Name          string `json:"name" binding:"required,max=64"`
 	RepoURL       string `json:"repoUrl" binding:"required,url,max=255"`
 	RepoPath      string `json:"repoPath" binding:"required,max=255"`
-	CIToken       string `json:"ciToken" binding:"omitempty,max=512"` // 留空保留
+	Provider      string `json:"provider" binding:"omitempty,oneof=gitea gitee"` // 空 = gitea（存量默认）
+	CIJob         string `json:"ciJob" binding:"omitempty,max=128"`              // provider=gitee 时的 Jenkins job 名
+	CIToken       string `json:"ciToken" binding:"omitempty,max=512"`            // 留空保留
 	ComposePath   string `json:"composePath" binding:"omitempty,max=255"`
 	DefaultBranch string `json:"defaultBranch" binding:"omitempty,max=128"`
 	// 指针语义：Create nil = 不设置（通知群）/默认 true（成功通知）；Update nil = 保留原值
@@ -89,6 +91,7 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	}
 	p := Project{
 		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
+		Provider: defaultStr(in.Provider, "gitea"), CIJob: in.CIJob,
 		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"),
 		NotifyProdGroupID:   in.NotifyProdGroupID,
 		NotifyCanaryGroupID: in.NotifyProdGroupID, // 灰度通知群恒等于正式（不分离）
@@ -119,6 +122,10 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 		return nil, err
 	}
 	p.Name, p.RepoURL, p.RepoPath = in.Name, in.RepoURL, in.RepoPath
+	if in.Provider != "" {
+		p.Provider = in.Provider
+	}
+	p.CIJob = in.CIJob
 	p.ComposePath = in.ComposePath
 	if in.DefaultBranch != "" {
 		p.DefaultBranch = in.DefaultBranch

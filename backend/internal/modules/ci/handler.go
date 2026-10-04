@@ -2,25 +2,33 @@ package ci
 
 import (
 	"io"
+	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
 )
 
 type Handler struct {
 	svc *Service
+	// webhook 公开接口限速（P5 M1 纪律：新公开接口一律带限速审视；gitea 端点为同批补齐）
+	webhookLimiter *ratelimit.Window
 }
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc, webhookLimiter: ratelimit.NewWindow(120, time.Minute)}
+}
 
 func (h *Handler) Name() string { return "ci" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
-	// webhook 回调：gitea 服务器调用，不能走 JWT；靠 HMAC 签名鉴权
+	// webhook 回调：git 托管服务器调用，不能走 JWT；靠各家签名/token 头鉴权 + 限速
 	r.Public.POST("/ci/webhook/gitea", h.webhookGitea)
+	r.Public.POST("/ci/webhook/gitee", h.webhookGitee)
 
 	g := r.Authed.Group("/ci")
 	{
@@ -45,19 +53,43 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	}
 }
 
+func (h *Handler) allowWebhook(c *gin.Context) bool {
+	if !h.webhookLimiter.Allow(c.ClientIP()) {
+		httpx.Fail(c, http.StatusTooManyRequests, 429, "请求过于频繁，请稍后再试")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) webhookGitea(c *gin.Context) {
+	if !h.allowWebhook(c) {
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
 	if err != nil {
 		httpx.FailBadRequest(c, "读取 body 失败")
 		return
 	}
-	if err := h.svc.VerifySignature(c.Request.Context(), body, c.GetHeader("X-Gitea-Signature")); err != nil {
+	b, err := h.svc.HandleGiteaPush(c.Request.Context(), body, c.GetHeader("X-Gitea-Signature"))
+	if err != nil {
 		httpx.FailUnauthorized(c, err.Error())
 		return
 	}
-	b, err := h.svc.HandleTagPush(c.Request.Context(), body)
+	httpx.OK(c, gin.H{"buildId": optionalID(b)})
+}
+
+func (h *Handler) webhookGitee(c *gin.Context) {
+	if !h.allowWebhook(c) {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
 	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
+		httpx.FailBadRequest(c, "读取 body 失败")
+		return
+	}
+	b, err := h.svc.HandleGiteePush(c.Request.Context(), body, c.GetHeader("X-Gitee-Token"))
+	if err != nil {
+		httpx.FailUnauthorized(c, err.Error())
 		return
 	}
 	httpx.OK(c, gin.H{"buildId": optionalID(b)})

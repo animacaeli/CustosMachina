@@ -2,13 +2,8 @@ package ci
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -35,10 +30,18 @@ func toOut(r Registry) RegistryOut {
 }
 
 type GlobalConfigOut struct {
-	GiteaBaseURL  string `json:"giteaBaseUrl"`
-	HasGiteaToken bool   `json:"hasGiteaToken"`
-	WebhookSet    bool   `json:"webhookSet"`
-	WebhookHint   string `json:"webhookHint"` // 给前端展示的回调地址模板
+	GiteaBaseURL     string `json:"giteaBaseUrl"`
+	HasGiteaToken    bool   `json:"hasGiteaToken"`
+	WebhookSet       bool   `json:"webhookSet"`
+	WebhookHint      string `json:"webhookHint"` // 给前端展示的回调地址模板
+	GiteeBaseURL     string `json:"giteeBaseUrl"`
+	HasGiteeToken    bool   `json:"hasGiteeToken"`
+	GiteeWebhookSet  bool   `json:"giteeWebhookSet"`
+	GiteeWebhookHint string `json:"giteeWebhookHint"`
+	JenkinsURL       string `json:"jenkinsUrl"`
+	JenkinsUser      string `json:"jenkinsUser"`
+	HasJenkinsToken  bool   `json:"hasJenkinsToken"`
+	JenkinsJobHint   string `json:"jenkinsJobHint"`
 }
 
 type Service struct {
@@ -58,24 +61,41 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher, ntfy *notify.Service, proj p
 // ---- 全局配置 ----
 
 type SaveGlobalInput struct {
-	GiteaBaseURL  string `json:"giteaBaseUrl" binding:"omitempty,url,max=255"`
-	GiteaToken    string `json:"giteaToken" binding:"omitempty,max=512"`    // 留空保留
-	WebhookSecret string `json:"webhookSecret" binding:"omitempty,max=128"` // 留空保留
+	GiteaBaseURL     string `json:"giteaBaseUrl" binding:"omitempty,url,max=255"`
+	GiteaToken       string `json:"giteaToken" binding:"omitempty,max=512"`    // 留空保留
+	WebhookSecret    string `json:"webhookSecret" binding:"omitempty,max=128"` // 留空保留
+	GiteeBaseURL     string `json:"giteeBaseUrl" binding:"omitempty,url,max=255"`
+	GiteeToken       string `json:"giteeToken" binding:"omitempty,max=512"`
+	GiteeWebhookPass string `json:"giteeWebhookPass" binding:"omitempty,max=128"`
+	JenkinsURL       string `json:"jenkinsUrl" binding:"omitempty,url,max=255"`
+	JenkinsUser      string `json:"jenkinsUser" binding:"omitempty,max=128"`
+	JenkinsToken     string `json:"jenkinsToken" binding:"omitempty,max=512"`
 }
 
 func (s *Service) GetGlobal(ctx context.Context) (*GlobalConfigOut, error) {
 	var g GlobalConfig
 	if err := s.db.WithContext(ctx).First(&g, 1).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return &GlobalConfigOut{WebhookHint: "配置 base url 后生成"}, nil
+			return &GlobalConfigOut{
+				WebhookHint:      "配置 base url 后生成",
+				GiteeWebhookHint: "配置 base url 后生成",
+			}, nil
 		}
 		return nil, err
 	}
 	return &GlobalConfigOut{
-		GiteaBaseURL:  g.GiteaBaseURL,
-		HasGiteaToken: g.GiteaToken != "",
-		WebhookSet:    g.WebhookSecret != "",
-		WebhookHint:   "在 gitea 仓库 Settings → Webhooks 添加：POST <平台地址>/api/ci/webhook/gitea（X-Gitea-Signature）",
+		GiteaBaseURL:     g.GiteaBaseURL,
+		HasGiteaToken:    g.GiteaToken != "",
+		WebhookSet:       g.WebhookSecret != "",
+		WebhookHint:      "在 gitea 仓库 Settings → Webhooks 添加：POST <平台地址>/api/ci/webhook/gitea（X-Gitea-Signature）",
+		GiteeBaseURL:     g.GiteeBaseURL,
+		HasGiteeToken:    g.GiteeToken != "",
+		GiteeWebhookSet:  g.GiteeWebhook != "",
+		GiteeWebhookHint: "在 gitee 仓库 管理 → WebHooks 添加：POST <平台地址>/api/ci/webhook/gitee（密码 = X-Gitee-Token）",
+		JenkinsURL:       g.JenkinsURL,
+		JenkinsUser:      g.JenkinsUser,
+		HasJenkinsToken:  g.JenkinsToken != "",
+		JenkinsJobHint:   "Jenkins job 需参数化构建（参数名 TAG=git 标签），job 名在项目管理里逐项目配置",
 	}, nil
 }
 
@@ -88,15 +108,41 @@ func (s *Service) SaveGlobal(ctx context.Context, in SaveGlobalInput) (*GlobalCo
 	if in.GiteaBaseURL != "" {
 		g.GiteaBaseURL = strings.TrimRight(in.GiteaBaseURL, "/")
 	}
-	if in.GiteaToken != "" {
-		enc, err := s.encrypt(in.GiteaToken)
+	if in.GiteeBaseURL != "" {
+		g.GiteeBaseURL = strings.TrimRight(in.GiteeBaseURL, "/")
+	}
+	if in.JenkinsURL != "" {
+		g.JenkinsURL = strings.TrimRight(in.JenkinsURL, "/")
+	}
+	g.JenkinsUser = in.JenkinsUser
+	encIfSet := func(v string, dst *string) error {
+		if v == "" {
+			return nil
+		}
+		enc, err := s.encrypt(v)
 		if err != nil {
+			return err
+		}
+		*dst = enc
+		return nil
+	}
+	for _, e := range []struct {
+		v   string
+		dst *string
+	}{
+		{in.GiteaToken, &g.GiteaToken},
+		{in.GiteeToken, &g.GiteeToken},
+		{in.JenkinsToken, &g.JenkinsToken},
+	} {
+		if err := encIfSet(e.v, e.dst); err != nil {
 			return nil, err
 		}
-		g.GiteaToken = enc
 	}
 	if in.WebhookSecret != "" {
 		g.WebhookSecret = in.WebhookSecret
+	}
+	if in.GiteeWebhookPass != "" {
+		g.GiteeWebhook = in.GiteeWebhookPass
 	}
 	if err := s.db.WithContext(ctx).Save(&g).Error; err != nil {
 		return nil, err
@@ -128,7 +174,9 @@ func (s *Service) projectToken(repoPath string) (string, error) {
 	return dec, nil
 }
 
-func (s *Service) clientFor(ctx context.Context, repoPath string) (*giteaClient, error) {
+// giteaFor 构造 gitea 客户端（*giteaClient 同时实现 GitProvider 与 CIProvider，
+// 供两个工厂复用——接口到接口无法隐式转换，须保留具体类型）。
+func (s *Service) giteaFor(ctx context.Context, repoPath string) (*giteaClient, error) {
 	g, err := s.loadGlobal(ctx)
 	if err != nil {
 		return nil, err
@@ -142,7 +190,47 @@ func (s *Service) clientFor(ctx context.Context, repoPath string) (*giteaClient,
 	if pt, _ := s.projectToken(repoPath); pt != "" {
 		token = pt
 	}
-	return newGiteaClient(g.GiteaBaseURL, token), nil
+	return newGiteaClient(g.GiteaBaseURL, token, g.WebhookSecret), nil
+}
+
+// gitFor 按 provider 构造 git 托管适配器（项目级 token 优先、全局兜底）。
+func (s *Service) gitFor(ctx context.Context, provider, repoPath string) (GitProvider, error) {
+	if provider == ProviderGitee {
+		g, err := s.loadGlobal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		token := ""
+		if g.GiteeToken != "" && s.cipher != nil {
+			if dec, err := s.cipher.Decrypt(g.GiteeToken); err == nil {
+				token = dec
+			}
+		}
+		if pt, _ := s.projectToken(repoPath); pt != "" {
+			token = pt
+		}
+		return newGiteeClient(g.GiteeBaseURL, token, g.GiteeWebhook), nil
+	}
+	return s.giteaFor(ctx, repoPath)
+}
+
+// ciFor 按 git provider 映射的 CI 引擎构造适配器（映射见 provider.go ciEngineFor）。
+func (s *Service) ciFor(ctx context.Context, provider, repoPath string) (CIProvider, error) {
+	if ciEngineFor(provider) == "jenkins" {
+		g, err := s.loadGlobal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		token := ""
+		if g.JenkinsToken != "" && s.cipher != nil {
+			if dec, err := s.cipher.Decrypt(g.JenkinsToken); err == nil {
+				token = dec
+			}
+		}
+		return newJenkinsClient(g.JenkinsURL, g.JenkinsUser, token), nil
+	}
+	// gitea Actions 与 gitea git 托管同一客户端实现（双接口）
+	return s.giteaFor(ctx, repoPath)
 }
 
 // ---- Registry CRUD ----
@@ -201,71 +289,56 @@ func (s *Service) DeleteRegistry(ctx context.Context, id uint) error {
 	return nil
 }
 
-// ---- webhook ----
+// ---- webhook（端点定 provider，签名校验后归一到 handlePush）----
 
-// giteaTagPayload gitea push webhook（POST body）的感兴趣字段。
-// 注意：gitea 实际 payload 用 repository（GitHub 风格），repo 字段不存在——
-// 两个都解析兼容（2026-09-26 真机联调发现）。
-type giteaTagPayload struct {
-	Ref   string `json:"ref"` // refs/tags/v1.0.0 或 refs/heads/<branch>
-	After string `json:"after"`
-	Repo  struct {
-		FullName string `json:"full_name"`
-		HTMLURL  string `json:"html_url"`
-	} `json:"repo"`
-	Repository struct {
-		FullName string `json:"full_name"`
-		HTMLURL  string `json:"html_url"`
-	} `json:"repository"`
-	Sender struct {
-		Login string `json:"login"`
-	} `json:"sender"`
-}
-
-// repoPath 优先 repository（gitea 实际字段），repo 兜底。
-func (p *giteaTagPayload) repoPath() string {
-	if p.Repository.FullName != "" {
-		return p.Repository.FullName
-	}
-	return p.Repo.FullName
-}
-
-// VerifySignature X-Gitea-Signature = HMAC-SHA256(body, secret)。
-func (s *Service) VerifySignature(ctx context.Context, body []byte, sigHex string) error {
+// HandleGiteaPush 校验 X-Gitea-Signature（HMAC-SHA256）并处理推送。
+func (s *Service) HandleGiteaPush(ctx context.Context, body []byte, sigHex string) (*Build, error) {
 	g, err := s.loadGlobal(ctx)
 	if err != nil {
-		return errors.New("CI 全局配置未初始化，拒绝 webhook")
+		return nil, errors.New("CI 全局配置未初始化，拒绝 webhook")
 	}
-	if g.WebhookSecret == "" {
-		return errors.New("webhook 密钥未配置，拒绝回调")
+	gc := newGiteaClient(g.GiteaBaseURL, "", g.WebhookSecret)
+	if err := gc.VerifyWebhook(body, sigHex); err != nil {
+		return nil, err
 	}
-	mac := hmac.New(sha256.New, []byte(g.WebhookSecret))
-	mac.Write(body)
-	want := hex.EncodeToString(mac.Sum(nil))
-	if !hmac.Equal([]byte(want), []byte(sigHex)) {
-		return errors.New("webhook 签名校验失败")
+	ev, err := gc.ParsePush(body)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return s.handlePush(ctx, ev)
 }
 
-// HandleTagPush 处理标签推送：匹配已登记项目则落构建记录。
-func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error) {
-	var p giteaTagPayload
-	if err := json.Unmarshal(body, &p); err != nil {
-		return nil, fmt.Errorf("webhook payload 解析失败: %w", err)
+// HandleGiteePush 校验 X-Gitee-Token（密码常量时间比较）并处理推送。
+func (s *Service) HandleGiteePush(ctx context.Context, body []byte, token string) (*Build, error) {
+	g, err := s.loadGlobal(ctx)
+	if err != nil {
+		return nil, errors.New("CI 全局配置未初始化，拒绝 webhook")
 	}
-	if !strings.HasPrefix(p.Ref, "refs/tags/") {
+	gc := newGiteeClient(g.GiteeBaseURL, "", g.GiteeWebhook)
+	if err := gc.VerifyWebhook(body, token); err != nil {
+		return nil, err
+	}
+	ev, err := gc.ParsePush(body)
+	if err != nil {
+		return nil, err
+	}
+	return s.handlePush(ctx, ev)
+}
+
+// handlePush 推送事件公共处理：分支推送交给槽位钩子，标签推送匹配项目落构建记录。
+func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error) {
+	if !strings.HasPrefix(ev.Ref, "refs/tags/") {
 		// 分支推送：交给槽位自动链路（未注入 hook 则忽略）
-		if s.BranchPushHook != nil && strings.HasPrefix(p.Ref, "refs/heads/") {
-			s.BranchPushHook(context.WithoutCancel(ctx), p.repoPath(),
-				strings.TrimPrefix(p.Ref, "refs/heads/"), p.Sender.Login)
+		if s.BranchPushHook != nil && strings.HasPrefix(ev.Ref, "refs/heads/") {
+			s.BranchPushHook(context.WithoutCancel(ctx), ev.RepoPath,
+				strings.TrimPrefix(ev.Ref, "refs/heads/"), ev.Pusher)
 		}
 		return nil, nil
 	}
-	tag := strings.TrimPrefix(p.Ref, "refs/tags/")
+	tag := strings.TrimPrefix(ev.Ref, "refs/tags/")
 
 	// 项目匹配（精确优先/大小写兜底由 Reader 内聚）
-	projView, err := s.proj.ViewByRepoPath(ctx, p.repoPath())
+	projView, err := s.proj.ViewByRepoPath(ctx, ev.RepoPath)
 	if err != nil {
 		return nil, nil // 非平台登记的项目，忽略
 	}
@@ -292,8 +365,8 @@ func (s *Service) HandleTagPush(ctx context.Context, body []byte) (*Build, error
 	}
 
 	b := Build{
-		ProjectID: proj.ID, EnvType: env, Tag: tag, SHA: p.After,
-		Builder: s.mapBuilder(p.Sender.Login), Source: SourceTag, Status: BuildPending,
+		ProjectID: proj.ID, EnvType: env, Tag: tag, SHA: ev.SHA,
+		Provider: ev.Provider, Builder: s.mapBuilder(ev.Pusher), Source: SourceTag, Status: BuildPending,
 	}
 	if err := s.db.WithContext(ctx).Create(&b).Error; err != nil {
 		return nil, err
@@ -395,25 +468,25 @@ func (s *Service) PollPending(ctx context.Context) error {
 			NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
 			NotifyTestGroupID: pv.NotifyTestGroupID,
 		}
-		client, err := s.clientFor(ctx, proj.RepoPath)
+		cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
 		if err != nil {
-			logger.Warnf("[ci] 构建 %d 无法建 gitea 客户端: %v", b.ID, err)
+			logger.Warnf("[ci] 构建 %d 无法建 CI 客户端（provider=%s）: %v", b.ID, b.Provider, err)
 			continue
 		}
-		st, err := client.commitStatus(ctx, proj.RepoPath, b.SHA)
+		st, err := cip.Status(ctx, BuildRef{RepoPath: pv.RepoPath, SHA: b.SHA, Tag: b.Tag, Job: pv.CIJob})
 		if err != nil {
-			// 提交在 gitea 上不存在（假 SHA/仓库改写）——永久错误，终止轮询标失败；
-			// 其余（网络等瞬时错误）保留 pending 下轮再试
+			// 提交/job 在对端不存在（假 SHA/仓库改写/job 删了）——永久错误，终止轮询标失败；
+			// 其余（Jenkins 不可达等瞬时错误）保留 pending 下轮再试
 			if strings.Contains(err.Error(), "404") {
 				s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
 					Update("status", BuildFailed)
-				logger.Warnf("[ci] 构建 %d 的提交在 gitea 不存在，标记失败", b.ID)
+				logger.Warnf("[ci] 构建 %d 的目标在 CI 侧不存在，标记失败", b.ID)
 				continue
 			}
 			logger.Warnf("[ci] 构建 %d 状态轮询失败: %v", b.ID, err)
 			continue
 		}
-		newStatus := mapStatus(st.State)
+		newStatus := st
 		if newStatus == b.Status {
 			continue
 		}
@@ -434,7 +507,9 @@ func (s *Service) PollPending(ctx context.Context) error {
 		}
 		updates := map[string]any{"status": newStatus}
 		if b.LogURL == "" {
-			updates["log_url"] = client.actionsURL(proj.RepoPath)
+			if gp, err := s.gitFor(ctx, b.Provider, pv.RepoPath); err == nil {
+				updates["log_url"] = gp.ActionsURL(pv.RepoPath)
+			}
 		}
 		// 耗时：pending→running 记开始时间；终态按 started_at 差值计算
 		if b.Status == BuildPending && newStatus == BuildRunning {
@@ -529,33 +604,22 @@ func envLabel(env string) string {
 	return env
 }
 
-// RawGitea 暴露带鉴权的 HTTP 客户端与 base 地址（release 模块取 raw 文件用）。
-type RawGitea struct {
-	Client *giteaClient
-}
-
-func (r *RawGitea) HTTPDo(req *http.Request) (*http.Response, error) {
-	return r.Client.HTTPDo(req)
-}
-
-func (r *RawGitea) BaseURL() string { return r.Client.BaseURL() }
-
-// RawClient 项目级 token 优先、全局兜底。
-func (s *Service) RawClient(ctx context.Context, repoPath string) (*RawGitea, string, error) {
-	c, err := s.clientFor(ctx, repoPath)
+// RawFile 按标签/分支取仓库文件（release 取部署描述用；provider 决定 gitea/gitee 端点与鉴权）。
+func (s *Service) RawFile(ctx context.Context, provider, repoPath, path, ref string) ([]byte, error) {
+	gp, err := s.gitFor(ctx, provider, repoPath)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return &RawGitea{Client: c}, c.BaseURL(), nil
+	return gp.RawFile(ctx, repoPath, path, ref)
 }
 
-// BuildLog 内嵌展示某次构建的 gitea 流水线日志（按 commit SHA 找 run 再拉 job 日志）。
+// BuildLog 展示某次构建的流水线日志（gitea 按 SHA 找 run；Jenkins 按 job+TAG 参数定位）。
 func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 	var b Build
 	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
 		return "", errors.New("构建记录不存在")
 	}
-	// 测试环境槽位构建没有 gitea 流水线（部署由平台直接执行），
+	// 测试环境槽位构建没有外部流水线（部署由平台直接执行），
 	// 其"日志"= 对应的部署输出（releases 按 tag 取最新）
 	if b.EnvType == "test" {
 		var out struct{ Output string }
@@ -573,16 +637,11 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 	if err != nil {
 		return "", errors.New("项目不存在")
 	}
-	repoPath := pv.RepoPath
-	client, err := s.clientFor(ctx, repoPath)
+	cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
 	if err != nil {
 		return "", err
 	}
-	task, err := client.actionTaskBySHA(ctx, repoPath, b.SHA)
-	if err != nil {
-		return "", err
-	}
-	return client.jobLogs(ctx, repoPath, task.ID)
+	return cip.Log(ctx, BuildRef{RepoPath: pv.RepoPath, SHA: b.SHA, Tag: b.Tag, Job: pv.CIJob})
 }
 
 // Branches 供前端表单（M5 槽位占用选分支）。
@@ -591,14 +650,13 @@ func (s *Service) Branches(ctx context.Context, projectID uint) ([]string, error
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	row := struct{ RepoPath string }{RepoPath: pv.RepoPath}
-	client, err := s.clientFor(ctx, row.RepoPath)
+	gp, err := s.gitFor(ctx, pv.Provider, pv.RepoPath)
 	if err != nil {
 		// 未配置全局 CI 不阻断槽位等功能：返回空列表，前端降级为手输分支
 		logger.Warnf("[ci] 拉分支降级为空列表: %v", err)
 		return []string{}, nil
 	}
-	return client.branches(ctx, row.RepoPath)
+	return gp.Branches(ctx, pv.RepoPath)
 }
 
 func (s *Service) encrypt(v string) (string, error) {

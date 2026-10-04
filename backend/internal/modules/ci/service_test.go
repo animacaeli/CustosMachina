@@ -37,6 +37,8 @@ type projectRow struct {
 	ID                  uint `gorm:"primarykey"`
 	Name                string
 	RepoPath            string
+	Provider            string
+	CIJob               string
 	ComposePath         string
 	DefaultBranch       string
 	TestSlotCount       int
@@ -71,28 +73,31 @@ func TestValidCanaryTag(t *testing.T) {
 	}
 }
 
-func TestWebhookSignature(t *testing.T) {
+func giteaSig(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestGiteaWebhook(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil, nil, realReader(db))
 	body := []byte(`{}`)
 	// 未初始化全局配置 → 拒绝
-	if err := svc.VerifySignature(t.Context(), body, ""); err == nil {
+	if _, err := svc.HandleGiteaPush(t.Context(), body, ""); err == nil {
 		t.Fatal("未配置应拒绝")
 	}
 	db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s3cret"})
-
-	mac := hmac.New(sha256.New, []byte("s3cret"))
-	mac.Write(body)
-	good := hex.EncodeToString(mac.Sum(nil))
-	if err := svc.VerifySignature(t.Context(), body, good); err != nil {
-		t.Fatalf("正确签名应通过: %v", err)
+	// 空对象是合法 payload（无 ref）：签名正确则静默忽略
+	if b, err := svc.HandleGiteaPush(t.Context(), body, giteaSig("s3cret", body)); err != nil || b != nil {
+		t.Fatalf("空 payload 应忽略: %v %+v", err, b)
 	}
-	if err := svc.VerifySignature(t.Context(), body, "deadbeef"); err == nil {
+	if _, err := svc.HandleGiteaPush(t.Context(), body, "deadbeef"); err == nil {
 		t.Fatal("错误签名应拒绝")
 	}
 }
 
-func TestHandleTagPush(t *testing.T) {
+func TestHandleGiteaTagPush(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil, nil, realReader(db))
 	db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s"})
@@ -106,28 +111,32 @@ func TestHandleTagPush(t *testing.T) {
 		})
 		return b
 	}
+	push := func(ref string) (*Build, error) {
+		b := payload(ref, "")
+		return svc.HandleGiteaPush(t.Context(), b, giteaSig("s", b))
+	}
 
 	// v 标签 → prod
-	b, err := svc.HandleTagPush(t.Context(), payload("refs/tags/v1.2.3", ""))
-	if err != nil || b == nil || b.EnvType != "prod" || b.Status != BuildPending {
+	b, err := push("refs/tags/v1.2.3")
+	if err != nil || b == nil || b.EnvType != "prod" || b.Status != BuildPending || b.Provider != ProviderGitea {
 		t.Fatalf("v 标签落库异常: %v %+v", err, b)
 	}
 	// canary 标签 → canary
-	b, err = svc.HandleTagPush(t.Context(), payload("refs/tags/canary-20260923-gh", ""))
+	b, err = push("refs/tags/canary-20260923-gh")
 	if err != nil || b == nil || b.EnvType != "canary" {
 		t.Fatalf("canary 标签落库异常: %v %+v", err, b)
 	}
 	// 不合规 canary 标签 → 报错
-	if _, err = svc.HandleTagPush(t.Context(), payload("refs/tags/canary-bad", "")); err == nil {
+	if _, err = push("refs/tags/canary-bad"); err == nil {
 		t.Fatal("不合规 canary 标签应报错")
 	}
 	// 分支 push（非标签）→ 忽略
-	if b, err = svc.HandleTagPush(t.Context(), payload("refs/heads/main", "")); err != nil || b != nil {
+	if b, err = push("refs/heads/main"); err != nil || b != nil {
 		t.Fatalf("分支 push 应忽略: %v %+v", err, b)
 	}
 	// 未登记项目 → 忽略
 	p2, _ := json.Marshal(map[string]any{"ref": "refs/tags/v9", "repo": map[string]any{"full_name": "other/repo"}})
-	if b, err = svc.HandleTagPush(t.Context(), p2); err != nil || b != nil {
+	if b, err = svc.HandleGiteaPush(t.Context(), p2, giteaSig("s", p2)); err != nil || b != nil {
 		t.Fatalf("未登记项目应忽略: %v %+v", err, b)
 	}
 	// 总数：2 条
@@ -135,6 +144,44 @@ func TestHandleTagPush(t *testing.T) {
 	db.Model(&Build{}).Count(&cnt)
 	if cnt != 2 {
 		t.Fatalf("构建记录数 = %d, want 2", cnt)
+	}
+}
+
+func TestHandleGiteeTagPush(t *testing.T) {
+	db := testDB(t)
+	svc := NewService(db, nil, nil, realReader(db))
+	db.Create(&GlobalConfig{ID: 1, GiteeWebhook: "gitee-pass"})
+	db.Create(&projectRow{ID: 2, RepoPath: "org/demo2", Provider: ProviderGitee, CIJob: "demo2-build"})
+
+	payload := func(ref string) []byte {
+		b, _ := json.Marshal(map[string]any{
+			"ref": ref, "after": "def456",
+			"repository": map[string]any{"full_name": "org/demo2"},
+			"pusher":     map[string]any{"name": "someone"},
+		})
+		return b
+	}
+	push := func(ref string) (*Build, error) {
+		return svc.HandleGiteePush(t.Context(), payload(ref), "gitee-pass")
+	}
+
+	// 错误 token 拒绝
+	if _, err := svc.HandleGiteePush(t.Context(), payload("refs/tags/v2.0.0"), "wrong"); err == nil {
+		t.Fatal("错误 X-Gitee-Token 应拒绝")
+	}
+	// v 标签 → prod，Provider=gitee
+	b, err := push("refs/tags/v2.0.0")
+	if err != nil || b == nil || b.EnvType != "prod" || b.Provider != ProviderGitee {
+		t.Fatalf("gitee v 标签落库异常: %v %+v", err, b)
+	}
+	// 分支推送 → 忽略
+	if b, err = push("refs/heads/master"); err != nil || b != nil {
+		t.Fatalf("gitee 分支 push 应忽略: %v %+v", err, b)
+	}
+	var cnt int64
+	db.Model(&Build{}).Count(&cnt)
+	if cnt != 1 {
+		t.Fatalf("构建记录数 = %d, want 1", cnt)
 	}
 }
 
@@ -155,6 +202,7 @@ func TestInputsBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, body := range []string{
 		`{"giteaBaseUrl":"https://g.co","giteaToken":"t","webhookSecret":"s"}`,
+		`{"giteeBaseUrl":"https://gitee.com","giteeToken":"t","giteeWebhookPass":"p","jenkinsUrl":"https://j.co","jenkinsUser":"u","jenkinsToken":"k"}`,
 		`{"name":"ali-cr","type":"aliyun","address":"registry.cn-hangzhou.aliyuncs.com","credential":"u:p"}`,
 	} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
