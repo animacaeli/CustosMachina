@@ -272,7 +272,7 @@ onMounted(async () => {
               <!-- eslint-disable-next-line vue/no-v-html 内容经 renderMd 内 DOMPurify 消毒（AI 输出属不可信输入） -->
               <div
                 v-if="m.role === 'assistant'"
-                class="prose prose-sm max-w-none break-words [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_code]:text-xs"
+                class="prose prose-sm dark:prose-invert max-w-none break-words text-foreground [&_a]:text-primary [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:text-foreground [&_code]:text-xs [&_code]:text-foreground [&_li]:text-foreground [&_p]:text-foreground"
                 v-html="renderMd(m.content || (m.streaming ? '' : '（无内容）'))"
               ></div>
               <template v-else>{{ m.content }}</template>

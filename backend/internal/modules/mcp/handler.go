@@ -30,10 +30,9 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Name() string { return "mcp" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
-	// MCP 协议端点：任意 MCP 客户端（Claude Desktop/IDE）经 Bearer 凭证接入
+	// MCP 协议端点：任意 MCP 客户端（Claude Desktop/IDE）经 Bearer 凭证接入。
+	// Streamable HTTP 为单端点语义（会话经 Mcp-Session-Id 头管理，无 URL 子路径）
 	r.Public.Any("/mcp", h.mcpEndpoint)
-	// Streamable HTTP 的会话子路径（SDK 在同一路径下管理，Any 兜底）
-	r.Public.Any("/mcp/*any", h.mcpEndpoint)
 
 	t := r.Authed.Group("/mcp/tokens")
 	{

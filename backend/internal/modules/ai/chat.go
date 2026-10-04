@@ -314,8 +314,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 		history[i], history[j] = history[j], history[i]
 	}
 
-	sys := "你是 CustosMachina 运维平台的对话助手。回答保持简洁、面向运维场景；"
-	sys += "平台数据仅以下方数据块为准，数据块之外不要臆造平台状态。"
+	sys := "你是 CustosMachina 运维平台的对话助手。回答保持简洁、面向运维场景。"
 
 	redactions := 0
 	if c.Mode == ChatModePlatform {
@@ -329,7 +328,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 		if s.MountSource != nil {
 			if blocks := s.MountSource.MountContext(ctx, m, viewerRoles); len(blocks) > 0 {
 				if pack := BuildContextPack(viewerRoles, blocks); len(pack.Blocks) > 0 {
-					sys += "\n\n" + pack.Render()
+					sys += "\n\n平台数据仅以下方数据块为准，数据块之外不要臆造平台状态。\n\n" + pack.Render()
 					redactions = pack.Redactions
 				}
 			}
