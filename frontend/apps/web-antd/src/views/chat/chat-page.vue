@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import type { ChatAttachment, Conversation, Mount } from '#/api/chat';
+import type { ChatAttachment, Conversation } from '#/api/chat';
 
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
@@ -16,10 +16,7 @@ import {
   deleteConversationApi,
   listConversationsApi,
   listMessagesApi,
-  updateMountApi,
 } from '#/api/chat';
-import { getProjectsApi } from '#/api/projects';
-import { getServerListApi } from '#/api/resources/server';
 
 defineOptions({ name: 'AiChat' });
 
@@ -59,9 +56,6 @@ async function newConversation(mode: 'general' | 'platform') {
   conversations.value.unshift(c);
   currentId.value = c.id;
   messages.value = [];
-  if (mode === 'platform') {
-    mountOpen.value = true;
-  }
 }
 
 async function openConversation(id: number) {
@@ -230,45 +224,8 @@ function renderMd(md: string): string {
   return DOMPurify.sanitize(marked.parse(md) as string);
 }
 
-// ---- 挂载（platform 模式） ----
-const mountOpen = ref(false);
-const projects = ref<{ id: number; name: string }[]>([]);
-const servers = ref<{ host: string; id: number; name: string }[]>([]);
-const mountForm = reactive<Mount>({ hours: 24, projectIds: [], serverIds: [] });
-
-async function loadMountOptions() {
-  const [ps, ss] = await Promise.all([getProjectsApi(), getServerListApi()]);
-  projects.value = ps.map((p: any) => ({ id: p.id, name: p.name }));
-  servers.value = (ss ?? []).map((s: any) => ({
-    host: s.host,
-    id: s.id,
-    name: s.name,
-  }));
-}
-
-function openMount() {
-  const m = current.value?.mount;
-  Object.assign(mountForm, {
-    hours: m?.hours || 24,
-    projectIds: m?.projectIds ? [...m.projectIds] : [],
-    serverIds: m?.serverIds ? [...m.serverIds] : [],
-  });
-  mountOpen.value = true;
-}
-
-async function saveMount() {
-  if (!currentId.value) return;
-  await updateMountApi(currentId.value, { ...mountForm });
-  const c = conversations.value.find((x) => x.id === currentId.value);
-  if (c) {
-    c.mount = JSON.parse(JSON.stringify(mountForm));
-  }
-  mountOpen.value = false;
-  antMessage.success('挂载已更新（下轮对话生效）');
-}
-
 onMounted(async () => {
-  await Promise.all([loadConversations(), loadMountOptions()]);
+  await loadConversations();
 });
 </script>
 
@@ -365,13 +322,6 @@ onMounted(async () => {
             平台上下文
           </a-tag>
           <div class="flex-1"></div>
-          <a-button
-            v-if="current.mode === 'platform'"
-            size="small"
-            @click="openMount"
-          >
-            ⛓ 挂载配置
-          </a-button>
         </div>
 
         <div ref="scrollBody" class="flex-1 space-y-4 overflow-y-auto p-4">
@@ -483,61 +433,5 @@ onMounted(async () => {
         </div>
       </div>
     </div>
-
-    <!-- 挂载配置抽屉 -->
-    <a-drawer
-      v-model:open="mountOpen"
-      title="平台上下文挂载"
-      :width="420"
-    >
-      <a-form layout="vertical">
-        <a-form-item
-          label="挂载项目"
-          extra="对话将携带项目概况、近期构建与发布记录"
-        >
-          <a-select
-            v-model:value="mountForm.projectIds"
-            :options="
-              projects.map((p) => ({ label: p.name, value: p.id }))
-            "
-            mode="multiple"
-            placeholder="不挂载"
-            show-search
-            option-filter-prop="label"
-          />
-        </a-form-item>
-        <a-form-item
-          label="挂载主机"
-          extra="对话将携带主机清单（主机事件仅管理员视角可见）"
-        >
-          <a-select
-            v-model:value="mountForm.serverIds"
-            :options="
-              servers.map((s) => ({
-                label: `${s.name}（${s.host}）`,
-                value: s.id,
-              }))
-            "
-            mode="multiple"
-            placeholder="不挂载"
-            show-search
-            option-filter-prop="label"
-          />
-        </a-form-item>
-        <a-form-item label="时间窗" extra="事件与记录的回溯范围">
-          <a-select
-            v-model:value="mountForm.hours"
-            :options="[
-              { label: '近 6 小时', value: 6 },
-              { label: '近 24 小时', value: 24 },
-              { label: '近 3 天', value: 72 },
-              { label: '近 7 天', value: 168 },
-            ]"
-            style="width: 180px"
-          />
-        </a-form-item>
-        <a-button type="primary" @click="saveMount">保存挂载</a-button>
-      </a-form>
-    </a-drawer>
-  </div>
+</div>
 </template>

@@ -271,21 +271,46 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 			_ = prows.Close()
 		}
 	} else {
+		// 全平台（挂载概念已移除的默认形态）：项目数不多（单实例轻量），
+		// 直接给详情级清单——微服务排查天然跨项目
 		var total int64
 		b.db.WithContext(ctx).Table("projects").Count(&total)
 		prows, err := b.db.WithContext(ctx).Table("projects").
-			Select("id, name, provider").Order("id").Limit(20).Rows()
+			Select("id, name, repo_path, provider, default_branch").
+			Order("id").Limit(20).Rows()
 		if err == nil {
-			fmt.Fprintf(&pb, "平台共 %d 个项目（最多列 20 个；详情可挂载具体项目）：\n", total)
+			fmt.Fprintf(&pb, "平台共 %d 个项目：\n", total)
 			for prows.Next() {
 				var id uint
-				var name, provider string
-				_ = prows.Scan(&id, &name, &provider)
-				fmt.Fprintf(&pb, "#%d %s（%s）\n", id, name, provider)
+				var name, repo, provider, branch string
+				_ = prows.Scan(&id, &name, &repo, &provider, &branch)
+				fmt.Fprintf(&pb, "#%d %s（%s，%s，默认分支 %s）\n", id, name, repo, provider, branch)
 			}
 			_ = prows.Close()
 		}
 	}
+	// 各项目环境部署目标（项目↔主机绑定，"哪个服务部署在哪台主机"的直接答案）
+	{
+		var db_ strings.Builder
+		drows, err := b.db.WithContext(ctx).Table("project_env_targets t").
+			Select("t.project_id, t.env_type, s.name, s.host").
+			Joins("LEFT JOIN servers s ON s.id = t.server_id").
+			Order("t.project_id, t.env_type").Limit(60).Rows()
+		if err == nil {
+			fmt.Fprintf(&db_, "各项目部署目标（项目×环境 → 主机）：\n")
+			for drows.Next() {
+				var pid uint
+				var env, sname, shost string
+				_ = drows.Scan(&pid, &env, &sname, &shost)
+				fmt.Fprintf(&db_, "项目#%d %s → %s（%s）\n", pid, env, sname, shost)
+			}
+			_ = drows.Close()
+		}
+		if db_.Len() > 0 {
+			blocks = append(blocks, ai.ContextBlock{Source: "deploy_targets", Text: db_.String()})
+		}
+	}
+
 	if pb.Len() > 0 {
 		blocks = append(blocks, ai.ContextBlock{Source: "project_overview", Text: pb.String()})
 	}
@@ -360,12 +385,12 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 		blocks = append(blocks, ai.ContextBlock{Source: "server_inventory", Text: sb.String()})
 	}
 
-	// 挂载主机的近期事件（Sensitive：含操作与命令记录；仅挂载时提供）
-	if len(m.ServerIDs) > 0 {
+	// 近期主机事件（Sensitive：含操作与命令记录，仅 admin 可见；全平台最近）
+	{
 		var eb strings.Builder
 		erows, err := b.db.WithContext(ctx).Table("server_events").
 			Select("server_id, type, message, created_at").
-			Where("server_id IN ? AND created_at > ?", m.ServerIDs, since).
+			Where("created_at > ?", since).
 			Order("id DESC").Limit(12).Rows()
 		if err == nil {
 			for erows.Next() {

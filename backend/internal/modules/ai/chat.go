@@ -373,7 +373,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 
 	sys := "你是 CustosMachina 运维平台的对话助手。回答保持简洁、面向运维场景。"
 	sys += "当前为通用对话模式：你不掌握平台的实时数据（项目/主机/告警/任务等）；"
-	sys += "若用户询问这些，明确说明需要新建「平台上下文」会话（可挂载项目/主机）后再问。"
+	sys += "若用户询问这些，明确说明需要新建「平台上下文」会话后再问。"
 
 	redactions := 0
 	if c.Mode == ChatModePlatform {
@@ -384,7 +384,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 		if m.Hours <= 0 {
 			m.Hours = 24
 		}
-		sys += "\n\n当前为平台上下文模式：下方数据块即平台实时数据（未挂载时为全平台概要，挂载后为聚焦详情）。"
+		sys += "\n\n当前为平台上下文模式：下方数据块即平台实时数据（全平台范围：项目/主机/构建/发布/事件/任务）。"
 		sys += "平台数据仅以下方数据块为准，数据块之外不要臆造平台状态，也不要声称自己是通用模式或没有数据。"
 		if s.MountSource != nil {
 			if blocks := s.MountSource.MountContext(ctx, m, viewerRoles); len(blocks) > 0 {
