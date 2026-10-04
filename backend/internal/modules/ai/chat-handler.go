@@ -7,6 +7,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -47,9 +48,17 @@ func viewerRoles(c *gin.Context) []string {
 	return []string{"dev"}
 }
 
+// viewerAdmin 当前用户是否管理员（会话跨用户查看/管理）。
+func viewerAdmin(c *gin.Context) bool {
+	claims := jwt.ClaimsFromContext(c)
+	return claims != nil && claims.IsAdmin
+}
+
 func (h *ChatHandler) listConvs(c *gin.Context) {
 	claims := jwt.ClaimsFromContext(c)
-	list, err := h.svc.ListConversations(c.Request.Context(), claims.UserID)
+	// all=1：仅 admin 生效（全平台会话含归属人；普通用户忽略该参数）
+	all := c.Query("all") == "1" && viewerAdmin(c)
+	list, err := h.svc.ListConversations(c.Request.Context(), claims.UserID, viewerAdmin(c), all)
 	if err != nil {
 		httpx.FailServer(c, err)
 		return
@@ -81,7 +90,7 @@ func (h *ChatHandler) deleteConv(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteConversation(c.Request.Context(), claims.UserID, id); err != nil {
+	if err := h.svc.DeleteConversation(c.Request.Context(), claims.UserID, id, viewerAdmin(c)); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
@@ -114,7 +123,7 @@ func (h *ChatHandler) messages(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list, err := h.svc.Messages(c.Request.Context(), claims.UserID, id)
+	list, err := h.svc.Messages(c.Request.Context(), claims.UserID, id, viewerAdmin(c))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -136,11 +145,19 @@ func (h *ChatHandler) chat(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Content string `json:"content" binding:"required,max=32000"`
+		Content     string           `json:"content" binding:"required,max=32000"`
+		Attachments []ChatAttachment `json:"attachments" binding:"omitempty,max=3,dive"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
+	}
+	// 附件限制：单文件 4MB（base64 后约 5.5M 字符）；超限拒绝整条消息
+	for _, a := range in.Attachments {
+		if len(a.Data) > (4<<20)/3*4 {
+			httpx.FailBadRequest(c, fmt.Sprintf("附件 %s 超过 4MB 限制", a.Name))
+			return
+		}
 	}
 
 	// SSE 头：X-Accel-Buffering 让 nginx 直发不缓冲（否则整流攒完才到前端）
@@ -156,7 +173,7 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	go func() {
 		defer wg.Done()
 		// 生产者：CompleteStream 的 onDelta 投递；断连时靠 reqCtx 解除阻塞
-		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, viewerRoles(c), func(delta string) {
+		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Attachments, viewerRoles(c), func(delta string) {
 			select {
 			case ch <- chatEvent{"delta", gin.H{"text": delta}}:
 			case <-reqCtx.Done():

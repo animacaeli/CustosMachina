@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -126,7 +127,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var deltas atomic.Int32
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", []string{"admin"}, func(string) { deltas.Add(1) })
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", nil, []string{"admin"}, func(string) { deltas.Add(1) })
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -143,12 +144,16 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("消息数 = %d, want 2", cnt)
 	}
 	// 归属校验：他人访问拒绝
-	if _, err := svc.Messages(t.Context(), 8, conv.ID); err == nil {
+	if _, err := svc.Messages(t.Context(), 8, conv.ID, false); err == nil {
 		t.Fatal("非归属用户应被拒绝")
+	}
+	// admin 跨用户可查看
+	if _, err := svc.Messages(t.Context(), 8, conv.ID, true); err != nil {
+		t.Fatalf("admin 跨用户查看应放行: %v", err)
 	}
 	// 会话互斥：进行中重复发消息被拒——串行场景下第二次正常（上轮已结束），
 	// 互斥行为由 handler 层并发触发，此处验证会话可继续
-	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", []string{"dev"}, nil); err != nil {
+	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", nil, []string{"dev"}, nil); err != nil {
 		t.Fatalf("第二轮对话失败: %v", err)
 	}
 }
@@ -177,7 +182,7 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sys := msgs[0].Content
+	sys, _ := msgs[0].Content.(string)
 	if !strings.Contains(sys, "server-1 10.0.0.1") {
 		t.Fatal("非敏感块应保留")
 	}
@@ -186,7 +191,8 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 	}
 	// admin 视角两块都在
 	msgs, _, _ = svc.buildPrompt(t.Context(), conv, []string{"admin"})
-	if !strings.Contains(msgs[0].Content, "exec uptime") {
+	sysAdmin, _ := msgs[0].Content.(string)
+	if !strings.Contains(sysAdmin, "exec uptime") {
 		t.Fatal("admin 视角应包含 Sensitive 块")
 	}
 	_ = gotRoles
@@ -213,5 +219,37 @@ func TestChatPackDLP(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "[REDACTED") {
 		t.Fatal("应出现 REDACTED 标记")
+	}
+}
+
+// 多模态组装：图片附件 → image_url 数组；纯文本附件 → 并入文本仍为 string。
+func TestMessageContentMultimodal(t *testing.T) {
+	img := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	h := ChatMessage{Role: "user", Content: "看这张图",
+		Attachments: fmt.Sprintf(`[{"name":"a.png","mime":"image/png","data":"%s"},{"name":"b.png","mime":"image/png","data":"%s"}]`, img, img)}
+	got, ok := messageContent(h).([]map[string]any)
+	if !ok || len(got) != 3 {
+		t.Fatalf("图片附件应组装 text+2 image_url: %T %v", messageContent(h), got)
+	}
+	if got[0]["type"] != "text" || got[1]["type"] != "image_url" {
+		t.Fatalf("part 类型异常: %v", got)
+	}
+	iu := got[1]["image_url"].(map[string]string)
+	if !strings.HasPrefix(iu["url"], "data:image/png;base64,") {
+		t.Fatalf("data URI 异常: %v", iu["url"])
+	}
+
+	txt := base64.StdEncoding.EncodeToString([]byte("hello attachment"))
+	h2 := ChatMessage{Role: "user", Content: "带文本附件",
+		Attachments: fmt.Sprintf(`[{"name":"n.txt","mime":"text/plain","data":"%s"}]`, txt)}
+	s, ok := h2.Content, false
+	_ = s
+	got2, isStr := messageContent(h2).(string)
+	if !isStr || !strings.Contains(got2, "[附件 n.txt]") || !strings.Contains(got2, "hello attachment") {
+		t.Fatalf("文本附件应并入文本: %v", messageContent(h2))
+	}
+	// 无附件：原样 string
+	if got3 := messageContent(ChatMessage{Content: "plain"}); got3 != "plain" {
+		t.Fatalf("无附件应原样: %v", got3)
 	}
 }

@@ -132,10 +132,12 @@ func (s *Service) Settings(ctx context.Context) SettingsOut {
 	return SettingsOut{Configured: true, Endpoint: cfg.Endpoint, Model: cfg.Model}
 }
 
-// Message OpenAI 兼容消息。
+// Message OpenAI 兼容消息。Content 为 any：普通对话传 string；
+// 多模态（P6-M1 增强）传 OpenAI 数组格式（[{type:text},{type:image_url}]），
+// 序列化后即为上游所需结构，中转层不感知具体模态。
 type Message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
 }
 
 // Complete 调中转层生成一次补全（caller 记用量）。失败返回错误（调用方自行降级）。
@@ -353,7 +355,22 @@ func (s *Service) setting(ctx context.Context, key string) (string, error) {
 func promptChars(ms []Message) int {
 	n := 0
 	for _, m := range ms {
-		n += len(m.Content)
+		switch v := m.Content.(type) {
+		case string:
+			n += len(v)
+		case []any: // 多模态：按各 part 文本粗估
+			for _, p := range v {
+				if pm, ok := p.(map[string]any); ok {
+					if t, ok := pm["text"].(string); ok {
+						n += len(t)
+					} else {
+						n += 1024 // 图片等非文本 part 按固定量计
+					}
+				}
+			}
+		default:
+			n += 256
+		}
 	}
 	return n
 }

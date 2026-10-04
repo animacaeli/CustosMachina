@@ -17,11 +17,20 @@ export interface Conversation {
   id: number;
   mode: ChatMode;
   mount?: Mount | null;
+  owner?: string; // 仅 admin 全量视图返回
   title: string;
   updatedAt: string;
+  userId: number;
+}
+
+export interface ChatAttachment {
+  data: string; // base64
+  mime: string;
+  name: string;
 }
 
 export interface ChatMessage {
+  attachments?: ChatAttachment[] | null;
   content: string;
   conversationId: number;
   createdAt: string;
@@ -31,8 +40,10 @@ export interface ChatMessage {
   status: 'aborted' | 'done' | 'error';
 }
 
-export async function listConversationsApi() {
-  return requestClient.get<Conversation[]>('/ai/chat/conversations');
+export async function listConversationsApi(all = false) {
+  return requestClient.get<Conversation[]>('/ai/chat/conversations', {
+    params: all ? { all: 1 } : undefined,
+  });
 }
 
 export async function createConversationApi(data: {
@@ -71,6 +82,7 @@ export async function chatStreamApi(
   conversationId: number,
   content: string,
   handlers: ChatStreamHandlers,
+  attachments: ChatAttachment[] = [],
 ): Promise<() => void> {
   const token = useAccessStore().accessToken;
   const controller = new AbortController();
@@ -83,7 +95,9 @@ export async function chatStreamApi(
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(
+          attachments.length > 0 ? { content, attachments } : { content },
+        ),
         signal: controller.signal,
       },
     );
