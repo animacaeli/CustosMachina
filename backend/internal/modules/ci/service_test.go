@@ -84,15 +84,18 @@ func TestGiteaWebhook(t *testing.T) {
 	svc := NewService(db, nil, nil, realReader(db))
 	body := []byte(`{}`)
 	// 未初始化全局配置 → 拒绝
-	if _, err := svc.HandleGiteaPush(t.Context(), body, ""); err == nil {
+	if err := svc.VerifyGiteaWebhook(t.Context(), body, ""); err == nil {
 		t.Fatal("未配置应拒绝")
 	}
 	db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s3cret"})
 	// 空对象是合法 payload（无 ref）：签名正确则静默忽略
-	if b, err := svc.HandleGiteaPush(t.Context(), body, giteaSig("s3cret", body)); err != nil || b != nil {
+	if err := svc.VerifyGiteaWebhook(t.Context(), body, giteaSig("s3cret", body)); err != nil {
+		t.Fatalf("正确签名应通过: %v", err)
+	}
+	if b, err := svc.HandleGiteaPush(t.Context(), body); err != nil || b != nil {
 		t.Fatalf("空 payload 应忽略: %v %+v", err, b)
 	}
-	if _, err := svc.HandleGiteaPush(t.Context(), body, "deadbeef"); err == nil {
+	if err := svc.VerifyGiteaWebhook(t.Context(), body, "deadbeef"); err == nil {
 		t.Fatal("错误签名应拒绝")
 	}
 }
@@ -113,7 +116,10 @@ func TestHandleGiteaTagPush(t *testing.T) {
 	}
 	push := func(ref string) (*Build, error) {
 		b := payload(ref, "")
-		return svc.HandleGiteaPush(t.Context(), b, giteaSig("s", b))
+		if err := svc.VerifyGiteaWebhook(t.Context(), b, giteaSig("s", b)); err != nil {
+			return nil, err
+		}
+		return svc.HandleGiteaPush(t.Context(), b)
 	}
 
 	// v 标签 → prod
@@ -136,7 +142,7 @@ func TestHandleGiteaTagPush(t *testing.T) {
 	}
 	// 未登记项目 → 忽略
 	p2, _ := json.Marshal(map[string]any{"ref": "refs/tags/v9", "repo": map[string]any{"full_name": "other/repo"}})
-	if b, err = svc.HandleGiteaPush(t.Context(), p2, giteaSig("s", p2)); err != nil || b != nil {
+	if b, err = svc.HandleGiteaPush(t.Context(), p2); err != nil || b != nil {
 		t.Fatalf("未登记项目应忽略: %v %+v", err, b)
 	}
 	// 总数：2 条
@@ -162,11 +168,11 @@ func TestHandleGiteeTagPush(t *testing.T) {
 		return b
 	}
 	push := func(ref string) (*Build, error) {
-		return svc.HandleGiteePush(t.Context(), payload(ref), "gitee-pass")
+		return svc.HandleGiteePush(t.Context(), payload(ref))
 	}
 
-	// 错误 token 拒绝
-	if _, err := svc.HandleGiteePush(t.Context(), payload("refs/tags/v2.0.0"), "wrong"); err == nil {
+	// 错误 token 拒绝（Verify 段）
+	if err := svc.VerifyGiteeWebhook(t.Context(), "wrong"); err == nil {
 		t.Fatal("错误 X-Gitee-Token 应拒绝")
 	}
 	// v 标签 → prod，Provider=gitee

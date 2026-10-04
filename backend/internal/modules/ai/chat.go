@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -81,7 +82,9 @@ type ChatService struct {
 	relay *Service
 	// MountSource 挂载上下文源（app 层注入；nil = platform 模式无上下文可用）
 	MountSource ChatContextSource
-	// activeConvs 会话级互斥（同一会话同时只允许一个进行中的流）
+	// 会话级互斥（同一会话同时只允许一个进行中的流）；
+	// HTTP 请求并发到达，map 读写必须持锁
+	mu          sync.Mutex
 	activeConvs map[uint]struct{}
 	sem         chan struct{}
 }
@@ -208,17 +211,23 @@ func (s *ChatService) toOut(c *Conversation) *ConversationsOut {
 
 // acquire 会话互斥 + 全局并发闸（两把都拿到才算进入）。
 func (s *ChatService) acquire(convID uint) (release func(), err error) {
+	s.mu.Lock()
 	if _, dup := s.activeConvs[convID]; dup {
+		s.mu.Unlock()
 		return nil, ErrConvActive
 	}
 	select {
 	case s.sem <- struct{}{}:
 	default:
+		s.mu.Unlock()
 		return nil, ErrChatBusy
 	}
 	s.activeConvs[convID] = struct{}{}
+	s.mu.Unlock()
 	return func() {
+		s.mu.Lock()
 		delete(s.activeConvs, convID)
+		s.mu.Unlock()
 		<-s.sem
 	}, nil
 }
@@ -252,7 +261,7 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		return nil, err
 	}
 
-	msgs, err := s.buildPrompt(ctx, c, viewerRoles)
+	msgs, redactions, err := s.buildPrompt(ctx, c, viewerRoles)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +270,6 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	var redactions int
 	var assistant ChatMessage
 	out, rerr := s.relay.CompleteStream(ctx, "chat:"+fmt.Sprint(c.ID), msgs, 0, onDelta)
 
@@ -294,11 +302,12 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 }
 
 // buildPrompt 组 prompt：system（平台身份 + 挂载 pack 围栏）+ 最近 N 轮 + 本轮用户消息。
-func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string) ([]Message, error) {
+// 第二返回值 = pack 的 DLP 拦截数（消息留痕用）。
+func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string) ([]Message, int, error) {
 	var history []ChatMessage
 	if err := s.db.WithContext(ctx).Where("conversation_id = ?", c.ID).
 		Order("id DESC").Limit(chatHistoryRounds * 2).Find(&history).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	// 反转为升序
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
@@ -308,6 +317,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 	sys := "你是 CustosMachina 运维平台的对话助手。回答保持简洁、面向运维场景；"
 	sys += "平台数据仅以下方数据块为准，数据块之外不要臆造平台状态。"
 
+	redactions := 0
 	if c.Mode == ChatModePlatform {
 		var m Mount
 		if c.MountJSON != "" {
@@ -320,6 +330,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 			if blocks := s.MountSource.MountContext(ctx, m, viewerRoles); len(blocks) > 0 {
 				if pack := BuildContextPack(viewerRoles, blocks); len(pack.Blocks) > 0 {
 					sys += "\n\n" + pack.Render()
+					redactions = pack.Redactions
 				}
 			}
 		}
@@ -334,7 +345,7 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 			msgs = append(msgs, Message{Role: h.Role, Content: h.Content})
 		}
 	}
-	return msgs, nil
+	return msgs, redactions, nil
 }
 
 // ChatModels chat 模块自动迁移模型。

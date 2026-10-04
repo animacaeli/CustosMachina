@@ -291,34 +291,45 @@ func (s *Service) DeleteRegistry(ctx context.Context, id uint) error {
 
 // ---- webhook（端点定 provider，签名校验后归一到 handlePush）----
 
-// HandleGiteaPush 校验 X-Gitea-Signature（HMAC-SHA256）并处理推送。
-func (s *Service) HandleGiteaPush(ctx context.Context, body []byte, sigHex string) (*Build, error) {
+// VerifyGiteaWebhook 仅校验 X-Gitea-Signature（HMAC-SHA256）——鉴权失败 401，
+// 与业务错误（400）分层由 handler 体现。
+func (s *Service) VerifyGiteaWebhook(ctx context.Context, body []byte, sigHex string) error {
 	g, err := s.loadGlobal(ctx)
 	if err != nil {
-		return nil, errors.New("CI 全局配置未初始化，拒绝 webhook")
+		return errors.New("CI 全局配置未初始化，拒绝 webhook")
 	}
-	gc := newGiteaClient(g.GiteaBaseURL, "", g.WebhookSecret)
-	if err := gc.VerifyWebhook(body, sigHex); err != nil {
+	return newGiteaClient(g.GiteaBaseURL, "", g.WebhookSecret).VerifyWebhook(body, sigHex)
+}
+
+// HandleGiteaPush 解析并处理 gitea 推送（签名校验由 VerifyGiteaWebhook 先行）。
+func (s *Service) HandleGiteaPush(ctx context.Context, body []byte) (*Build, error) {
+	g, err := s.loadGlobal(ctx)
+	if err != nil {
 		return nil, err
 	}
-	ev, err := gc.ParsePush(body)
+	ev, err := newGiteaClient(g.GiteaBaseURL, "", g.WebhookSecret).ParsePush(body)
 	if err != nil {
 		return nil, err
 	}
 	return s.handlePush(ctx, ev)
 }
 
-// HandleGiteePush 校验 X-Gitee-Token（密码常量时间比较）并处理推送。
-func (s *Service) HandleGiteePush(ctx context.Context, body []byte, token string) (*Build, error) {
+// VerifyGiteeWebhook 仅校验 X-Gitee-Token（密码常量时间比较）。
+func (s *Service) VerifyGiteeWebhook(ctx context.Context, token string) error {
 	g, err := s.loadGlobal(ctx)
 	if err != nil {
-		return nil, errors.New("CI 全局配置未初始化，拒绝 webhook")
+		return errors.New("CI 全局配置未初始化，拒绝 webhook")
 	}
-	gc := newGiteeClient(g.GiteeBaseURL, "", g.GiteeWebhook)
-	if err := gc.VerifyWebhook(body, token); err != nil {
+	return newGiteeClient(g.GiteeBaseURL, "", g.GiteeWebhook).VerifyWebhook(nil, token)
+}
+
+// HandleGiteePush 解析并处理 gitee 推送（签名校验由 VerifyGiteeWebhook 先行）。
+func (s *Service) HandleGiteePush(ctx context.Context, body []byte) (*Build, error) {
+	g, err := s.loadGlobal(ctx)
+	if err != nil {
 		return nil, err
 	}
-	ev, err := gc.ParsePush(body)
+	ev, err := newGiteeClient(g.GiteeBaseURL, "", g.GiteeWebhook).ParsePush(body)
 	if err != nil {
 		return nil, err
 	}

@@ -173,7 +173,7 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 	db.Create(conv)
 	db.Create(&ChatMessage{ConversationID: 1, Role: "user", Content: "看下状态"})
 
-	msgs, err := svc.buildPrompt(t.Context(), conv, []string{"dev"})
+	msgs, _, err := svc.buildPrompt(t.Context(), conv, []string{"dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestChatPlatformPackRoleFilter(t *testing.T) {
 		t.Fatal("dev 视角不应包含 Sensitive 块")
 	}
 	// admin 视角两块都在
-	msgs, _ = svc.buildPrompt(t.Context(), conv, []string{"admin"})
+	msgs, _, _ = svc.buildPrompt(t.Context(), conv, []string{"admin"})
 	if !strings.Contains(msgs[0].Content, "exec uptime") {
 		t.Fatal("admin 视角应包含 Sensitive 块")
 	}

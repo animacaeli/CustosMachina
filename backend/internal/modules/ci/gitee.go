@@ -116,7 +116,7 @@ func (g *giteeClient) ParsePush(body []byte) (*PushEvent, error) {
 
 func (g *giteeClient) Branches(ctx context.Context, repoPath string) ([]string, error) {
 	var bs []branch
-	if err := g.do(ctx, http.MethodGet, "/repos/"+repoPath+"/branches?type=all", &bs); err != nil {
+	if err := g.do(ctx, http.MethodGet, "/repos/"+repoPath+"/branches", &bs); err != nil {
 		return nil, err
 	}
 	names := make([]string, len(bs))

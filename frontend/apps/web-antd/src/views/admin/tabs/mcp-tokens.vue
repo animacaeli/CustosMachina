@@ -29,6 +29,7 @@ const endpointHint = `${window.location.origin}/api/mcp`;
 
 const form = reactive({ name: '', role: 'dev' as 'admin' | 'dev' });
 // 签发结果（明文只显示一次）
+const issuedOpen = ref(false);
 const issued = ref<null | { plaintext: string; role: string }>(null);
 const saving = ref(false);
 
@@ -50,6 +51,7 @@ async function submit() {
   try {
     const out = await createMcpTokenApi({ ...form });
     issued.value = { plaintext: out.plaintext, role: out.role };
+    issuedOpen.value = true;
     createOpen.value = false;
     form.name = '';
     await load();
@@ -126,7 +128,7 @@ onMounted(load);
       </a-form>
     </a-modal>
 
-    <a-modal v-model:open="issued" title="凭证已签发" :footer="null">
+    <a-modal v-model:open="issuedOpen" title="凭证已签发" :footer="null">
       <a-alert class="mb-3" message="明文只显示这一次，请立即复制保存" type="warning" show-icon />
       <div class="flex items-center gap-2">
         <code class="flex-1 overflow-x-auto rounded bg-muted p-2 text-xs">

@@ -70,9 +70,13 @@ func (h *Handler) webhookGitea(c *gin.Context) {
 		httpx.FailBadRequest(c, "读取 body 失败")
 		return
 	}
-	b, err := h.svc.HandleGiteaPush(c.Request.Context(), body, c.GetHeader("X-Gitea-Signature"))
-	if err != nil {
+	if err := h.svc.VerifyGiteaWebhook(c.Request.Context(), body, c.GetHeader("X-Gitea-Signature")); err != nil {
 		httpx.FailUnauthorized(c, err.Error())
+		return
+	}
+	b, err := h.svc.HandleGiteaPush(c.Request.Context(), body)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	httpx.OK(c, gin.H{"buildId": optionalID(b)})
@@ -87,9 +91,13 @@ func (h *Handler) webhookGitee(c *gin.Context) {
 		httpx.FailBadRequest(c, "读取 body 失败")
 		return
 	}
-	b, err := h.svc.HandleGiteePush(c.Request.Context(), body, c.GetHeader("X-Gitee-Token"))
-	if err != nil {
+	if err := h.svc.VerifyGiteeWebhook(c.Request.Context(), c.GetHeader("X-Gitee-Token")); err != nil {
 		httpx.FailUnauthorized(c, err.Error())
+		return
+	}
+	b, err := h.svc.HandleGiteePush(c.Request.Context(), body)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	httpx.OK(c, gin.H{"buildId": optionalID(b)})
