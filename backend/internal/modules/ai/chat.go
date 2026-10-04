@@ -67,9 +67,30 @@ type ChatMessage struct {
 	Content        string    `gorm:"type:text" json:"content"`
 	Attachments    string    `gorm:"type:text" json:"attachments,omitempty"` // JSON []ChatAttachment（user 消息可带）
 	Skill          string    `gorm:"size:64" json:"skill,omitempty"`         // 本轮触发的技能名（/命令）
+	Tools          string    `gorm:"type:text" json:"tools,omitempty"`       // JSON []ToolTrace：本轮 assistant 调过的工具（审计留痕）
 	Status         string    `gorm:"size:16;not null;default:done" json:"status"`
 	PackRedactions int       `gorm:"not null;default:0" json:"packRedactions"` // 本轮 pack 拦截数（留痕）
 	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// ToolTrace 工具调用留痕（ChatMessage.Tools 项）。
+type ToolTrace struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+// ChatTool 对话内工具（function calling）：只读查询投影，与 MCP tools 同源
+// （app 层同一实现适配两种出口）；角色过滤由投影层负责（AI 铁律）。
+type ChatTool struct {
+	Name        string
+	Description string
+	Parameters  map[string]any // JSON Schema（nil = 无参数）
+	Fn          func(ctx context.Context, args map[string]any) (string, error)
+}
+
+// ChatToolSource 对话工具源（app 层注入；nil = 平台模式无工具可用）。
+type ChatToolSource interface {
+	ChatTools(ctx context.Context, viewerRoles []string) []ChatTool
 }
 
 func (ChatMessage) TableName() string { return "ai_messages" }
@@ -93,6 +114,8 @@ type ChatService struct {
 	relay *Service
 	// MountSource 挂载上下文源（app 层注入；nil = platform 模式无上下文可用）
 	MountSource ChatContextSource
+	// ToolSource 对话内工具源（app 层注入；nil = function calling 不可用）
+	ToolSource ChatToolSource
 	// Skills 技能服务（/命令触发；nil = 技能不可用）
 	Skills *SkillService
 	// 会话级互斥（同一会话同时只允许一个进行中的流）；
@@ -298,8 +321,9 @@ func (s *ChatService) acquire(convID uint) (release func(), err error) {
 
 // ChatStream 一轮流式对话：落用户消息（可带附件）→ 组 prompt（挂载 pack + 历史）→ 流式回调。
 // 返回值：assistant 消息落库结果（断连时 err=ErrConvAborted 语义由调用方判定）。
-// onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）。
-func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string)) (*ChatMessage, error) {
+// onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）；
+// onTool 在模型发起工具调用时同步回调（前端展示工具活动；nil = 不关心）。
+func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string), onTool func(name, args string)) (*ChatMessage, error) {
 	if !s.relay.Configured(ctx) {
 		return nil, ErrNotConfigur
 	}
@@ -351,8 +375,42 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	var assistant ChatMessage
-	out, rerr := s.relay.CompleteStream(ctx, "chat:"+fmt.Sprint(c.ID), msgs, 0, onDelta)
+	// 对话内工具（platform 模式，M3 后半）：模型可自动调用平台只读查询，
+	// 结果以 tool 消息回填后续答。工具轮上限防失控循环；模型不支持
+	// function calling（上游 400）时去工具降级重试一次（计划要求的降级路径）。
+	var chatTools []ChatTool
+	var toolDefs []ToolDef
+	if c.Mode == ChatModePlatform && s.ToolSource != nil {
+		chatTools = s.ToolSource.ChatTools(ctx, viewerRoles)
+		for _, t := range chatTools {
+			toolDefs = append(toolDefs, ToolDef{Type: "function", Function: ToolDefFn{
+				Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+			}})
+		}
+	}
+	caller := "chat:" + fmt.Sprint(c.ID)
+	const maxToolRounds = 4
+	var toolsUsed []ToolTrace
+	out, calls, rerr := s.relay.CompleteStream(ctx, caller, msgs, 0, toolDefs, onDelta)
+	if rerr != nil && len(toolDefs) > 0 && strings.Contains(rerr.Error(), "HTTP 400") {
+		toolDefs, chatTools = nil, nil
+		out, calls, rerr = s.relay.CompleteStream(ctx, caller, msgs, 0, nil, onDelta)
+	}
+	for rounds := 0; rerr == nil && len(calls) > 0 && rounds < maxToolRounds; rounds++ {
+		var preamble any
+		if out != "" {
+			preamble = out
+		}
+		msgs = append(msgs, Message{Role: "assistant", Content: preamble, ToolCalls: calls})
+		for _, call := range calls {
+			toolsUsed = append(toolsUsed, ToolTrace{Name: call.Function.Name, Arguments: call.Function.Arguments})
+			if onTool != nil {
+				onTool(call.Function.Name, call.Function.Arguments)
+			}
+			msgs = append(msgs, Message{Role: "tool", ToolCallID: call.ID, Content: execChatTool(ctx, chatTools, call)})
+		}
+		out, calls, rerr = s.relay.CompleteStream(ctx, caller, msgs, 0, toolDefs, onDelta)
+	}
 
 	status := MsgDone
 	switch {
@@ -368,7 +426,12 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		// 无任何产出：不落空 assistant 消息，返回错误
 		return nil, rerr
 	}
-	assistant = ChatMessage{ConversationID: c.ID, Role: "assistant", Content: out, Status: status, PackRedactions: redactions}
+	assistant := ChatMessage{ConversationID: c.ID, Role: "assistant", Content: out, Status: status, PackRedactions: redactions}
+	if len(toolsUsed) > 0 {
+		if b, err := json.Marshal(toolsUsed); err == nil {
+			assistant.Tools = string(b)
+		}
+	}
 	sctx := context.WithoutCancel(ctx)
 	if err := s.db.WithContext(sctx).Create(&assistant).Error; err != nil {
 		logger.Warnf("[ai-chat] 回复落库失败 conv=%d: %v", c.ID, err)
@@ -380,6 +443,31 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 		return &assistant, rerr
 	}
 	return &assistant, nil
+}
+
+// execChatTool 执行一次工具调用：定义不存在/参数不合法/执行出错都以文本结果
+// 回填（模型可据此自行调整或向用户说明），不中断对话流。
+func execChatTool(ctx context.Context, tools []ChatTool, call ToolCall) string {
+	for _, t := range tools {
+		if t.Name != call.Function.Name {
+			continue
+		}
+		args := map[string]any{}
+		if call.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+				return "参数解析失败: " + err.Error()
+			}
+		}
+		out, err := t.Fn(ctx, args)
+		if err != nil {
+			return "工具执行失败: " + err.Error()
+		}
+		if len(out) > 8000 {
+			out = out[:8000] + "\n...（结果过长截断）"
+		}
+		return out
+	}
+	return "未知工具: " + call.Function.Name
 }
 
 // buildPrompt 组 prompt：system（平台身份 + 挂载 pack 围栏）+ 最近 N 轮 + 本轮用户消息。

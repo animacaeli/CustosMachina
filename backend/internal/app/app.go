@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -137,8 +138,10 @@ func ProvideModules(
 	// 桥接（P6 M3）：/命令技能注入
 	aiChatSvc.Skills = aiSkillSvc
 	seedSkills(db)
-	// 桥接（P6 M2）：MCP tools 数据投影 + 上下文包供给（与对话同一套角色过滤）
-	mcpSvc.SetSources(&toolsBridge{db: db, res: resSvc}, aiChatSvc.MountSource)
+	// 桥接（P6 M2/M3）：MCP tools 与对话内 function calling 同一套数据投影
+	tools := &toolsBridge{db: db, res: resSvc}
+	aiChatSvc.ToolSource = tools
+	mcpSvc.SetSources(tools, aiChatSvc.MountSource)
 	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH}
 }
 
@@ -512,6 +515,112 @@ func (b *toolsBridge) ListContainers(ctx context.Context, serverID uint) ([]map[
 		return nil, err
 	}
 	return out, nil
+}
+
+// ChatTools 对话内工具（P6-M3 function calling）：与 MCP tools 同源同实现，
+// 六类只读投影 + JSON Schema 出参。角色语义同 MCP 侧（list 系两角色一致，
+// 敏感过滤在数据源头——投影列本就不含敏感字段）。
+func (b *toolsBridge) ChatTools(ctx context.Context, viewerRoles []string) []ai.ChatTool {
+	intProp := func(desc string) map[string]any {
+		return map[string]any{"type": "integer", "description": desc}
+	}
+	schema := func(props map[string]any) map[string]any {
+		return map[string]any{"type": "object", "properties": props}
+	}
+	listSchema := func() map[string]any {
+		return schema(map[string]any{
+			"project_id": intProp("可选，按项目 ID 过滤（0 = 不过滤）"),
+			"server_id":  intProp("可选，主机 ID"),
+			"limit":      intProp("返回条数上限，默认 10，最大 50"),
+		})
+	}
+	rowsToText := func(rows []map[string]any) string {
+		if len(rows) == 0 {
+			return "（无记录）"
+		}
+		var sb strings.Builder
+		for _, r := range rows {
+			fmt.Fprintf(&sb, "%v\n", r)
+		}
+		return sb.String()
+	}
+	lim := func(n any) int {
+		v, _ := n.(float64)
+		i := int(v)
+		if i <= 0 {
+			return 10
+		}
+		if i > 50 {
+			return 50
+		}
+		return i
+	}
+	argUint := func(args map[string]any, key string) uint {
+		v, _ := args[key].(float64)
+		if v <= 0 {
+			return 0
+		}
+		return uint(v)
+	}
+
+	return []ai.ChatTool{
+		{
+			Name:        "list_servers",
+			Description: "列出平台管理的主机（名称/地址/状态）",
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return rowsToText(b.ListServers(ctx)), nil
+			},
+		},
+		{
+			Name:        "list_projects",
+			Description: "列出平台项目（名称/仓库/git 托管）",
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return rowsToText(b.ListProjects(ctx)), nil
+			},
+		},
+		{
+			Name:        "list_builds",
+			Description: "近期 CI 构建记录（可按项目过滤）",
+			Parameters:  listSchema(),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return rowsToText(b.ListBuilds(ctx, argUint(args, "project_id"), lim(args["limit"]))), nil
+			},
+		},
+		{
+			Name:        "list_releases",
+			Description: "近期发布记录（可按项目过滤）",
+			Parameters:  listSchema(),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return rowsToText(b.ListReleases(ctx, argUint(args, "project_id"), lim(args["limit"]))), nil
+			},
+		},
+		{
+			Name:        "list_cron_runs",
+			Description: "近期定时任务执行记录（含失败摘要）",
+			Parameters:  listSchema(),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return rowsToText(b.ListCronRuns(ctx, lim(args["limit"]))), nil
+			},
+		},
+		{
+			Name:        "list_containers",
+			Description: "列出指定主机上的容器（名称/镜像/状态）",
+			Parameters: schema(map[string]any{
+				"server_id": intProp("必填，主机 ID"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				sid := argUint(args, "server_id")
+				if sid == 0 {
+					return "", errors.New("server_id 必填")
+				}
+				rows, err := b.ListContainers(ctx, sid)
+				if err != nil {
+					return "", err
+				}
+				return rowsToText(rows), nil
+			},
+		},
+	}
 }
 
 // seedSkills 内置技能种子（P6 M3）：首次启动种入；管理员可在后台改删。

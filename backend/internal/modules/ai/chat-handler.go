@@ -244,10 +244,15 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// 生产者：CompleteStream 的 onDelta 投递；断连时靠 reqCtx 解除阻塞
+		// 生产者：CompleteStream 的 onDelta/onTool 投递；断连时靠 reqCtx 解除阻塞
 		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Skill, in.Attachments, viewerRoles(c), func(delta string) {
 			select {
 			case ch <- chatEvent{"delta", gin.H{"text": delta}}:
+			case <-reqCtx.Done():
+			}
+		}, func(name, args string) {
+			select {
+			case ch <- chatEvent{"tool", gin.H{"name": name, "args": args}}:
 			case <-reqCtx.Done():
 			}
 		})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,9 +75,9 @@ func TestCompleteStreamAggregates(t *testing.T) {
 	s := relayFor(t, db, srv.URL+"/v1")
 
 	var calls atomic.Int32
-	out, err := s.CompleteStream(t.Context(), "chat:test", []Message{
+	out, _, err := s.CompleteStream(t.Context(), "chat:test", []Message{
 		{Role: "user", Content: "打个招呼"},
-	}, 0, func(string) { calls.Add(1) })
+	}, 0, nil, func(string) { calls.Add(1) })
 	if err != nil {
 		t.Fatalf("流式补全失败: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestCompleteStreamCanceledKeepsPartial(t *testing.T) {
 		time.Sleep(120 * time.Millisecond) // 收到 a、b 后取消
 		cancel()
 	}()
-	out, err := s.CompleteStream(ctx, "chat:cancel", []Message{{Role: "user", Content: "hi"}}, 0, nil)
+	out, _, err := s.CompleteStream(ctx, "chat:cancel", []Message{{Role: "user", Content: "hi"}}, 0, nil, nil)
 	if err == nil {
 		t.Fatal("取消应返回错误")
 	}
@@ -127,7 +128,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var deltas atomic.Int32
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) })
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) }, nil)
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 	}
 	// 会话互斥：进行中重复发消息被拒——串行场景下第二次正常（上轮已结束），
 	// 互斥行为由 handler 层并发触发，此处验证会话可继续
-	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil); err != nil {
+	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil, nil); err != nil {
 		t.Fatalf("第二轮对话失败: %v", err)
 	}
 }
@@ -409,5 +410,127 @@ func TestChatListSkipsEmpty(t *testing.T) {
 	alist, err := svc.ListConversations(t.Context(), 8, true, 7, true)
 	if err != nil || len(alist) != 1 || alist[0].ID != filled.ID {
 		t.Fatalf("admin 留档视图也应过滤空会话: %v %+v", err, alist)
+	}
+}
+
+// fakeRelayTools 模拟支持 function calling 的上游：
+// 第一轮（无 tool 消息）返回 tool_calls 流；之后轮返回文本流。
+// 返回的 tool 名固定 list_builds，参数 {"project_id":2,"limit":3}。
+func fakeRelayTools(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		hasToolMsg := strings.Contains(string(body), `"role":"tool"`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		if !hasToolMsg {
+			// tool_calls 增量分三块：id+name / arguments 片段 / finish_reason
+			chunks := []string{
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"list_bu","arguments":""}}]}}]}`,
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"ilds","arguments":"{\"project_id\":2,"}}]}}]}`,
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"limit\":3}"}}]}}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			}
+			for _, c := range chunks {
+				fmt.Fprintf(w, "data: %s\n\n", c)
+				fl.Flush()
+			}
+		} else {
+			for _, wd := range []string{"构建", "正常"} {
+				fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", wd)
+				fl.Flush()
+			}
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		fl.Flush()
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+type fakeToolSource struct{}
+
+func (fakeToolSource) ChatTools(context.Context, []string) []ChatTool {
+	return []ChatTool{{
+		Name:        "list_builds",
+		Description: "近期 CI 构建记录",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"project_id": map[string]any{"type": "integer"},
+			"limit":      map[string]any{"type": "integer"},
+		}},
+		Fn: func(_ context.Context, args map[string]any) (string, error) {
+			if int(args["project_id"].(float64)) != 2 {
+				return "", fmt.Errorf("project_id 解析异常: %v", args["project_id"])
+			}
+			return "build v1 ok", nil
+		},
+	}}
+}
+
+// 对话内工具调用端到端：模型发起 tool_calls（流式增量聚合）→ 平台执行 →
+// tool 消息回填 → 最终回答流式返回；工具留痕落 ChatMessage.Tools。
+func TestChatFunctionCalling(t *testing.T) {
+	db := chatTestDB(t)
+	srv := fakeRelayTools(t)
+	s := relayFor(t, db, srv.URL+"/v1")
+	svc := NewChatService(db, s)
+	svc.ToolSource = fakeToolSource{}
+
+	conv, err := svc.CreateConversation(t.Context(), 7, ChatModePlatform, nil)
+	if err != nil {
+		t.Fatalf("建会话失败: %v", err)
+	}
+	var toolEvents []string
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, func(name, args string) {
+		toolEvents = append(toolEvents, name+" "+args)
+	})
+	if err != nil {
+		t.Fatalf("对话失败: %v", err)
+	}
+	if msg.Content != "构建正常" {
+		t.Fatalf("最终回复 = %q", msg.Content)
+	}
+	if len(toolEvents) != 1 || toolEvents[0] != `list_builds {"project_id":2,"limit":3}` {
+		t.Fatalf("onTool 事件异常: %v", toolEvents)
+	}
+	if !contains(msg.Tools, "list_builds") || !contains(msg.Tools, "project_id") {
+		t.Fatalf("工具留痕异常: %q", msg.Tools)
+	}
+}
+
+// 模型不支持 function calling：上游对 tools 请求回 400，chat 降级去工具重试成功。
+func TestChatToolDegradation(t *testing.T) {
+	db := chatTestDB(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"tools"`) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"tools is not supported"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"降级回答\"}}]}\n\ndata: [DONE]\n\n")
+		fl.Flush()
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := relayFor(t, db, srv.URL+"/v1")
+	svc := NewChatService(db, s)
+	svc.ToolSource = fakeToolSource{}
+
+	conv, err := svc.CreateConversation(t.Context(), 7, ChatModePlatform, nil)
+	if err != nil {
+		t.Fatalf("建会话失败: %v", err)
+	}
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, nil)
+	if err != nil {
+		t.Fatalf("降级对话失败: %v", err)
+	}
+	if msg.Content != "降级回答" || msg.Tools != "" {
+		t.Fatalf("降级回复异常: %q tools=%q", msg.Content, msg.Tools)
 	}
 }

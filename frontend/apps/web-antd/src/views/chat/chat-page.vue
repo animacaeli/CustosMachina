@@ -102,6 +102,7 @@ async function openConversation(id: number) {
     ...m,
     attachments: m.attachments ?? undefined,
     skill: m.skill ?? undefined,
+    tools: m.tools ?? undefined,
   }));
   await nextTick();
   scrollToBottom();
@@ -129,6 +130,7 @@ interface UiMessage {
   skill?: string;
   status?: string;
   streaming?: boolean;
+  tools?: { arguments?: string; name: string }[]; // assistant 调过的平台工具
 }
 const messages = ref<UiMessage[]>([]);
 const input = ref('');
@@ -200,6 +202,11 @@ async function send() {
     {
     onDelta: (text) => {
       assistant!.content += text;
+      scrollToBottom();
+    },
+    onTool: (name, args) => {
+      // function calling：模型调用平台工具，气泡顶部实时追加工具标签
+      assistant!.tools = [...(assistant!.tools ?? []), { arguments: args, name }];
       scrollToBottom();
     },
     onDone: (status) => {
@@ -546,6 +553,21 @@ onMounted(async () => {
                   : 'border border-border bg-background'
               "
             >
+              <!-- function calling：assistant 本轮调过的平台工具（实时 + 历史） -->
+              <div
+                v-if="m.role === 'assistant' && m.tools?.length"
+                class="mb-1.5 flex flex-wrap gap-1"
+              >
+                <a-tag
+                  v-for="(t, ti) in m.tools"
+                  :key="ti"
+                  class="font-mono"
+                  color="cyan"
+                  :title="t.arguments"
+                >
+                  🔧 {{ t.name }}
+                </a-tag>
+              </div>
               <!-- eslint-disable-next-line vue/no-v-html 内容经 renderMd 内 DOMPurify 消毒（AI 输出属不可信输入） -->
               <div
                 v-if="m.role === 'assistant'"

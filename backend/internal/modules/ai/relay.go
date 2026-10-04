@@ -135,9 +135,37 @@ func (s *Service) Settings(ctx context.Context) SettingsOut {
 // Message OpenAI 兼容消息。Content 为 any：普通对话传 string；
 // 多模态（P6-M1 增强）传 OpenAI 数组格式（[{type:text},{type:image_url}]），
 // 序列化后即为上游所需结构，中转层不感知具体模态。
+// P6-M3 工具调用：assistant 消息可带 ToolCalls（发起调用），tool 消息带
+// ToolCallID 回填结果。
 type Message struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"`
+	Role       string     `json:"role"`
+	Content    any        `json:"content"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ToolCall 一次工具调用（流式增量聚合后的完整形态）。
+type ToolCall struct {
+	ID       string     `json:"id"`
+	Type     string     `json:"type"` // "function"
+	Function ToolCallFn `json:"function"`
+}
+
+type ToolCallFn struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON 字符串
+}
+
+// ToolDef 对话内工具定义（OpenAI tools 数组项；Parameters 为 JSON Schema）。
+type ToolDef struct {
+	Type     string    `json:"type"` // "function"
+	Function ToolDefFn `json:"function"`
+}
+
+type ToolDefFn struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
 // Complete 调中转层生成一次补全（caller 记用量）。失败返回错误（调用方自行降级）。
@@ -216,15 +244,16 @@ func (s *Service) Test(ctx context.Context) error {
 }
 
 // CompleteStream 流式补全（M1 对话）：OpenAI 兼容 stream 语义，每个增量回调
-// onDelta；返回聚合完整回复（ctx 取消时聚合的部分内容仍随 err 返回——调用方
-// 落库用）。治理设计见 docs/design-chat-sse.md。
-func (s *Service) CompleteStream(ctx context.Context, caller string, messages []Message, maxTokens int, onDelta func(string)) (string, error) {
+// onDelta；返回聚合完整回复与模型发起的工具调用（有则非空，调用方执行后以
+// tool 消息回填再调一轮）；ctx 取消时聚合的部分内容仍随 err 返回——调用方
+// 落库用。治理设计见 docs/design-chat-sse.md。
+func (s *Service) CompleteStream(ctx context.Context, caller string, messages []Message, maxTokens int, tools []ToolDef, onDelta func(string)) (string, []ToolCall, error) {
 	cfg, ok := s.config(ctx)
 	if !ok {
-		return "", fmt.Errorf("AI 中转层未配置")
+		return "", nil, fmt.Errorf("AI 中转层未配置")
 	}
 	start := time.Now()
-	out, err := s.doCompleteStream(ctx, cfg, messages, maxTokens, onDelta)
+	out, calls, err := s.doCompleteStream(ctx, cfg, messages, maxTokens, tools, onDelta)
 	canceled := errors.Is(err, context.Canceled)
 	u := Usage{Caller: caller, Model: cfg.Model,
 		PromptCh: promptChars(messages), OutputCh: len(out),
@@ -234,10 +263,10 @@ func (s *Service) CompleteStream(ctx context.Context, caller string, messages []
 	}
 	// 用量留痕不受客户端断连影响（best-effort）
 	s.db.WithContext(context.WithoutCancel(ctx)).Create(&u)
-	return out, err
+	return out, calls, err
 }
 
-func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messages []Message, maxTokens int, onDelta func(string)) (string, error) {
+func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messages []Message, maxTokens int, tools []ToolDef, onDelta func(string)) (string, []ToolCall, error) {
 	body := map[string]any{
 		"model":    cfg.Model,
 		"messages": messages,
@@ -246,11 +275,14 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 	if maxTokens > 0 {
 		body["max_tokens"] = maxTokens
 	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
 	b, _ := json.Marshal(body)
 	url := strings.TrimRight(cfg.Endpoint, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
@@ -286,15 +318,34 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 	}()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("中转层 HTTP %d: %.300s", resp.StatusCode, raw)
+		return "", nil, fmt.Errorf("中转层 HTTP %d: %.300s", resp.StatusCode, raw)
 	}
 
 	var aggregated strings.Builder
+	// tool_calls 流式增量：按 index 聚合（id/name 首块到达，arguments 分片追加）
+	type callAcc struct{ c ToolCall }
+	calls := map[int]*callAcc{}
+	maxIdx := -1
+	collectCalls := func() []ToolCall {
+		if len(calls) == 0 {
+			return nil
+		}
+		out := make([]ToolCall, 0, len(calls))
+		for i := 0; i <= maxIdx; i++ {
+			if acc, ok := calls[i]; ok {
+				out = append(out, acc.c)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for {
@@ -302,14 +353,14 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 			if err := sc.Err(); err != nil {
 				// 读被 cancel 打断：区分父 ctx（客户端断开/整体超时）与看门狗（空闲超时）
 				if ctx.Err() != nil {
-					return aggregated.String(), ctx.Err()
+					return aggregated.String(), collectCalls(), ctx.Err()
 				}
 				if cctx.Err() != nil {
-					return aggregated.String(), errors.New("中转层空闲超时（60s 无增量）")
+					return aggregated.String(), collectCalls(), errors.New("中转层空闲超时（60s 无增量）")
 				}
-				return aggregated.String(), err
+				return aggregated.String(), collectCalls(), err
 			}
-			return aggregated.String(), nil // 流正常关闭
+			return aggregated.String(), collectCalls(), nil // 流正常关闭
 		}
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, ":") { // 空行/SSE 注释（上游保活）
@@ -320,24 +371,60 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
-			return aggregated.String(), nil
+			return aggregated.String(), collectCalls(), nil
 		}
 		var chunk struct {
 			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
+				FinishReason *string `json:"finish_reason"`
+				Delta        struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			continue // 心跳/非标准块，跳过
 		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		ch := chunk.Choices[0]
+		if ch.Delta.Content != "" {
 			lastDelta.Store(time.Now().Unix())
-			aggregated.WriteString(chunk.Choices[0].Delta.Content)
+			aggregated.WriteString(ch.Delta.Content)
 			if onDelta != nil {
-				onDelta(chunk.Choices[0].Delta.Content)
+				onDelta(ch.Delta.Content)
 			}
+		}
+		for _, tc := range ch.Delta.ToolCalls {
+			lastDelta.Store(time.Now().Unix())
+			if tc.Index > maxIdx {
+				maxIdx = tc.Index
+			}
+			acc, ok := calls[tc.Index]
+			if !ok {
+				acc = &callAcc{}
+				calls[tc.Index] = acc
+				acc.c.Type = "function"
+			}
+			if tc.ID != "" {
+				acc.c.ID = tc.ID
+			}
+			if tc.Type != "" {
+				acc.c.Type = tc.Type
+			}
+			if tc.Function.Name != "" {
+				acc.c.Function.Name += tc.Function.Name // 少数上游分片发 name
+			}
+			acc.c.Function.Arguments += tc.Function.Arguments
 		}
 	}
 }

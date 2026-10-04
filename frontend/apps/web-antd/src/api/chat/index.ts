@@ -30,6 +30,11 @@ export interface ChatAttachment {
   name: string;
 }
 
+export interface ChatToolTrace {
+  arguments?: string;
+  name: string;
+}
+
 export interface ChatMessage {
   attachments?: ChatAttachment[] | null;
   content: string;
@@ -40,6 +45,7 @@ export interface ChatMessage {
   role: 'assistant' | 'user';
   skill?: null | string;
   status: 'aborted' | 'done' | 'error';
+  tools?: ChatToolTrace[] | null; // assistant 本轮调过的平台工具（function calling）
 }
 
 /** admin 可查看指定用户（userId）并可选包含已软删会话（deleted）；普通用户忽略 */
@@ -79,6 +85,7 @@ export interface ChatStreamHandlers {
   onDelta: (text: string) => void;
   onDone: (status: string, messageId?: number) => void;
   onError: (message: string) => void;
+  onTool?: (name: string, args: string) => void; // 模型发起工具调用（function calling）
 }
 
 /**
@@ -155,6 +162,8 @@ export async function chatStreamApi(
             }
             if (event === 'delta') {
               handlers.onDelta(String(payload.text ?? ''));
+            } else if (event === 'tool') {
+              handlers.onTool?.(String(payload.name ?? ''), String(payload.args ?? ''));
             } else if (event === 'done') {
               handlers.onDone(
                 String(payload.status ?? 'done'),
