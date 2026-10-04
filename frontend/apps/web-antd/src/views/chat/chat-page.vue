@@ -108,7 +108,6 @@ function scrollToBottom() {
 
 async function send() {
   let content = input.value.trim();
-  if (slashOpen.value) return; // 面板开着时 Enter = 选中技能（slashKeydown 已处理）
   if ((!content && pendingFiles.value.length === 0) || streaming.value || !currentId.value)
     return;
   // /命令解析：输入 /name 问题...（或已面板锁定）
@@ -244,21 +243,44 @@ function pickSkill(sk: AiSkill) {
   box?.focus();
 }
 
-function slashKeydown(e: KeyboardEvent) {
-  if (!slashOpen.value || slashMatches.value.length === 0) return;
-  if (e.key === 'ArrowDown') {
+// 单一 keydown 入口：面板开着时 Enter=选中技能（绝不能落到 send），
+// 面板关着时 Enter=发送。此前 slashKeydown 与 @keydown.enter 两个监听器
+// 同元素并存，pickSkill 先关面板导致 send 的守卫失效——Enter 直接把半截消息发了出去。
+function inputKeydown(e: KeyboardEvent) {
+  if (slashOpen.value && slashMatches.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      slashIndex.value = (slashIndex.value + 1) % slashMatches.value.length;
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      slashIndex.value =
+        (slashIndex.value - 1 + slashMatches.value.length) % slashMatches.value.length;
+      return;
+    }
+    if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault();
+      pickSkill(slashMatches.value[slashIndex.value]!);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      slashOpen.value = false;
+      return;
+    }
+  }
+  // 输入法组合中的 Enter 是选字确认，不是发送
+  if (
+    e.key === 'Enter' &&
+    !e.shiftKey &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.isComposing
+  ) {
     e.preventDefault();
-    slashIndex.value = (slashIndex.value + 1) % slashMatches.value.length;
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    slashIndex.value =
-      (slashIndex.value - 1 + slashMatches.value.length) % slashMatches.value.length;
-  } else if (e.key === 'Tab' || (e.key === 'Enter' && activeSkill.value === null)) {
-    // 面板开着 Tab/Enter = 选中高亮项（不发送）
-    e.preventDefault();
-    pickSkill(slashMatches.value[slashIndex.value]!);
-  } else if (e.key === 'Escape') {
-    slashOpen.value = false;
+    send();
   }
 }
 
@@ -527,8 +549,7 @@ onMounted(async () => {
                 :disabled="streaming"
                 placeholder="输入问题，Enter 发送；/ 触发技能命令"
                 @input="onInputForSlash"
-                @keydown="slashKeydown"
-                @keydown.enter.exact.prevent="send"
+                @keydown="inputKeydown"
               />
             </div>
             <a-button
