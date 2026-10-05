@@ -6,6 +6,7 @@ package notify
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"mime"
 	"net/smtp"
@@ -133,9 +134,50 @@ func (s *sender) SendSMTP(ctx context.Context, groupID uint, cfg SMTPConfig, to,
 	if cfg.User != "" {
 		auth = smtp.PlainAuth("", cfg.User, cfg.Pass, cfg.Host)
 	}
-	// ctx 不支持取消（net/smtp 无 ctx 版本）；超时由 client 拨号侧控制不了，
-	// 依赖上层 5min deadline 与群级限频兜底
+	// 465 端口需要隐式 TLS（SSL），587/25 用 STARTTLS；
+	// net/smtp.SendMail 只支持 STARTTLS，不支持隐式 TLS
+	if cfg.Port == "465" {
+		return sendMailTLS(addr, cfg.Host, auth, from, tos, []byte(msg))
+	}
 	return smtp.SendMail(addr, auth, from, tos, []byte(msg))
+}
+
+// sendMailTLS 隐式 TLS 发信（465 端口：TLS 握手后走标准 SMTP 协议）。
+func sendMailTLS(addr, host string, auth smtp.Auth, from string, tos []string, msg []byte) error {
+	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: host})
+	if err != nil {
+		return fmt.Errorf("TLS 连接失败: %w", err)
+	}
+	defer conn.Close()
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("SMTP 客户端创建失败: %w", err)
+	}
+	defer c.Close()
+	if auth != nil {
+		if err = c.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP 认证失败: %w", err)
+		}
+	}
+	if err = c.Mail(from); err != nil {
+		return fmt.Errorf("MAIL FROM 失败: %w", err)
+	}
+	for _, to := range tos {
+		if err = c.Rcpt(to); err != nil {
+			return fmt.Errorf("RCPT TO %s 失败: %w", to, err)
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("DATA 失败: %w", err)
+	}
+	if _, err = w.Write(msg); err != nil {
+		return fmt.Errorf("写邮件失败: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("关闭写入失败: %w", err)
+	}
+	return c.Quit()
 }
 
 var mdBoldRe = regexp.MustCompile(`\*\*(.*?)\*\*`)
