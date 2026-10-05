@@ -48,7 +48,7 @@ const activeTab = ref('im');
         <a-tab-pane key="mcp" tab="MCP 接入">
           <McpTokens />
         </a-tab-pane>
-        <a-tab-pane key="pull-tokens" tab="配置拉取">
+        <a-tab-pane key="pull-tokens" tab="配置中心">
           <PullTokens />
         </a-tab-pane>
         <a-tab-pane key="skills" tab="AI 技能">

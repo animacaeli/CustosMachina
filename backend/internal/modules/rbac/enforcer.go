@@ -129,13 +129,11 @@ var defaultPolicies = [][]string{
 	// v17：配置拉取凭证（P6 M5）——仅 admin（服务间凭证签发属管理动作）
 	{"admin", "/config-pull-tokens", "GET|POST|PUT"},
 	{"admin", "/config-pull-tokens/*", "PUT"},
-	// v18：K/V 配置（P6 M7）——对齐 config-files：admin/ops 全量（reveal 审计），dev 只读
-	{"admin", "/config-kv", "GET|POST|PUT|DELETE"},
-	{"admin", "/config-kv/*", "GET|POST|PUT|DELETE"},
-	{"ops", "/config-kv", "GET|POST|PUT|DELETE"},
-	{"ops", "/config-kv/*", "GET|POST|PUT|DELETE"},
-	{"dev", "/config-kv", "GET"},
-	{"dev", "/config-kv/*", "GET"},
+	// v18：配置中心同步/对账（P6 M7，AgileConfig 纯后端通道）——admin/ops 运维职能
+	{"admin", "/config-kv", "GET|POST|PUT"},
+	{"admin", "/config-kv/*", "GET|POST|PUT"},
+	{"ops", "/config-kv", "GET|POST|PUT"},
+	{"ops", "/config-kv/*", "GET|POST|PUT"},
 	// v10：O2 告警闭环（P5 M3）——admin/ops 均可管理告警模板（运维职能）
 	{"admin", "/observ/alerts", "GET|POST|PUT|DELETE"},
 	{"admin", "/observ/alerts/*", "GET|PUT|DELETE|POST"},

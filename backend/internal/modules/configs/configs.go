@@ -88,7 +88,7 @@ type Version struct {
 
 func (Version) TableName() string { return "config_versions" }
 
-func Models() []any { return []any{&File{}, &Version{}, &PullToken{}, &ConfigItem{}, &AgileApp{}} }
+func Models() []any { return []any{&File{}, &Version{}, &PullToken{}, &AgileApp{}} }
 
 // Executor resources.Service 的最小投影（避免反向依赖）。
 type Executor interface {
@@ -398,6 +398,8 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 	}
 	s.exec.RecordEvent(ctx, f.ServerID, "config_deploy",
 		fmt.Sprintf("配置 %q 下发 %s by %s（%s）", f.Name, f.Path, by, actionNote))
+	// P6-M7：env/ini 文件下发后自动同步 AgileConfig（已配置才触发，异步不阻塞）
+	s.syncAgileAfterDeploy(ctx, &f, by)
 	return nil
 }
 

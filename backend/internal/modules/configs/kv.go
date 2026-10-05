@@ -1,9 +1,9 @@
-// kv.go P6-M7 K/V 配置（键值形态）+ AgileConfig 共存接入。
-// 设计定调（用户 2026-10-04）：共存而非收缩——一个模型、两种底层、三种消费
-// 形态：文件（SFTP 下发/API 拉取）+ 键值（AgileConfig SDK 热更）。
-// 平台为真相源单向推 AgileConfig（OpenAPI 写入）；AgileConfig 控制台手改视为
-// 漂移，对账检测比对后告警（不自动覆盖）。AgileConfig 是纯后端 provider：
-// 未配置时 K/V 仅平台存储（UI 行为不变——解耦），不阻塞文件视图。
+// kv.go P6-M7 AgileConfig 共存接入（用户定调修正：纯配置文件一套 UI，
+// AgileConfig 是纯后端通道——不引入 K/V 独立存储与独立页面）。
+// 模型：配置文件是唯一真相源与唯一编辑入口；env/ini 格式文件天然即键值，
+// 「下发」动作在 SFTP 落盘+生效动作之外，同时同步到 AgileConfig（若已配置），
+// 应用嵌 AgileConfig SDK 即获得该组键值的热更能力。平台单向推送；
+// AgileConfig 控制台手改视为漂移（对账告警不自动覆盖）。
 package configs
 
 import (
@@ -20,29 +20,6 @@ import (
 
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 )
-
-// ---- 平台 KV 真相源 ----
-
-// ConfigItem K/V 配置项（应用=项目 × 环境 × key）。
-type ConfigItem struct {
-	ID        uint      `gorm:"primarykey" json:"id"`
-	ProjectID uint      `gorm:"index;not null" json:"projectId"`
-	Env       string    `gorm:"size:32;not null;default:prod" json:"env"` // prod/canary/test（对齐文件视图 rel_path 首段）
-	Key       string    `gorm:"size:128;not null" json:"key"`
-	Value     string    `gorm:"type:text" json:"-"` // 敏感项不随列表回明文（reveal 接口，带审计）
-	Sensitive bool      `gorm:"not null;default:false" json:"sensitive"`
-	Remark    string    `gorm:"size:255" json:"remark"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
-
-func (ConfigItem) TableName() string { return "config_items" }
-
-// ItemOut 列表输出（敏感值脱敏为占位）。
-type ItemOut struct {
-	ConfigItem
-	Value string `json:"value"`
-}
 
 // AgileApp 平台应用 ↔ AgileConfig app 映射（secret AES 落库；appId 约定=项目名）。
 type AgileApp struct {
@@ -110,118 +87,57 @@ func (s *Service) KVSettings(ctx context.Context) KVSettingsOut {
 	return KVSettingsOut{Configured: ep != "" && pass != "", Endpoint: ep}
 }
 
-// kvAudit KV 操作审计（server_events，server_id=0 表示平台级事件）。
+// agileConfigured 是否已配置（Deploy 侧判断用，不报错——未配置即跳过同步）。
+func (s *Service) agileConfigured(ctx context.Context) bool {
+	return s.KVSettings(ctx).Configured
+}
+
+// kvAudit 配置中心操作审计（server_events，server_id=0 表示平台级事件）。
 func (s *Service) kvAudit(ctx context.Context, typ, msg string) {
 	s.db.WithContext(context.WithoutCancel(ctx)).Exec(
 		`INSERT INTO server_events (server_id, type, message, created_at) VALUES (0, ?, ?, ?)`,
 		typ, msg, time.Now())
 }
 
-// ---- CRUD ----
-
-type SaveItemInput struct {
-	ProjectID uint   `json:"projectId" binding:"required"`
-	Env       string `json:"env" binding:"required,oneof=prod canary test"`
-	Key       string `json:"key" binding:"required,max=128"`
-	Value     string `json:"value" binding:"max=65536"`
-	Sensitive bool   `json:"sensitive"`
-	Remark    string `json:"remark" binding:"omitempty,max=255"`
-}
-
-func (s *Service) ListItems(ctx context.Context, projectID uint, env string) ([]ItemOut, error) {
-	var items []ConfigItem
-	q := s.db.WithContext(ctx).Where("project_id = ?", projectID)
-	if env != "" {
-		q = q.Where("env = ?", env)
-	}
-	if err := q.Order("env, key").Find(&items).Error; err != nil {
-		return nil, err
-	}
-	out := make([]ItemOut, len(items))
-	for i, it := range items {
-		out[i] = ItemOut{ConfigItem: it}
-		if it.Sensitive {
-			out[i].Value = "******"
-		} else {
-			out[i].Value = it.Value
-		}
-	}
-	return out, nil
-}
-
-func (s *Service) RevealItem(ctx context.Context, id uint, by string) (string, *ConfigItem, error) {
-	var it ConfigItem
-	if err := s.db.WithContext(ctx).First(&it, id).Error; err != nil {
-		return "", nil, ErrNotFound
-	}
-	s.kvAudit(ctx, "config_kv_reveal", fmt.Sprintf("K/V %s/%s 明文查看 by %s", it.Env, it.Key, by))
-	return it.Value, &it, nil
-}
-
-func (s *Service) SaveItem(ctx context.Context, id uint, in SaveItemInput, by string) (*ConfigItem, error) {
-	it := ConfigItem{ProjectID: in.ProjectID, Env: in.Env, Key: in.Key,
-		Value: in.Value, Sensitive: in.Sensitive, Remark: in.Remark}
-	if id == 0 {
-		// 同 (project, env, key) 唯一：重复创建明确报错
-		var n int64
-		s.db.WithContext(ctx).Model(&ConfigItem{}).
-			Where("project_id = ? AND env = ? AND key = ?", in.ProjectID, in.Env, in.Key).Count(&n)
-		if n > 0 {
-			return nil, fmt.Errorf("键 %s 在该应用×环境下已存在", in.Key)
-		}
-		if err := s.db.WithContext(ctx).Create(&it).Error; err != nil {
-			return nil, err
-		}
-	} else {
-		it.ID = id
-		// 敏感项编辑留空 = 保持原值（前端不回填明文）
-		updates := map[string]any{"env": in.Env, "key": in.Key,
-			"sensitive": in.Sensitive, "remark": in.Remark}
-		var orig ConfigItem
-		if err := s.db.WithContext(ctx).First(&orig, id).Error; err != nil {
-			return nil, ErrNotFound
-		}
-		if !(orig.Sensitive && in.Value == "") {
-			updates["value"] = in.Value
-		}
-		if err := s.db.WithContext(ctx).Model(&ConfigItem{}).Where("id = ?", id).
-			Updates(updates).Error; err != nil {
-			return nil, err
-		}
-	}
-	s.kvAudit(ctx, "config_kv_save", fmt.Sprintf("K/V %s/%s 保存 by %s（项目#%d）", in.Env, in.Key, by, in.ProjectID))
-	return &it, nil
-}
-
-func (s *Service) DeleteItem(ctx context.Context, id uint, by string) error {
-	var it ConfigItem
-	if err := s.db.WithContext(ctx).First(&it, id).Error; err != nil {
-		return ErrNotFound
-	}
-	if err := s.db.WithContext(ctx).Delete(&it).Error; err != nil {
-		return err
-	}
-	s.kvAudit(ctx, "config_kv_delete", fmt.Sprintf("K/V %s/%s 删除 by %s", it.Env, it.Key, by))
-	return nil
-}
-
-// ---- AgileConfig provider（单向推送 + 对账） ----
-
-// KVItem 推送/对账的键值对（group=env）。
+// KVItem 推送/对账的键值对（AgileConfig group=环境）。
 type KVItem struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-// DiffOut 对账结果：平台为真相源，远端与平台的差异均视为漂移（告警不覆盖）。
+// DiffOut 对账结果：文件派生键值为真相源，远端与它的差异均视为漂移（告警不覆盖）。
 type DiffOut struct {
 	Missing []string `json:"missing"` // 平台有、远端缺（推送遗漏）
 	Extra   []string `json:"extra"`   // 远端有、平台无（控制台手加）
 	Drifted []string `json:"drifted"` // 两边都有但值不同（控制台手改）
 }
 
-// agileClient AgileConfig OpenAPI 客户端（按官方 REST 文档实现）。
-// app 配置操作 Basic(appId, secret)；app 管理用 admin 凭证。
+// deriveFileKV 文件 → 键值派生：仅 env/ini 格式参与（天然键值，语义清晰；
+// yaml/json/toml 属结构化文件，走 SFTP 下发与 M5 拉取形态，不进配置中心）。
+func deriveFileKV(files []File) ([]KVItem, error) {
+	var out []KVItem
+	for _, f := range files {
+		var kv map[string]string
+		var err error
+		if f.Format == FormatINI {
+			kv, err = parseINI(f.Content)
+		} else if f.Format == "env" {
+			kv, err = parseENV(f.Content)
+		} else {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("解析 %s 失败: %v", f.RelPath, err)
+		}
+		for k, v := range kv {
+			out = append(out, KVItem{Key: k, Value: v})
+		}
+	}
+	return out, nil
+}
+
+// ---- AgileConfig OpenAPI 客户端（按官方 REST 文档） ----
+
 type agileClient struct {
 	base      string
 	adminUser string
@@ -239,7 +155,7 @@ func (s *Service) agileClient(ctx context.Context) (*agileClient, error) {
 	q(settingKVUser, &user)
 	q(settingKVPass, &encPass)
 	if ep == "" || encPass == "" {
-		return nil, fmt.Errorf("AgileConfig 未配置（管理后台「配置拉取/键值设置」里填写地址与 admin 密码；未配置时 K/V 仅平台存储）")
+		return nil, fmt.Errorf("AgileConfig 未配置（管理后台「配置中心」填写地址与 admin 密码；未配置时仅文件下发/拉取两形态）")
 	}
 	if user == "" {
 		user = "admin"
@@ -289,62 +205,64 @@ type agileRemoteConfig struct {
 	Status       int    `json:"status"`       // 0=删除 1=正常
 }
 
-// ensureApp 平台应用 → AgileConfig app（appId 约定=应用名）；不存在则创建，
-// 映射与 secret 落库（secret AES）。
+// ensureAgileApp 平台应用 → AgileConfig app（appId 约定=应用名）；
+// 不存在则创建，映射与 secret 落库（AES）。
 func (s *Service) ensureAgileApp(ctx context.Context, c *agileClient, app string) (*AgileApp, error) {
 	var m AgileApp
 	if err := s.db.WithContext(ctx).Where("app = ?", app).First(&m).Error; err == nil {
 		return &m, nil
 	}
-	code, raw, err := c.do(ctx, http.MethodGet, "/api/app", c.adminUser, c.adminPass, nil)
-	if err != nil || code != 200 {
-		return nil, fmt.Errorf("查询 AgileConfig 应用失败: %v HTTP %d", err, code)
-	}
-	var apps []struct {
+	listApps := func() ([]struct {
 		ID     string `json:"id"`
 		Name   string `json:"name"`
 		Secret string `json:"secret"`
-	}
-	if err := json.Unmarshal(raw, &apps); err != nil {
-		return nil, fmt.Errorf("解析应用列表失败: %v", err)
-	}
-	var found *struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Secret string `json:"secret"`
-	}
-	for i := range apps {
-		if apps[i].Name == app {
-			found = &apps[i]
-			break
+	}, error) {
+		code, raw, err := c.do(ctx, http.MethodGet, "/api/app", c.adminUser, c.adminPass, nil)
+		if err != nil || code != 200 {
+			return nil, fmt.Errorf("查询 AgileConfig 应用失败: %v HTTP %d", err, code)
 		}
+		var apps []struct {
+			ID     string `json:"id"`
+			Name   string `json:"name"`
+			Secret string `json:"secret"`
+		}
+		if err := json.Unmarshal(raw, &apps); err != nil {
+			return nil, err
+		}
+		return apps, nil
 	}
+	apps, err := listApps()
+	if err != nil {
+		return nil, err
+	}
+	find := func() *struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Secret string `json:"secret"`
+	} {
+		for i := range apps {
+			if apps[i].Name == app {
+				return &apps[i]
+			}
+		}
+		return nil
+	}
+	found := find()
 	if found == nil {
-		// 创建（id/secret 由 AgileConfig 生成）
 		code, _, err := c.do(ctx, http.MethodPost, "/api/app", c.adminUser, c.adminPass,
 			map[string]any{"name": app, "enabled": true})
 		if err != nil || code >= 300 {
 			return nil, fmt.Errorf("创建 AgileConfig 应用失败: %v HTTP %d", err, code)
 		}
-		code, raw, err = c.do(ctx, http.MethodGet, "/api/app", c.adminUser, c.adminPass, nil)
-		if err != nil || code != 200 {
-			return nil, fmt.Errorf("回查应用失败: %v", err)
-		}
-		if err := json.Unmarshal(raw, &apps); err != nil {
+		if apps, err = listApps(); err != nil {
 			return nil, err
 		}
-		for i := range apps {
-			if apps[i].Name == app {
-				found = &apps[i]
-				break
-			}
-		}
-		if found == nil {
+		if found = find(); found == nil {
 			return nil, fmt.Errorf("AgileConfig 应用创建后未找到")
 		}
 	}
 	if found.Secret == "" {
-		return nil, fmt.Errorf("AgileConfig 应用 %q 无 secret（请在控制台设置后重试推送）", app)
+		return nil, fmt.Errorf("AgileConfig 应用 %q 无 secret（请在控制台设置后重试同步）", app)
 	}
 	encSec, err := s.cipher.Encrypt(found.Secret)
 	if err != nil {
@@ -357,11 +275,6 @@ func (s *Service) ensureAgileApp(ctx context.Context, c *agileClient, app string
 	return &m, nil
 }
 
-func (s *Service) agileSecret(m *AgileApp) (string, error) {
-	return s.cipher.Decrypt(m.Secret)
-}
-
-// appConfigs 拉取某应用全部配置（appId/secret 认证）。
 func (c *agileClient) appConfigs(ctx context.Context, appID, secret string) ([]agileRemoteConfig, error) {
 	code, raw, err := c.do(ctx, http.MethodGet, "/api/config", appID, secret, nil)
 	if err != nil || code != 200 {
@@ -374,31 +287,47 @@ func (c *agileClient) appConfigs(ctx context.Context, appID, secret string) ([]a
 	return cs, nil
 }
 
-// PushKV 平台→AgileConfig 单向推送（group=env）：新增/改值（不删除远端——
-// 删除属破坏性，交由对账报告）；改动后逐条 publish 上线。
-func (s *Service) PushKV(ctx context.Context, projectID uint, env, by string) (int, error) {
-	c, err := s.agileClient(ctx)
-	if err != nil {
-		return 0, err
-	}
+// envAgileItems 取某项目×环境下参与配置中心的文件（env/ini）并派生键值。
+func (s *Service) envAgileItems(ctx context.Context, projectID uint, env string) ([]KVItem, string, error) {
 	var appName string
 	if err := s.db.WithContext(ctx).Table("projects").Select("name").
 		Where("id = ?", projectID).Scan(&appName).Error; err != nil || appName == "" {
-		return 0, fmt.Errorf("项目不存在")
+		return nil, "", fmt.Errorf("项目不存在")
 	}
-	var items []ConfigItem
-	if err := s.db.WithContext(ctx).Where("project_id = ? AND env = ?", projectID, env).
-		Order("key").Find(&items).Error; err != nil {
+	var files []File
+	if err := s.db.WithContext(ctx).Where("project_id = ?", projectID).Order("rel_path").Find(&files).Error; err != nil {
+		return nil, appName, err
+	}
+	var envFiles []File
+	for _, f := range files {
+		if firstSeg(f.RelPath) == env && f.Content != "" && (f.Format == "env" || f.Format == FormatINI) {
+			envFiles = append(envFiles, f)
+		}
+	}
+	items, err := deriveFileKV(envFiles)
+	return items, appName, err
+}
+
+// SyncAgile 文件→AgileConfig 单向推送（group=env）：新增/改值（不删除远端——
+// 删除属破坏性，交由对账报告）；改动后逐条 publish 上线。
+// 入口：下发动作自动触发 + 管理后台手动全量同步。
+func (s *Service) SyncAgile(ctx context.Context, projectID uint, env, by string) (int, error) {
+	items, appName, err := s.envAgileItems(ctx, projectID, env)
+	if err != nil {
 		return 0, err
 	}
 	if len(items) == 0 {
-		return 0, fmt.Errorf("该应用×环境无 K/V 配置可推送")
+		return 0, fmt.Errorf("该应用×环境无 env/ini 格式配置文件（配置中心仅同步天然键值格式）")
+	}
+	c, err := s.agileClient(ctx)
+	if err != nil {
+		return 0, err
 	}
 	m, err := s.ensureAgileApp(ctx, c, appName)
 	if err != nil {
 		return 0, err
 	}
-	secret, _ := s.agileSecret(m)
+	secret, _ := s.cipher.Decrypt(m.Secret)
 	remote, err := c.appConfigs(ctx, m.AppID, secret)
 	if err != nil {
 		return 0, err
@@ -429,10 +358,9 @@ func (s *Service) PushKV(ctx context.Context, projectID uint, env, by string) (i
 		}
 		changed++
 	}
-	// 上线：重拉后对 group=env 的待上线项逐条 publish
+	// 上线：重拉后对该组待上线项逐条 publish
 	if changed > 0 {
-		remote, err = c.appConfigs(ctx, m.AppID, secret)
-		if err != nil {
+		if remote, err = c.appConfigs(ctx, m.AppID, secret); err != nil {
 			return changed, fmt.Errorf("回查配置失败（改动已写入，需在控制台手动上线）: %v", err)
 		}
 		for _, r := range remote {
@@ -444,43 +372,40 @@ func (s *Service) PushKV(ctx context.Context, projectID uint, env, by string) (i
 			}
 		}
 	}
-	s.kvAudit(ctx, "config_kv_push", fmt.Sprintf("K/V 推送 AgileConfig %s/%s：%d 项（by %s）", appName, env, changed, by))
+	s.kvAudit(ctx, "config_agile_sync", fmt.Sprintf("配置中心同步 %s/%s：%d 项（by %s）", appName, env, changed, by))
 	return changed, nil
 }
 
-// ReconcileKV 对账：远端 vs 平台（group=env）→ 差异即漂移（告警不覆盖）。
-func (s *Service) ReconcileKV(ctx context.Context, projectID uint, env, by string) (*DiffOut, error) {
+// ReconcileAgile 对账：远端 vs 文件派生键值 → 差异即漂移（告警不覆盖）。
+func (s *Service) ReconcileAgile(ctx context.Context, projectID uint, env, by string) (*DiffOut, error) {
+	items, appName, err := s.envAgileItems(ctx, projectID, env)
+	if err != nil {
+		return nil, err
+	}
 	c, err := s.agileClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var appName string
-	s.db.WithContext(ctx).Table("projects").Select("name").
-		Where("id = ?", projectID).Scan(&appName)
-	if appName == "" {
-		return nil, fmt.Errorf("项目不存在")
-	}
 	var m AgileApp
 	if err := s.db.WithContext(ctx).Where("app = ?", appName).First(&m).Error; err != nil {
-		return nil, fmt.Errorf("该应用尚未推送过 AgileConfig（无映射，先推送）")
+		return nil, fmt.Errorf("该应用尚未同步过 AgileConfig（无映射，先下发或手动同步）")
 	}
-	secret, _ := s.agileSecret(&m)
+	secret, _ := s.cipher.Decrypt(m.Secret)
 	remote, err := c.appConfigs(ctx, m.AppID, secret)
 	if err != nil {
 		return nil, err
 	}
-	var items []ConfigItem
-	s.db.WithContext(ctx).Where("project_id = ? AND env = ?", projectID, env).Find(&items)
-
 	platformByKey := map[string]string{}
 	for _, it := range items {
 		platformByKey[it.Key] = it.Value
 	}
 	diff := &DiffOut{}
+	remoteKeys := map[string]bool{}
 	for _, r := range remote {
 		if r.Group != env || r.Status != 1 {
 			continue
 		}
+		remoteKeys[r.Key] = true
 		pv, ok := platformByKey[r.Key]
 		if !ok {
 			diff.Extra = append(diff.Extra, r.Key)
@@ -489,21 +414,36 @@ func (s *Service) ReconcileKV(ctx context.Context, projectID uint, env, by strin
 		}
 	}
 	for k := range platformByKey {
-		found := false
-		for _, r := range remote {
-			if r.Group == env && r.Status == 1 && r.Key == k {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !remoteKeys[k] {
 			diff.Missing = append(diff.Missing, k)
 		}
 	}
 	if len(diff.Missing)+len(diff.Extra)+len(diff.Drifted) > 0 {
-		s.kvAudit(ctx, "config_kv_drift", fmt.Sprintf(
-			"AgileConfig 漂移告警 %s/%s：缺 %d / 多 %d / 值异 %d（by %s，检测到漂移——平台为真相源，请以推送覆盖或回改控制台）",
+		s.kvAudit(ctx, "config_agile_drift", fmt.Sprintf(
+			"AgileConfig 漂移告警 %s/%s：缺 %d / 多 %d / 值异 %d（by %s——平台文件为真相源，请以下发覆盖或回改控制台）",
 			appName, env, len(diff.Missing), len(diff.Extra), len(diff.Drifted), by))
 	}
 	return diff, nil
+}
+
+// syncAgileAfterDeploy 下发后自动同步配置中心（Deploy 内调用）：
+// 已配置 provider 且该文件是 env/ini 才触发；失败不影响下发主体（审计告警）。
+func (s *Service) syncAgileAfterDeploy(ctx context.Context, f *File, by string) {
+	if !s.agileConfigured(ctx) {
+		return
+	}
+	if f.Format != "env" && f.Format != FormatINI {
+		return
+	}
+	if f.ProjectID == 0 {
+		return
+	}
+	// 脱离请求 ctx：AgileConfig 慢不拖下发响应；失败仅审计
+	go func() {
+		sctx := context.WithoutCancel(ctx)
+		if _, err := s.SyncAgile(sctx, f.ProjectID, firstSeg(f.RelPath), by); err != nil {
+			s.kvAudit(sctx, "config_agile_sync_fail", fmt.Sprintf(
+				"配置 %q 下发后同步配置中心失败: %v", f.Name, err))
+		}
+	}()
 }

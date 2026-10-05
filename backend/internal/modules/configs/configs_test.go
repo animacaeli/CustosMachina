@@ -453,9 +453,9 @@ func TestPullTokenScope(t *testing.T) {
 	}
 }
 
-// ---- P6-M7 K/V + AgileConfig provider ----
+// ---- P6-M7 配置中心（AgileConfig 纯后端通道，文件派生键值）----
 
-// fakeAgile 按官方 REST 文档模拟 AgileConfig（足够覆盖推送/对账链路）。
+// fakeAgile 按官方 REST 文档模拟 AgileConfig（足够覆盖同步/对账链路）。
 type fakeAgile struct {
 	mu     sync.Mutex
 	apps   []map[string]any
@@ -559,7 +559,7 @@ func kvTestService(t *testing.T, agileURL string) *Service {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&ConfigItem{}, &AgileApp{}, &PullToken{}); err != nil {
+	if err := db.AutoMigrate(&File{}, &AgileApp{}, &PullToken{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
@@ -585,44 +585,27 @@ func kvTestService(t *testing.T, agileURL string) *Service {
 	return s
 }
 
-func TestKVCrudAndMask(t *testing.T) {
+func TestAgileSyncWithoutProvider(t *testing.T) {
 	svc := kvTestService(t, "")
-	if _, err := svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.pass", Value: "s3cret", Sensitive: true}, "root"); err != nil {
-		t.Fatalf("创建失败: %v", err)
-	}
-	if _, err := svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.pass", Value: "x"}, "root"); err == nil {
-		t.Fatal("重复 key 应报错")
-	}
-	list, _ := svc.ListItems(context.Background(), 2, "prod")
-	if len(list) != 1 || list[0].Value == "s3cret" {
-		t.Fatalf("敏感值列表应脱敏: %+v", list)
-	}
-	val, _, err := svc.RevealItem(context.Background(), list[0].ID, "root")
-	if err != nil || val != "s3cret" {
-		t.Fatalf("reveal 异常: %v %q", err, val)
-	}
-}
-
-// 未配置 provider：推送明确报错（UI/文件视图不受影响——解耦）。
-func TestKVPushWithoutProvider(t *testing.T) {
-	svc := kvTestService(t, "")
-	_, _ = svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "a", Value: "1"}, "root")
-	if _, err := svc.PushKV(context.Background(), 2, "prod", "root"); err == nil || !strings.Contains(err.Error(), "未配置") {
+	_ = svc.db.Create(&File{ProjectID: 2, Name: "app", RelPath: "prod/app.env", Path: "/x/a.env", Format: "env", Content: "A=1\n"})
+	if _, err := svc.SyncAgile(context.Background(), 2, "prod", "root"); err == nil || !strings.Contains(err.Error(), "未配置") {
 		t.Fatalf("未配置 provider 应明确报错: %v", err)
 	}
 }
 
-func TestKVPushAndReconcile(t *testing.T) {
+func TestAgileSyncAndReconcileFromFiles(t *testing.T) {
 	fa, srv := fakeAgileSSE(t)
 	svc := kvTestService(t, srv.URL)
 	ctx := context.Background()
-	_, _ = svc.SaveItem(ctx, 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.host", Value: "127.0.0.1"}, "root")
-	_, _ = svc.SaveItem(ctx, 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.port", Value: "5432"}, "root")
+	// 两个 env 文件（同应用×环境）+ 一个 yaml 文件（不参与配置中心）
+	_ = svc.db.Create(&File{ProjectID: 2, Name: "基础", RelPath: "prod/base.env", Path: "/x/base.env", Format: "env", Content: "DB_HOST=127.0.0.1\nDB_PORT=5432\n"})
+	_ = svc.db.Create(&File{ProjectID: 2, Name: "扩展", RelPath: "prod/extra.env", Path: "/x/extra.env", Format: "env", Content: "CACHE=redis\n"})
+	_ = svc.db.Create(&File{ProjectID: 2, Name: "结构", RelPath: "prod/app.yaml", Path: "/x/app.yaml", Format: FormatYAML, Content: "server:\n  port: 1\n"})
 
-	// 首推：ensureApp 自动创建 + 两项写入并上线
-	n, err := svc.PushKV(ctx, 2, "prod", "root")
-	if err != nil || n != 2 {
-		t.Fatalf("推送失败: %v n=%d", err, n)
+	// 首同步：自动建 app + 两文件键值合并上线；yaml 不进
+	n, err := svc.SyncAgile(ctx, 2, "prod", "root")
+	if err != nil || n != 3 {
+		t.Fatalf("同步失败: %v n=%d", err, n)
 	}
 	online := 0
 	for _, c := range fa.config {
@@ -630,44 +613,47 @@ func TestKVPushAndReconcile(t *testing.T) {
 			online++
 		}
 	}
-	if online != 2 {
-		t.Fatalf("上线数 = %d, want 2", online)
+	if online != 3 {
+		t.Fatalf("上线数 = %d, want 3", online)
 	}
 
 	// 控制台手改 + 手加（模拟漂移）
 	for _, c := range fa.config {
-		if c["key"] == "db.host" {
+		if c["key"] == "DB_HOST" {
 			c["value"] = "9.9.9.9"
 		}
 	}
 	fa.config = append(fa.config, map[string]any{"id": "cfg-x", "appId": "app-1", "group": "prod", "key": "rogue", "value": "1", "onlineStatus": float64(1), "status": float64(1)})
-	diff, err := svc.ReconcileKV(ctx, 2, "prod", "root")
+	diff, err := svc.ReconcileAgile(ctx, 2, "prod", "root")
 	if err != nil {
 		t.Fatalf("对账失败: %v", err)
 	}
-	if len(diff.Drifted) != 1 || diff.Drifted[0] != "db.host" || len(diff.Extra) != 1 || diff.Extra[0] != "rogue" {
+	if len(diff.Drifted) != 1 || diff.Drifted[0] != "DB_HOST" || len(diff.Extra) != 1 || diff.Extra[0] != "rogue" {
 		t.Fatalf("对账结果异常: %+v", diff)
 	}
 
-	// 平台改值再推送：漂移项被平台真相源覆盖，extra 不删（破坏性交给人）
-	items, _ := svc.ListItems(ctx, 2, "prod")
-	var portID uint
-	for _, it := range items {
-		if it.Key == "db.port" {
-			portID = it.ID
-		}
-	}
-	_, _ = svc.SaveItem(ctx, portID, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.port", Value: "6543"}, "root")
-	if _, err := svc.PushKV(ctx, 2, "prod", "root"); err != nil {
-		t.Fatalf("二次推送失败: %v", err)
+	// 平台改文件值再同步：漂移项被平台覆盖，extra 不删
+	svc.db.Model(&File{}).Where("rel_path = ?", "prod/base.env").
+		Update("content", "DB_HOST=127.0.0.1\nDB_PORT=6543\n")
+	if _, err := svc.SyncAgile(ctx, 2, "prod", "root"); err != nil {
+		t.Fatalf("二次同步失败: %v", err)
 	}
 	for _, c := range fa.config {
-		if c["key"] == "db.port" && c["value"] != "6543" {
-			t.Fatalf("推送未覆盖: %+v", c)
+		if c["key"] == "DB_PORT" && c["value"] != "6543" {
+			t.Fatalf("同步未覆盖: %+v", c)
 		}
 	}
-	diff2, _ := svc.ReconcileKV(ctx, 2, "prod", "root")
+	diff2, _ := svc.ReconcileAgile(ctx, 2, "prod", "root")
 	if len(diff2.Drifted) != 0 || len(diff2.Missing) != 0 || len(diff2.Extra) != 1 {
-		t.Fatalf("推送后对账应仅剩 extra: %+v", diff2)
+		t.Fatalf("同步后对账应仅剩 extra: %+v", diff2)
+	}
+}
+
+// 下发钩子：未配置 provider 时静默跳过（不报错不审计）。
+func TestDeployAgileHookSkipsUnconfigured(t *testing.T) {
+	svc := kvTestService(t, "")
+	// agileConfigured 检查短路即可（Deploy 全链路需 exec，此处验证判定函数）
+	if svc.agileConfigured(context.Background()) {
+		t.Fatal("未配置应为 false")
 	}
 }

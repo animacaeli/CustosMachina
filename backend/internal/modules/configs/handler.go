@@ -61,15 +61,11 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	// 公开拉取接口：服务启动调用（非用户凭证），应用 token 鉴权 + 限速
 	pub := r.Public.Group("/config")
 	pub.GET("/:app/:env", h.pullConfig)
-	// P6-M7 K/V 配置（AgileConfig 共存）：CRUD + 明文 + 推送/对账 + provider 设置
+	// P6-M7 配置中心（AgileConfig 纯后端通道）：同步/对账 + 连接设置
+	// ——键值由 env/ini 文件下发自动派生，无独立 CRUD（文件是唯一编辑入口）
 	kv := r.Authed.Group("/config-kv")
 	{
-		kv.GET("", h.listItems)
-		kv.POST("", h.createItem)
-		kv.PUT("/:id", h.updateItem)
-		kv.DELETE("/:id", h.deleteItem)
-		kv.GET("/:id/reveal", h.revealItem)
-		kv.POST("/push", h.pushKV)
+		kv.POST("/sync", h.syncKV)
 		kv.POST("/reconcile", h.reconcileKV)
 		kv.GET("/provider-settings", h.kvSettings)
 		kv.PUT("/provider-settings", h.saveKVSettings)
@@ -362,81 +358,7 @@ func (h *Handler) pullConfig(c *gin.Context) {
 
 // ---- P6-M7 K/V 配置（AgileConfig 共存）----
 
-func (h *Handler) listItems(c *gin.Context) {
-	pid, _ := strconv.ParseUint(c.Query("project_id"), 10, 64)
-	if pid == 0 {
-		httpx.FailBadRequest(c, "project_id 必填")
-		return
-	}
-	list, err := h.svc.ListItems(c.Request.Context(), uint(pid), c.Query("env"))
-	if err != nil {
-		httpx.FailServer(c, err)
-		return
-	}
-	httpx.OK(c, list)
-}
-
-func (h *Handler) createItem(c *gin.Context) {
-	var in SaveItemInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	it, err := h.svc.SaveItem(c.Request.Context(), 0, in, actor(c))
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	httpx.OK(c, it)
-}
-
-func (h *Handler) updateItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		httpx.FailBadRequest(c, "id 无效")
-		return
-	}
-	var in SaveItemInput
-	if err := c.ShouldBindJSON(&in); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	it, err := h.svc.SaveItem(c.Request.Context(), uint(id), in, actor(c))
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	httpx.OK(c, it)
-}
-
-func (h *Handler) deleteItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		httpx.FailBadRequest(c, "id 无效")
-		return
-	}
-	if err := h.svc.DeleteItem(c.Request.Context(), uint(id), actor(c)); err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	httpx.OK(c, nil)
-}
-
-func (h *Handler) revealItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		httpx.FailBadRequest(c, "id 无效")
-		return
-	}
-	val, _, err := h.svc.RevealItem(c.Request.Context(), uint(id), actor(c))
-	if err != nil {
-		httpx.FailBadRequest(c, err.Error())
-		return
-	}
-	httpx.OK(c, val)
-}
-
-func (h *Handler) pushKV(c *gin.Context) {
+func (h *Handler) syncKV(c *gin.Context) {
 	var in struct {
 		ProjectID uint   `json:"projectId" binding:"required"`
 		Env       string `json:"env" binding:"required,oneof=prod canary test"`
@@ -445,7 +367,7 @@ func (h *Handler) pushKV(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	n, err := h.svc.PushKV(c.Request.Context(), in.ProjectID, in.Env, actor(c))
+	n, err := h.svc.SyncAgile(c.Request.Context(), in.ProjectID, in.Env, actor(c))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -462,7 +384,7 @@ func (h *Handler) reconcileKV(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	diff, err := h.svc.ReconcileKV(c.Request.Context(), in.ProjectID, in.Env, actor(c))
+	diff, err := h.svc.ReconcileAgile(c.Request.Context(), in.ProjectID, in.Env, actor(c))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return

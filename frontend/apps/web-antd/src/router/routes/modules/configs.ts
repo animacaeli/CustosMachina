@@ -27,17 +27,6 @@ const routes: RouteRecordRaw[] = [
           title: '配置文件',
         },
       },
-      {
-        // P6-M7：键值形态（AgileConfig 共存）——与文件视图同应用×环境并列
-        name: 'ConfigsKv',
-        path: 'kv',
-        component: () => import('#/views/configs/kv.vue'),
-        meta: {
-          icon: 'lucide:key-round',
-          authority: ['superadmin', 'admin', 'ops', 'dev'],
-          title: '键值配置',
-        },
-      },
     ],
   },
 ];
