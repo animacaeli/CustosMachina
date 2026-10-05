@@ -107,3 +107,21 @@ export async function envSyncConfigApi(data: {
     data,
   );
 }
+
+/** AgileConfig 式合并视图：项目×环境聚合最终生效配置（只读预览） */
+export interface MergedConfig {
+  body: string;
+  files: number;
+  format: string;
+  version: string;
+}
+
+export async function getMergedConfigApi(
+  projectId: number,
+  env: string,
+  format: 'json' | 'yaml' = 'json',
+) {
+  return requestClient.get<MergedConfig>('/config-files/merged', {
+    params: { env, format, project_id: projectId },
+  });
+}

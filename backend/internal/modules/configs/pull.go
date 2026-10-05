@@ -123,6 +123,21 @@ type PullOut struct {
 	Files   int
 }
 
+// fetchEnvFiles 项目×环境（rel_path 首段）有内容的配置文件（拉取与合并视图共用）。
+func (s *Service) fetchEnvFiles(ctx context.Context, projectID uint, env string) ([]File, error) {
+	var files []File
+	if err := s.db.WithContext(ctx).Where("project_id = ?", projectID).Order("rel_path").Find(&files).Error; err != nil {
+		return nil, err
+	}
+	var envs []File
+	for _, f := range files {
+		if firstSeg(f.RelPath) == env && f.Content != "" {
+			envs = append(envs, f)
+		}
+	}
+	return envs, nil
+}
+
 // PullConfig 应用级聚合拉取：项目 × 环境（rel_path 首段）→ 同格式族深合并。
 func (s *Service) PullConfig(ctx context.Context, app, env string) (*PullOut, error) {
 	var projectID uint
@@ -130,16 +145,9 @@ func (s *Service) PullConfig(ctx context.Context, app, env string) (*PullOut, er
 		Where("name = ?", app).Scan(&projectID).Error; err != nil || projectID == 0 {
 		return nil, fmt.Errorf("应用 %q 不存在", app)
 	}
-	var files []File
-	if err := s.db.WithContext(ctx).Where("project_id = ?", projectID).Order("rel_path").Find(&files).Error; err != nil {
+	envs, err := s.fetchEnvFiles(ctx, projectID, env)
+	if err != nil {
 		return nil, err
-	}
-	// 过滤环境（rel_path 首段）+ 有内容
-	var envs []File
-	for _, f := range files {
-		if firstSeg(f.RelPath) == env && f.Content != "" {
-			envs = append(envs, f)
-		}
 	}
 	if len(envs) == 0 {
 		return nil, fmt.Errorf("应用 %q 环境 %q 无可用配置", app, env)
@@ -161,12 +169,13 @@ func (s *Service) PullConfig(ctx context.Context, app, env string) (*PullOut, er
 	version := hex.EncodeToString(vsum[:12])
 
 	var body []byte
-	var err error
+	var merr error
 	if family == "struct" {
-		body, err = mergeStructFiles(envs)
+		body, merr = mergeStructFiles(envs)
 	} else {
-		body, err = mergeFlatFiles(envs)
+		body, merr = mergeFlatFiles(envs)
 	}
+	err = merr
 	if err != nil {
 		return nil, err
 	}
@@ -325,4 +334,100 @@ func parseINI(content string) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+// MergedOut 合并视图输出（AgileConfig 式 UI 适配：项目×环境最终生效配置）。
+type MergedOut struct {
+	Body    string `json:"body"`
+	Version string `json:"version"`
+	Files   int    `json:"files"`
+	Format  string `json:"format"`
+}
+
+// MergedPreview 合并视图（管理端，只读）：项目×环境全部文件按 M5 同一合并
+// 语义聚合成一棵树，输出 JSON/YAML——即拉取 API 返回内容的可视化预览。
+func (s *Service) MergedPreview(ctx context.Context, projectID uint, env, format string) (*MergedOut, error) {
+	if format != "json" && format != "yaml" {
+		format = "json"
+	}
+	files, err := s.fetchEnvFiles(ctx, projectID, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("该应用×环境无配置文件")
+	}
+	// 聚合指纹（与 PullConfig 同算法）
+	hashes := make([]string, 0, len(files))
+	for _, f := range files {
+		hashes = append(hashes, contentHash(f.Content))
+	}
+	sort.Strings(hashes)
+	vsum := sha256.Sum256([]byte(strings.Join(hashes, ",")))
+	version := hex.EncodeToString(vsum[:12])
+
+	merged := map[string]any{}
+	for _, f := range files {
+		var part map[string]any
+		switch formatFamily(f.Format) {
+		case "struct":
+			var m map[string]any
+			var perr error
+			switch f.Format {
+			case FormatYAML:
+				perr = yaml.Unmarshal([]byte(f.Content), &m)
+			case "json":
+				perr = json.Unmarshal([]byte(f.Content), &m)
+			case FormatTOML:
+				perr = toml.Unmarshal([]byte(f.Content), &m)
+			}
+			if perr != nil {
+				return nil, fmt.Errorf("解析 %s 失败: %v", f.RelPath, perr)
+			}
+			part = m
+		default: // env/ini → 点号嵌套树（与前端转换视图同规则）
+			var kv map[string]string
+			if f.Format == FormatINI {
+				kv, err = parseINI(f.Content)
+			} else {
+				kv, err = parseENV(f.Content)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("解析 %s 失败: %v", f.RelPath, err)
+			}
+			// 同文件内 key 冲突不可能（map）；跨文件冲突交给 deepMerge 统一报错
+			part = map[string]any{}
+			for k, v := range kv {
+				insertDotted(part, strings.Split(k, "."), v)
+			}
+		}
+		if err := deepMerge(merged, part, ""); err != nil {
+			return nil, fmt.Errorf("%s: %v", f.RelPath, err)
+		}
+	}
+	var body []byte
+	var serr error
+	if format == "json" {
+		body, serr = json.MarshalIndent(merged, "", "  ")
+	} else {
+		body, serr = yaml.Marshal(merged)
+	}
+	if serr != nil {
+		return nil, serr
+	}
+	return &MergedOut{Body: string(body), Version: version, Files: len(files), Format: format}, nil
+}
+
+// insertDotted 点号路径嵌套插入（env/ini 键 → 树）。
+func insertDotted(m map[string]any, path []string, v string) {
+	if len(path) == 1 {
+		m[path[0]] = v
+		return
+	}
+	next, ok := m[path[0]].(map[string]any)
+	if !ok {
+		next = map[string]any{}
+		m[path[0]] = next
+	}
+	insertDotted(next, path[1:], v)
 }

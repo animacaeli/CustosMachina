@@ -657,3 +657,35 @@ func TestDeployAgileHookSkipsUnconfigured(t *testing.T) {
 		t.Fatal("未配置应为 false")
 	}
 }
+
+// 合并视图：项目×环境跨文件聚合（yaml 深合并 + env 点号嵌套 → 统一 JSON 树）。
+func TestMergedPreview(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "应用", RelPath: "prod/app.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "server:\n  port: 8080\n"},
+		File{Name: "参数", RelPath: "prod/app.env", Path: "/x/b.env", Format: "env", Content: "feature_x=true\nnested.key=v\n"},
+	)
+	svc := &Service{db: db}
+	out, err := svc.MergedPreview(t.Context(), 1, "prod", "json")
+	if err != nil {
+		t.Fatalf("合并视图失败: %v", err)
+	}
+	if out.Files != 2 || out.Version == "" {
+		t.Fatalf("元信息异常: %+v", out)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out.Body), &m); err != nil {
+		t.Fatalf("输出非合法 JSON: %v\n%s", err, out.Body)
+	}
+	srv := m["server"].(map[string]any)
+	fx, _ := m["feature_x"].(string)
+	nested := m["nested"].(map[string]any)
+	if srv["port"] != float64(8080) || fx != "true" || nested["key"] != "v" {
+		t.Fatalf("聚合结果异常: %s", out.Body)
+	}
+	// yaml 输出同树
+	out2, err := svc.MergedPreview(t.Context(), 1, "prod", "yaml")
+	if err != nil || !strings.Contains(out2.Body, "feature_x: \"true\"") && !strings.Contains(out2.Body, "feature_x: true") {
+		t.Fatalf("yaml 输出异常: %v %s", err, out2.Body)
+	}
+}

@@ -50,6 +50,8 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.GET("/:id/versions/:vid", h.getVersionContent)
 		g.POST("/:id/rollback", h.rollback)
 		g.POST("/env-sync", h.envSync)
+		// AgileConfig 式合并视图（只读预览，M5 同一合并语义）
+		g.GET("/merged", h.mergedPreview)
 	}
 	// P6-M5 拉取凭证管理（admin，casbin v17）
 	pt := r.Authed.Group("/config-pull-tokens")
@@ -411,4 +413,23 @@ func (h *Handler) saveKVSettings(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// mergedPreview 合并视图：项目×环境聚合最终生效配置（JSON/YAML，只读预览）。
+func (h *Handler) mergedPreview(c *gin.Context) {
+	pid, _ := strconv.ParseUint(c.Query("project_id"), 10, 64)
+	if pid == 0 {
+		httpx.FailBadRequest(c, "project_id 必填")
+		return
+	}
+	env := c.Query("env")
+	if env == "" {
+		env = "prod"
+	}
+	out, err := h.svc.MergedPreview(c.Request.Context(), uint(pid), env, c.Query("format"))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
 }

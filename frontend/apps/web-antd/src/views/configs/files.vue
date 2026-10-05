@@ -16,6 +16,7 @@ import {
   getConfigFilesApi,
   getConfigVersionContentApi,
   getConfigVersionsApi,
+  getMergedConfigApi,
   rollbackConfigApi,
   saveConfigContentApi,
   updateConfigFileApi,
@@ -41,6 +42,9 @@ const servers = ref<Array<{ id: number; name: string }>>([]);
 const projects = ref<Array<{ id: number; name: string }>>([]);
 const envTargets = ref<Array<{ envType: string; serverId: number }>>([]);
 const currentProject = ref<number | undefined>(undefined);
+const currentProjectName = computed(
+  () => projects.value.find((p) => p.id === currentProject.value)?.name,
+);
 
 const FORMAT_LANG: Record<string, string> = {
   env: 'ini',
@@ -673,6 +677,39 @@ async function remove(f: ConfigFile) {
   message.success('已删除');
   await load();
 }
+
+// ---- 合并视图（AgileConfig 式 UI 适配）：项目×环境聚合最终生效配置，只读 ----
+const mergedOpen = ref(false);
+const mergedEnv = ref<'canary' | 'prod' | 'test'>('prod');
+const mergedFormat = ref<'json' | 'yaml'>('json');
+const mergedBody = ref('');
+const mergedMeta = ref<null | { files: number; version: string }>(null);
+const mergedLoading = ref(false);
+
+async function loadMerged() {
+  if (!currentProject.value) return;
+  mergedLoading.value = true;
+  try {
+    const r = await getMergedConfigApi(
+      currentProject.value,
+      mergedEnv.value,
+      mergedFormat.value,
+    );
+    mergedBody.value = r.body;
+    mergedMeta.value = { files: r.files, version: r.version };
+  } catch (e: any) {
+    mergedBody.value = '';
+    mergedMeta.value = null;
+    message.error(e?.response?.data?.message ?? '聚合失败');
+  } finally {
+    mergedLoading.value = false;
+  }
+}
+
+function openMerged() {
+  mergedOpen.value = true;
+  loadMerged();
+}
 </script>
 
 <template>
@@ -687,6 +724,7 @@ async function remove(f: ConfigFile) {
         option-filter-prop="label"
         style="width: 180px"
       />
+      <a-button @click="openMerged">合并视图</a-button>
       <div
         class="bg-muted flex min-w-0 flex-1 items-center gap-1 rounded px-2 py-1"
       >
@@ -902,6 +940,53 @@ async function remove(f: ConfigFile) {
         </template>
       </div>
     </a-drawer>
+
+    <!-- 合并视图（只读）：项目×环境聚合最终生效配置 = 拉取 API 返回内容预览 -->
+    <a-modal
+      v-model:open="mergedOpen"
+      :title="`合并视图 · ${currentProjectName ?? ''} / ${mergedEnv}（最终生效配置，只读）`"
+      :width="860"
+      footer-only-close
+    >
+      <div class="mb-2 flex flex-wrap items-center gap-2">
+        <span class="text-xs text-muted-foreground">环境</span>
+        <a-select
+          v-model:value="mergedEnv"
+          :options="[
+            { value: 'prod', label: 'prod' },
+            { value: 'canary', label: 'canary' },
+            { value: 'test', label: 'test' },
+          ]"
+          size="small"
+          style="width: 100px"
+          @change="loadMerged"
+        />
+        <a-segmented
+          v-model:value="mergedFormat"
+          :options="[
+            { value: 'json', label: 'JSON' },
+            { value: 'yaml', label: 'YAML' },
+          ]"
+          size="small"
+          @change="loadMerged"
+        />
+        <span v-if="mergedMeta" class="text-xs text-muted-foreground">
+          {{ mergedMeta.files }} 个文件聚合 · 版本 {{ mergedMeta.version.slice(0, 12) }}
+        </span>
+        <div class="flex-1"></div>
+        <a-button size="small" @click="loadMerged">刷新</a-button>
+      </div>
+      <a-spin :spinning="mergedLoading">
+        <YamlEditor
+          v-if="mergedBody"
+          :model-value="mergedBody"
+          :language="mergedFormat"
+          :read-only="true"
+          height="480px"
+        />
+        <a-empty v-else-if="!mergedLoading" description="该应用×环境无配置文件" />
+      </a-spin>
+    </a-modal>
 
     <!-- 环境同步模态 -->
     <a-modal
