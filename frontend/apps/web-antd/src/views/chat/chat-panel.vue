@@ -520,12 +520,11 @@ onMounted(async () => {
           v-model:value="input"
           :auto-size="{ minRows: 1, maxRows: 6 }"
           :disabled="streaming || readonly"
+          class="min-w-0 flex-1"
           placeholder="输入问题，Enter 发送；/ 触发技能命令"
           @input="onInputForSlash"
           @keydown="inputKeydown"
         />
-      </div>
-      <div class="mt-2 flex justify-end">
         <a-button
           v-if="!streaming"
           :disabled="readonly || (!input.trim() && pendingFiles.length === 0)"
