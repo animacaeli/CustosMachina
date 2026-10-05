@@ -72,7 +72,11 @@ const projectName = (id: number) =>
   projects.value.find((p) => p.id === id)?.name ?? `#${id}`;
 
 function scopeText(record: RoleRow) {
-  if (record.builtin || record.name === 'superadmin' || record.projectIds.length === 0) {
+  if (
+    record.builtin ||
+    record.name === 'superadmin' ||
+    record.projectIds.length === 0
+  ) {
     return '全局';
   }
   return record.projectIds.map(projectName).join('、');
@@ -263,7 +267,11 @@ async function save() {
     <!-- 角色 表单 -->
     <a-drawer
       v-model:open="formOpen"
-      :title="formMode === 'create' ? '新建自定义角色' : `编辑角色：${formRole?.name ?? ''}`"
+      :title="
+        formMode === 'create'
+          ? '新建自定义角色'
+          : `编辑角色：${formRole?.name ?? ''}`
+      "
       :width="560"
     >
       <a-form layout="vertical">
@@ -287,7 +295,10 @@ async function save() {
             class="mb-3"
           >
             <div class="mb-1 font-medium">{{ category }}</div>
-            <a-checkbox-group v-model:value="form.actions" class="flex flex-col gap-1">
+            <a-checkbox-group
+              v-model:value="form.actions"
+              class="flex flex-col gap-1"
+            >
               <a-checkbox v-for="a in actions" :key="a.key" :value="a.key">
                 <span class="font-mono text-xs">{{ a.key }}</span>
                 <span class="ml-1 text-gray-500">{{ a.desc }}</span>
@@ -306,9 +317,7 @@ async function save() {
         >
           <a-select
             v-model:value="form.projectIds"
-            :options="
-              projects.map((p) => ({ label: p.name, value: p.id }))
-            "
+            :options="projects.map((p) => ({ label: p.name, value: p.id }))"
             mode="multiple"
             placeholder="不选 = 全局"
           />

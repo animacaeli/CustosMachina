@@ -29,15 +29,17 @@ const BUILTIN_ROLES = computed(() =>
 const customRoles = ref<string[]>([]);
 async function loadCustomRoles() {
   try {
-    const rows = await requestClient.get<
-      { builtin: boolean; name: string }[]
-    >('/roles');
+    const rows =
+      await requestClient.get<{ builtin: boolean; name: string }[]>('/roles');
     customRoles.value = rows.filter((r) => !r.builtin).map((r) => r.name);
   } catch {
     customRoles.value = [];
   }
 }
-const assignableRoles = computed(() => [...BUILTIN_ROLES.value, ...customRoles.value]);
+const assignableRoles = computed(() => [
+  ...BUILTIN_ROLES.value,
+  ...customRoles.value,
+]);
 
 const loading = ref(false);
 const list = ref<PlatformUser[]>([]);
