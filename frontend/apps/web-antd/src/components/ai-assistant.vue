@@ -81,6 +81,59 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+// ---- 面板尺寸拖拽（用户定调：拖拽调宽高并记住，下次打开保持） ----
+const SIZE_KEY = 'custos-ai-panel-size';
+const panelW = ref(420);
+const panelTop = ref(0); // px；0 = 未初始化（onMounted 设默认 8vh）
+
+function loadSize() {
+  panelTop.value = Math.round(window.innerHeight * 0.08);
+  try {
+    const saved = JSON.parse(localStorage.getItem(SIZE_KEY) ?? '');
+    if (saved.w >= 360) panelW.value = saved.w;
+    if (saved.top >= 0) panelTop.value = saved.top;
+  } catch {
+    /* 无保存或格式异常：用默认 */
+  }
+  clampSize();
+}
+
+function clampSize() {
+  const maxW = Math.min(760, window.innerWidth - 140);
+  panelW.value = Math.min(Math.max(panelW.value, 360), maxW);
+  panelTop.value = Math.min(Math.max(panelTop.value, 48), Math.round(window.innerHeight * 0.6));
+}
+
+function saveSize() {
+  localStorage.setItem(SIZE_KEY, JSON.stringify({ w: panelW.value, top: panelTop.value }));
+}
+
+// 拖拽：宽 = 左边缘手柄；高 = 顶边手柄（底边固定贴球上方）
+function startResize(e: MouseEvent, axis: 'h' | 'w') {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startW = panelW.value;
+  const startTop = panelTop.value;
+  const onMove = (ev: MouseEvent) => {
+    if (axis === 'w') {
+      panelW.value = startW + (startX - ev.clientX); // 向左拖变宽
+    } else {
+      panelTop.value = startTop + (ev.clientY - startY); // 向上拖变高
+    }
+    clampSize();
+  };
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    document.body.style.userSelect = '';
+    saveSize();
+  };
+  document.body.style.userSelect = 'none';
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
 function newChat() {
   if (panelRef.value?.isStreaming?.()) return;
   panelConv.value = null;
@@ -113,6 +166,7 @@ function onUsed(conv: Conversation) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
+  loadSize();
 });
 </script>
 
@@ -167,8 +221,24 @@ onMounted(() => {
     <transition name="ai-pop">
       <div
         v-if="open"
-        class="bg-card fixed top-[8vh] right-[5.5rem] bottom-24 z-[999] flex w-[420px] max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-2xl border border-border shadow-2xl"
+        class="bg-card fixed right-[5.5rem] bottom-24 z-[999] flex max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-2xl border border-border shadow-2xl"
+        :style="{ top: `${panelTop }px`, width: `${panelW }px` }"
       >
+        <!-- 尺寸拖拽手柄：左边缘调宽 / 顶边调高（拖完记忆） -->
+        <div
+          class="group/h absolute top-8 bottom-8 left-0 z-10 w-1.5 cursor-col-resize"
+          title="拖拽调整宽度"
+          @mousedown="startResize($event, 'w')"
+        >
+          <div class="mx-auto h-full w-full rounded opacity-0 transition-opacity group-hover/h:bg-primary/50 group-hover/h:opacity-100"></div>
+        </div>
+        <div
+          class="group/v absolute top-0 right-6 left-6 z-10 h-1.5 cursor-row-resize"
+          title="拖拽调整高度"
+          @mousedown="startResize($event, 'h')"
+        >
+          <div class="h-full w-full rounded opacity-0 transition-opacity group-hover/v:bg-primary/50 group-hover/v:opacity-100"></div>
+        </div>
         <!-- 面板头部 -->
         <div class="flex items-center gap-2 border-b border-border px-4 py-3">
           <span class="text-sm font-medium">AI 助手</span>
