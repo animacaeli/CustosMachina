@@ -289,22 +289,23 @@ async function save() {
           />
         </a-form-item>
         <a-form-item label="动作集（业务语义粒度）">
-          <div
-            v-for="[category, actions] in catalogByCategory"
-            :key="category"
-            class="mb-3"
-          >
-            <div class="mb-1 font-medium">{{ category }}</div>
-            <a-checkbox-group
-              v-model:value="form.actions"
-              class="flex flex-col gap-1"
+          <!-- 单一 checkbox-group：antd-vue 的 group change 只 emit 本组勾选值，
+               按类别拆多个 group 共绑一个数组会互相覆盖（勾新类别清掉其他类别） -->
+          <a-checkbox-group v-model:value="form.actions" class="w-full">
+            <div
+              v-for="[category, actions] in catalogByCategory"
+              :key="category"
+              class="mb-3"
             >
-              <a-checkbox v-for="a in actions" :key="a.key" :value="a.key">
-                <span class="font-mono text-xs">{{ a.key }}</span>
-                <span class="ml-1 text-gray-500">{{ a.desc }}</span>
-              </a-checkbox>
-            </a-checkbox-group>
-          </div>
+              <div class="mb-1 font-medium">{{ category }}</div>
+              <div class="flex flex-col gap-1">
+                <a-checkbox v-for="a in actions" :key="a.key" :value="a.key">
+                  <span class="font-mono text-xs">{{ a.key }}</span>
+                  <span class="ml-1 text-gray-500">{{ a.desc }}</span>
+                </a-checkbox>
+              </div>
+            </div>
+          </a-checkbox-group>
         </a-form-item>
         <a-form-item
           v-if="formMode === 'create' || !formRole?.builtin"

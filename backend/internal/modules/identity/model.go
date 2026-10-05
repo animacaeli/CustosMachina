@@ -20,6 +20,16 @@ const (
 // 创建、全库唯一），不在此列；admin 为普通管理员，仅超管可任命。
 var BuiltinRoles = []string{"admin", "ops", "dev", "guest"}
 
+// IsBuiltinRole 是否内置可分配角色（P7-M1：区分自定义角色的菜单基线逻辑用）。
+func IsBuiltinRole(name string) bool {
+	for _, b := range BuiltinRoles {
+		if b == name {
+			return true
+		}
+	}
+	return false
+}
+
 type User struct {
 	ID           uint           `gorm:"primarykey" json:"id"`
 	DisplayName  string         `gorm:"size:64;uniqueIndex;not null" json:"displayName"`

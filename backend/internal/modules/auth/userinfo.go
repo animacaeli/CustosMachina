@@ -33,6 +33,23 @@ func (h *Handler) userInfo(c *gin.Context) {
 			return
 		}
 		roles = identity.ParseRoleList(u.Roles)
+		// P7-M1 菜单基线：仅绑自定义角色的用户在下发角色里补 dev——前端路由
+		// authority 数组是内置角色名，不补则整个侧边栏只剩首页。后端 casbin
+		// 仍按真实角色裁决，此处只影响菜单可见性（API 未授权面照旧 403）。
+		hasMenuBaseline, hasCustom := false, false
+		for _, r := range roles {
+			switch {
+			case r == "admin" || r == "ops" || r == "dev":
+				hasMenuBaseline = true
+			case !identity.IsBuiltinRole(r) &&
+				identity.ExtraRoleValidator != nil &&
+				identity.ExtraRoleValidator(r):
+				hasCustom = true
+			}
+		}
+		if hasCustom && !hasMenuBaseline {
+			roles = append(roles, "dev")
+		}
 	} else {
 		roles = []string{"superadmin"}
 	}
