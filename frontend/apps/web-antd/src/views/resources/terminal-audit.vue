@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import type { TerminalSession } from '#/api/resources/terminal-audit';
 
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 
 import { message } from 'ant-design-vue';
 
@@ -90,10 +90,6 @@ watch(
     }
   },
 );
-
-onMounted(() => {
-  if (props.open) load();
-});
 
 onBeforeUnmount(stopPlay);
 </script>
