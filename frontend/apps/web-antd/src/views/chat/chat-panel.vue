@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+/* eslint-disable vue/no-v-html -- 唯一 v-html：AI markdown 渲染经 DOMPurify 消毒 */
 import type { ChatAttachment, Conversation } from '#/api/chat';
 import type { AiSkill } from '#/api/chat/skills';
 
@@ -431,7 +432,6 @@ onMounted(async () => {
               </div>
             </div>
           </div>
-          <!-- eslint-disable-next-line vue/no-v-html 内容经 renderMd 内 DOMPurify 消毒（AI 输出属不可信输入） -->
           <div
             v-if="m.role === 'assistant'"
             class="prose prose-sm dark:prose-invert max-w-none break-words text-foreground [&_a]:text-primary [&_img]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:text-foreground [&_code]:text-xs [&_code]:text-foreground [&_li]:text-foreground [&_p]:text-foreground [&_svg]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:whitespace-nowrap"
