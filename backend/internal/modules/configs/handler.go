@@ -61,6 +61,19 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	// 公开拉取接口：服务启动调用（非用户凭证），应用 token 鉴权 + 限速
 	pub := r.Public.Group("/config")
 	pub.GET("/:app/:env", h.pullConfig)
+	// P6-M7 K/V 配置（AgileConfig 共存）：CRUD + 明文 + 推送/对账 + provider 设置
+	kv := r.Authed.Group("/config-kv")
+	{
+		kv.GET("", h.listItems)
+		kv.POST("", h.createItem)
+		kv.PUT("/:id", h.updateItem)
+		kv.DELETE("/:id", h.deleteItem)
+		kv.GET("/:id/reveal", h.revealItem)
+		kv.POST("/push", h.pushKV)
+		kv.POST("/reconcile", h.reconcileKV)
+		kv.GET("/provider-settings", h.kvSettings)
+		kv.PUT("/provider-settings", h.saveKVSettings)
+	}
 }
 
 // actor 当前登录人（审计留名）。
@@ -345,4 +358,135 @@ func (h *Handler) pullConfig(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "public, max-age=60")
 	c.Data(200, ct, out.Body)
+}
+
+// ---- P6-M7 K/V 配置（AgileConfig 共存）----
+
+func (h *Handler) listItems(c *gin.Context) {
+	pid, _ := strconv.ParseUint(c.Query("project_id"), 10, 64)
+	if pid == 0 {
+		httpx.FailBadRequest(c, "project_id 必填")
+		return
+	}
+	list, err := h.svc.ListItems(c.Request.Context(), uint(pid), c.Query("env"))
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
+
+func (h *Handler) createItem(c *gin.Context) {
+	var in SaveItemInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	it, err := h.svc.SaveItem(c.Request.Context(), 0, in, actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, it)
+}
+
+func (h *Handler) updateItem(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.FailBadRequest(c, "id 无效")
+		return
+	}
+	var in SaveItemInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	it, err := h.svc.SaveItem(c.Request.Context(), uint(id), in, actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, it)
+}
+
+func (h *Handler) deleteItem(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.FailBadRequest(c, "id 无效")
+		return
+	}
+	if err := h.svc.DeleteItem(c.Request.Context(), uint(id), actor(c)); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
+}
+
+func (h *Handler) revealItem(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.FailBadRequest(c, "id 无效")
+		return
+	}
+	val, _, err := h.svc.RevealItem(c.Request.Context(), uint(id), actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, val)
+}
+
+func (h *Handler) pushKV(c *gin.Context) {
+	var in struct {
+		ProjectID uint   `json:"projectId" binding:"required"`
+		Env       string `json:"env" binding:"required,oneof=prod canary test"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	n, err := h.svc.PushKV(c.Request.Context(), in.ProjectID, in.Env, actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, n)
+}
+
+func (h *Handler) reconcileKV(c *gin.Context) {
+	var in struct {
+		ProjectID uint   `json:"projectId" binding:"required"`
+		Env       string `json:"env" binding:"required,oneof=prod canary test"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	diff, err := h.svc.ReconcileKV(c.Request.Context(), in.ProjectID, in.Env, actor(c))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, diff)
+}
+
+func (h *Handler) kvSettings(c *gin.Context) {
+	httpx.OK(c, h.svc.KVSettings(c.Request.Context()))
+}
+
+func (h *Handler) saveKVSettings(c *gin.Context) {
+	var in struct {
+		Endpoint string `json:"endpoint"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SaveKVSettings(c.Request.Context(), in.Endpoint, in.User, in.Password); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
 }

@@ -2,11 +2,18 @@ package configs
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/glebarez/sqlite"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -443,5 +450,224 @@ func TestPullTokenScope(t *testing.T) {
 	// 幻觉应用名
 	if _, err := svc.IssuePullToken(t.Context(), "x", "不存在应用", "*"); err == nil {
 		t.Fatal("幻觉应用名应拒")
+	}
+}
+
+// ---- P6-M7 K/V + AgileConfig provider ----
+
+// fakeAgile 按官方 REST 文档模拟 AgileConfig（足够覆盖推送/对账链路）。
+type fakeAgile struct {
+	mu     sync.Mutex
+	apps   []map[string]any
+	config []map[string]any
+	seq    int
+}
+
+func fakeAgileSSE(t *testing.T) (*fakeAgile, *httptest.Server) {
+	t.Helper()
+	fa := &fakeAgile{}
+	mux := http.NewServeMux()
+	basic := func(r *http.Request) (string, string) {
+		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Basic ")
+		b, _ := base64.StdEncoding.DecodeString(raw)
+		parts := strings.SplitN(string(b), ":", 2)
+		if len(parts) != 2 {
+			return "", ""
+		}
+		return parts[0], parts[1]
+	}
+	ok := func(w http.ResponseWriter) { w.WriteHeader(200) }
+	mux.HandleFunc("/api/app", func(w http.ResponseWriter, r *http.Request) {
+		u, p := basic(r)
+		if u != "admin" || p != "agile-pass" {
+			w.WriteHeader(401)
+			return
+		}
+		fa.mu.Lock()
+		defer fa.mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(fa.apps)
+		case http.MethodPost:
+			var m map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			fa.seq++
+			m["id"] = fmt.Sprintf("app-%d", fa.seq)
+			m["secret"] = fmt.Sprintf("sec-%d", fa.seq)
+			fa.apps = append(fa.apps, m)
+			w.WriteHeader(201)
+		}
+	})
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		u, p := basic(r) // appId / secret
+		fa.mu.Lock()
+		defer fa.mu.Unlock()
+		valid := false
+		for _, a := range fa.apps {
+			if a["id"] == u && a["secret"] == p {
+				valid = true
+			}
+		}
+		if !valid {
+			w.WriteHeader(401)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(fa.config)
+		case http.MethodPost:
+			var m map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			fa.seq++
+			m["id"] = fmt.Sprintf("cfg-%d", fa.seq)
+			m["onlineStatus"] = float64(0)
+			m["status"] = float64(1)
+			fa.config = append(fa.config, m)
+			w.WriteHeader(201)
+		case http.MethodPut:
+			var m map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			for i, c := range fa.config {
+				if c["id"] == m["id"] {
+					m["onlineStatus"] = float64(0)
+					m["status"] = float64(1)
+					fa.config[i] = m
+				}
+			}
+			ok(w)
+		}
+	})
+	mux.HandleFunc("/api/config/publish/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/config/publish/")
+		fa.mu.Lock()
+		defer fa.mu.Unlock()
+		for _, c := range fa.config {
+			if c["id"] == id {
+				c["onlineStatus"] = float64(1)
+			}
+		}
+		ok(w)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return fa, srv
+}
+
+func kvTestService(t *testing.T, agileURL string) *Service {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("打开内存库失败: %v", err)
+	}
+	if err := db.AutoMigrate(&ConfigItem{}, &AgileApp{}, &PullToken{}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE server_events (id INTEGER PRIMARY KEY AUTOINCREMENT, server_id INTEGER, type TEXT, message TEXT, created_at DATETIME)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO projects (id, name) VALUES (2, 'demo')`)
+	cipher, err := cryptopkg.NewCipher("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{db: db, cipher: cipher}
+	if agileURL != "" {
+		if err := s.SaveKVSettings(context.Background(), agileURL, "admin", "agile-pass"); err != nil {
+			t.Fatalf("配置 provider 失败: %v", err)
+		}
+	}
+	return s
+}
+
+func TestKVCrudAndMask(t *testing.T) {
+	svc := kvTestService(t, "")
+	if _, err := svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.pass", Value: "s3cret", Sensitive: true}, "root"); err != nil {
+		t.Fatalf("创建失败: %v", err)
+	}
+	if _, err := svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.pass", Value: "x"}, "root"); err == nil {
+		t.Fatal("重复 key 应报错")
+	}
+	list, _ := svc.ListItems(context.Background(), 2, "prod")
+	if len(list) != 1 || list[0].Value == "s3cret" {
+		t.Fatalf("敏感值列表应脱敏: %+v", list)
+	}
+	val, _, err := svc.RevealItem(context.Background(), list[0].ID, "root")
+	if err != nil || val != "s3cret" {
+		t.Fatalf("reveal 异常: %v %q", err, val)
+	}
+}
+
+// 未配置 provider：推送明确报错（UI/文件视图不受影响——解耦）。
+func TestKVPushWithoutProvider(t *testing.T) {
+	svc := kvTestService(t, "")
+	_, _ = svc.SaveItem(context.Background(), 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "a", Value: "1"}, "root")
+	if _, err := svc.PushKV(context.Background(), 2, "prod", "root"); err == nil || !strings.Contains(err.Error(), "未配置") {
+		t.Fatalf("未配置 provider 应明确报错: %v", err)
+	}
+}
+
+func TestKVPushAndReconcile(t *testing.T) {
+	fa, srv := fakeAgileSSE(t)
+	svc := kvTestService(t, srv.URL)
+	ctx := context.Background()
+	_, _ = svc.SaveItem(ctx, 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.host", Value: "127.0.0.1"}, "root")
+	_, _ = svc.SaveItem(ctx, 0, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.port", Value: "5432"}, "root")
+
+	// 首推：ensureApp 自动创建 + 两项写入并上线
+	n, err := svc.PushKV(ctx, 2, "prod", "root")
+	if err != nil || n != 2 {
+		t.Fatalf("推送失败: %v n=%d", err, n)
+	}
+	online := 0
+	for _, c := range fa.config {
+		if c["onlineStatus"] == float64(1) {
+			online++
+		}
+	}
+	if online != 2 {
+		t.Fatalf("上线数 = %d, want 2", online)
+	}
+
+	// 控制台手改 + 手加（模拟漂移）
+	for _, c := range fa.config {
+		if c["key"] == "db.host" {
+			c["value"] = "9.9.9.9"
+		}
+	}
+	fa.config = append(fa.config, map[string]any{"id": "cfg-x", "appId": "app-1", "group": "prod", "key": "rogue", "value": "1", "onlineStatus": float64(1), "status": float64(1)})
+	diff, err := svc.ReconcileKV(ctx, 2, "prod", "root")
+	if err != nil {
+		t.Fatalf("对账失败: %v", err)
+	}
+	if len(diff.Drifted) != 1 || diff.Drifted[0] != "db.host" || len(diff.Extra) != 1 || diff.Extra[0] != "rogue" {
+		t.Fatalf("对账结果异常: %+v", diff)
+	}
+
+	// 平台改值再推送：漂移项被平台真相源覆盖，extra 不删（破坏性交给人）
+	items, _ := svc.ListItems(ctx, 2, "prod")
+	var portID uint
+	for _, it := range items {
+		if it.Key == "db.port" {
+			portID = it.ID
+		}
+	}
+	_, _ = svc.SaveItem(ctx, portID, SaveItemInput{ProjectID: 2, Env: "prod", Key: "db.port", Value: "6543"}, "root")
+	if _, err := svc.PushKV(ctx, 2, "prod", "root"); err != nil {
+		t.Fatalf("二次推送失败: %v", err)
+	}
+	for _, c := range fa.config {
+		if c["key"] == "db.port" && c["value"] != "6543" {
+			t.Fatalf("推送未覆盖: %+v", c)
+		}
+	}
+	diff2, _ := svc.ReconcileKV(ctx, 2, "prod", "root")
+	if len(diff2.Drifted) != 0 || len(diff2.Missing) != 0 || len(diff2.Extra) != 1 {
+		t.Fatalf("推送后对账应仅剩 extra: %+v", diff2)
 	}
 }
