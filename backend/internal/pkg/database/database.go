@@ -18,7 +18,8 @@ import (
 	"github.com/custos-machina/backend/internal/config"
 )
 
-// Open 按配置建立数据库连接并执行自动迁移。
+// Open 按配置建立数据库连接并执行版本化迁移（Migrate：新库 AutoMigrate
+// 快速起步，存量库走 embed 增量——见 migrate.go）。
 func Open(cfg *config.Database, models []any) (*gorm.DB, error) {
 	var dialector gorm.Dialector
 	switch cfg.Driver {
@@ -51,8 +52,8 @@ func Open(cfg *config.Database, models []any) (*gorm.DB, error) {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
 	if len(models) > 0 {
-		if err := db.AutoMigrate(models...); err != nil {
-			return nil, fmt.Errorf("自动迁移失败: %w", err)
+		if err := Migrate(db, models); err != nil {
+			return nil, fmt.Errorf("数据库迁移失败: %w", err)
 		}
 	}
 	return db, nil
