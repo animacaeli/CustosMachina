@@ -30,6 +30,9 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	{
 		s.GET("/ops-group", h.getOpsGroup)
 		s.PUT("/ops-group", h.putOpsGroup)
+		// P6-M9 渠道凭据（Telegram Bot / SMTP）
+		s.GET("/channels", h.getChannelSettings)
+		s.PUT("/channels", h.putChannelSettings)
 	}
 	ru := r.Authed.Group("/notify-rules")
 	{
@@ -223,6 +226,33 @@ func (h *Handler) putOpsGroup(c *gin.Context) {
 	}
 	if err := h.svc.SetOpsGroup(c.Request.Context(), in.GroupID); err != nil {
 		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, nil)
+}
+
+// ---- P6-M9 渠道凭据设置（Telegram Bot / SMTP）----
+
+func (h *Handler) getChannelSettings(c *gin.Context) {
+	httpx.OK(c, h.svc.ChannelSettings(c.Request.Context()))
+}
+
+func (h *Handler) putChannelSettings(c *gin.Context) {
+	var in struct {
+		TelegramToken string `json:"telegramToken"`
+		SMTPHost      string `json:"smtpHost"`
+		SMTPPort      string `json:"smtpPort"`
+		SMTPUser      string `json:"smtpUser"`
+		SMTPPass      string `json:"smtpPass"`
+		SMTPFrom      string `json:"smtpFrom"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SaveChannelSettings(c.Request.Context(),
+		in.TelegramToken, in.SMTPHost, in.SMTPPort, in.SMTPUser, in.SMTPPass, in.SMTPFrom); err != nil {
+		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	httpx.OK(c, nil)

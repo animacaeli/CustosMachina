@@ -44,12 +44,16 @@ var levelRank = map[string]int{LevelInfo: 0, LevelWarn: 1, LevelCritical: 2}
 // ValidLevels 合法级别集合。
 var ValidLevels = []string{LevelInfo, LevelWarn, LevelCritical}
 
-// Group 通知群（企微群机器人 webhook，管理员手工登记）。
+// Group 通知群（多渠道，管理员手工登记）：webhook（企微/钉钉/飞书群机器人）、
+// telegram（Bot API，chat id 在 Target）、smtp（邮箱收件人在 Target，逗号分隔）。
+// 渠道凭据（bot token / SMTP 账号）是平台级设置，不随群存。
 type Group struct {
 	ID        uint           `gorm:"primarykey" json:"id"`
-	Name      string         `gorm:"size:64;uniqueIndex;not null" json:"name"` // 必须以【P】或【dev】开头
-	Scope     string         `gorm:"size:8;not null" json:"scope"`             // prod | dev（由名称前缀推导并强校验）
-	Webhook   string         `gorm:"type:text" json:"-"`                       // 加密后的 webhook，绝不外发
+	Name      string         `gorm:"size:64;uniqueIndex;not null" json:"name"`
+	Scope     string         `gorm:"size:8;not null" json:"scope"`                    // prod | dev
+	Channel   string         `gorm:"size:16;not null;default:webhook" json:"channel"` // webhook | telegram | smtp
+	Webhook   string         `gorm:"type:text" json:"-"`                              // webhook 渠道：加密 url；其他渠道闲置
+	Target    string         `gorm:"size:512" json:"target"`                          // telegram: chat id；smtp: 收件人（逗号分隔）
 	Remark    string         `gorm:"size:255" json:"remark"`
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`

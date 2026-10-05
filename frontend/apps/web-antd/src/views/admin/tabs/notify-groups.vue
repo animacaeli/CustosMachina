@@ -8,8 +8,10 @@ import { message } from 'ant-design-vue';
 import {
   createNotifyGroupApi,
   deleteNotifyGroupApi,
+  getChannelSettingsApi,
   getNotifyGroupsApi,
   getOpsGroupApi,
+  saveChannelSettingsApi,
   setOpsGroupApi,
   testNotifyGroupApi,
   updateNotifyGroupApi,
@@ -37,7 +39,49 @@ async function load() {
   }
 }
 
-onMounted(load);
+// ---- P6-M9 渠道凭据设置（Telegram Bot / SMTP，平台级）----
+const channelForm = reactive({
+  telegramToken: '',
+  smtpHost: '',
+  smtpPort: '',
+  smtpUser: '',
+  smtpPass: '',
+  smtpFrom: '',
+});
+const channelState = reactive({
+  telegramConfigured: false,
+  smtpConfigured: false,
+});
+
+async function loadChannels() {
+  const s = await getChannelSettingsApi();
+  channelState.telegramConfigured = s.telegramConfigured;
+  channelState.smtpConfigured = s.smtpConfigured;
+  channelForm.smtpHost = s.smtpHost ?? '';
+  channelForm.smtpPort = s.smtpPort ?? '';
+  channelForm.smtpUser = s.smtpUser ?? '';
+  channelForm.smtpFrom = s.smtpFrom ?? '';
+  channelForm.telegramToken = '';
+  channelForm.smtpPass = '';
+}
+
+async function saveChannels() {
+  await saveChannelSettingsApi({
+    ...(channelForm.telegramToken ? { telegramToken: channelForm.telegramToken } : {}),
+    ...(channelForm.smtpHost ? { smtpHost: channelForm.smtpHost } : {}),
+    ...(channelForm.smtpPort ? { smtpPort: channelForm.smtpPort } : {}),
+    ...(channelForm.smtpUser ? { smtpUser: channelForm.smtpUser } : {}),
+    ...(channelForm.smtpPass ? { smtpPass: channelForm.smtpPass } : {}),
+    ...(channelForm.smtpFrom ? { smtpFrom: channelForm.smtpFrom } : {}),
+  });
+  await loadChannels();
+  message.success('已保存（凭据加密落库）');
+}
+
+onMounted(() => {
+  load();
+  loadChannels();
+});
 
 const columns = [
   { title: 'ID', dataIndex: 'id', width: 60 },
@@ -48,7 +92,8 @@ const columns = [
     width: 100,
   },
   { title: '备注', dataIndex: 'remark' },
-  { title: 'Webhook', key: 'webhook', width: 90 },
+  { title: '渠道', key: 'channel', width: 100 },
+  { title: 'Webhook', key: 'webhook', width: 130 },
   { title: '操作', key: 'action', width: 230 },
 ];
 
@@ -57,14 +102,18 @@ const editingId = ref<null | number>(null);
 const form = reactive<{
   name: string;
   scope: 'dev' | 'prod';
+  channel: 'smtp' | 'telegram' | 'webhook';
+  target: string;
   webhook: string;
   remark: string;
-}>({ name: '', scope: 'prod', webhook: '', remark: '' });
+}>({ name: '', scope: 'prod', channel: 'webhook', target: '', webhook: '', remark: '' });
 
 function openCreate() {
   editingId.value = null;
   form.name = '';
   form.scope = 'prod';
+  form.channel = 'webhook';
+  form.target = '';
   form.webhook = '';
   form.remark = '';
   formOpen.value = true;
@@ -73,9 +122,11 @@ function openCreate() {
 function openEdit(g: NotifyGroup) {
   editingId.value = g.id;
   form.name = g.name;
-  form.scope = g.scope;
+  form.scope = (g.scope as 'prod') ?? 'prod';
+  form.channel = g.channel ?? 'webhook';
+  form.target = g.target ?? '';
   form.webhook = ''; // 留空保留
-  form.remark = g.remark;
+  form.remark = g.remark ?? '';
   formOpen.value = true;
 }
 
@@ -155,15 +206,23 @@ async function saveOpsGroup() {
       row-key="id"
       size="middle"
     >
+      <template #headerCell="{ column }">
+        <template v-if="column.key === 'channel'">渠道</template>
+      </template>
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'scope'">
           <a-tag :color="record.scope === 'prod' ? 'red' : 'blue'">
             {{ record.scope === 'prod' ? '生产类' : '测试类' }}
           </a-tag>
         </template>
+        <template v-else-if="column.key === 'channel'">
+          <a-tag>
+            {{ record.channel === 'telegram' ? 'Telegram' : record.channel === 'smtp' ? '邮件' : 'Webhook' }}
+          </a-tag>
+        </template>
         <template v-else-if="column.key === 'webhook'">
-          <a-tag :color="record.hasWebhook ? 'green' : 'orange'">
-            {{ record.hasWebhook ? '已配置' : '未配置' }}
+          <a-tag :color="record.channel !== 'webhook' || record.hasWebhook ? 'green' : 'orange'">
+            {{ record.channel !== 'webhook' ? (record.target || '—') : record.hasWebhook ? '已配置' : '未配置' }}
           </a-tag>
         </template>
         <template v-else-if="column.key === 'action'">
@@ -186,9 +245,38 @@ async function saveOpsGroup() {
       </template>
     </a-table>
 
+    <!-- P6-M9 渠道凭据（平台级）：Telegram Bot / SMTP 账号，群上只存目标 -->
+    <div class="mt-2 rounded-lg border border-border p-3">
+      <div class="mb-2 text-sm font-medium">
+        通道设置（平台级凭据）
+        <span class="ml-2 text-xs font-normal text-muted-foreground">
+          Telegram Bot Token 与 SMTP 账号在此统一配置；各通知群只登记投递目标（chat id / 收件人）
+        </span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <a-input-password
+          v-model:value="channelForm.telegramToken"
+          :placeholder="channelState.telegramConfigured ? 'Telegram Bot Token（已配置，留空保留）' : 'Telegram Bot Token'"
+          size="small"
+          style="width: 260px"
+        />
+        <a-input v-model:value="channelForm.smtpHost" placeholder="SMTP 主机" size="small" style="width: 140px" />
+        <a-input v-model:value="channelForm.smtpPort" placeholder="端口" size="small" style="width: 80px" />
+        <a-input v-model:value="channelForm.smtpUser" placeholder="账号" size="small" style="width: 130px" />
+        <a-input-password
+          v-model:value="channelForm.smtpPass"
+          :placeholder="channelState.smtpConfigured ? '密码（已配置，留空保留）' : '密码'"
+          size="small"
+          style="width: 130px"
+        />
+        <a-input v-model:value="channelForm.smtpFrom" placeholder="发件人（可选）" size="small" style="width: 150px" />
+        <a-button size="small" type="primary" @click="saveChannels">保存通道</a-button>
+      </div>
+    </div>
+
     <a-modal
       v-model:open="formOpen"
-      :title="editingId ? '编辑通知群' : '登记群机器人'"
+      :title="editingId ? '编辑通知群' : '登记通知群'"
       @ok="submitForm"
     >
       <a-form layout="vertical">
@@ -204,11 +292,38 @@ async function saveOpsGroup() {
             ]"
           />
         </a-form-item>
+        <a-form-item label="通知渠道" required>
+          <a-select
+            v-model:value="form.channel"
+            :options="[
+              { label: '群机器人 Webhook（企微 / 钉钉 / 飞书）', value: 'webhook' },
+              { label: 'Telegram Bot', value: 'telegram' },
+              { label: '邮件（SMTP）', value: 'smtp' },
+            ]"
+          />
+        </a-form-item>
         <a-form-item
+          v-if="form.channel === 'webhook'"
           label="机器人 Webhook"
           extra="企微 / 钉钉 / 飞书群机器人地址；编辑时留空保留"
         >
           <a-input-password v-model:value="form.webhook" />
+        </a-form-item>
+        <a-form-item
+          v-if="form.channel === 'telegram'"
+          label="Chat ID"
+          extra="群 chat id（负数）或频道 @名；Bot Token 在下方通道设置统一配置"
+          required
+        >
+          <a-input v-model:value="form.target" placeholder="-1001234567890" />
+        </a-form-item>
+        <a-form-item
+          v-if="form.channel === 'smtp'"
+          label="收件人"
+          extra="多个邮箱逗号分隔；SMTP 账号在下方通道设置统一配置"
+          required
+        >
+          <a-input v-model:value="form.target" placeholder="a@x.com, b@x.com" />
         </a-form-item>
         <a-form-item label="备注">
           <a-input v-model:value="form.remark" />

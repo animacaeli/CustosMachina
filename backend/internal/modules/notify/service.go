@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -46,8 +47,25 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 type SaveGroupInput struct {
 	Name    string `json:"name" binding:"required,max=64"`
 	Scope   string `json:"scope" binding:"required,oneof=prod dev"`
+	Channel string `json:"channel" binding:"omitempty,oneof=webhook telegram smtp"`
 	Webhook string `json:"webhook" binding:"omitempty,max=1024"`
+	Target  string `json:"target" binding:"omitempty,max=512"`
 	Remark  string `json:"remark" binding:"max=255"`
+}
+
+// validateGroupTarget 渠道目标校验（webhook 渠道沿用 webhook 格式校验）。
+func validateGroupTarget(channel, target string) error {
+	switch channel {
+	case ChannelTelegram:
+		if target == "" {
+			return fmt.Errorf("Telegram 渠道须填写 chat id（数字或 @频道名）")
+		}
+	case ChannelSMTP:
+		if target == "" || !strings.Contains(target, "@") {
+			return fmt.Errorf("SMTP 渠道须填写收件人邮箱（多个逗号分隔）")
+		}
+	}
+	return nil
 }
 
 // validScope 用途显式选择（2026-09-24 审核：取消名称前缀约束，登记时直接选用途）。
@@ -59,7 +77,13 @@ func (s *Service) Create(ctx context.Context, in SaveGroupInput) (*GroupOut, err
 	if !validScope(in.Scope) {
 		return nil, fmt.Errorf("用途须为 prod 或 dev")
 	}
-	g := Group{Name: in.Name, Scope: in.Scope, Remark: in.Remark}
+	if in.Channel == "" {
+		in.Channel = ChannelWebhook
+	}
+	if err := validateGroupTarget(in.Channel, in.Target); err != nil {
+		return nil, err
+	}
+	g := Group{Name: in.Name, Scope: in.Scope, Channel: in.Channel, Target: in.Target, Remark: in.Remark}
 	if in.Webhook != "" {
 		enc, err := s.encryptWebhook(in.Webhook)
 		if err != nil {
@@ -79,7 +103,14 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveGroupInput) (*Grou
 	if err := s.db.WithContext(ctx).First(&g, id).Error; err != nil {
 		return nil, ErrNotFound
 	}
+	if in.Channel == "" {
+		in.Channel = ChannelWebhook
+	}
+	if err := validateGroupTarget(in.Channel, in.Target); err != nil {
+		return nil, err
+	}
 	g.Name, g.Scope, g.Remark = in.Name, in.Scope, in.Remark
+	g.Channel, g.Target = in.Channel, in.Target
 	if in.Webhook != "" { // 留空保留原 webhook（与服务器凭据同语义）
 		enc, err := s.encryptWebhook(in.Webhook)
 		if err != nil {
@@ -128,10 +159,16 @@ func (s *Service) Get(ctx context.Context, id uint) (*Group, error) {
 
 // ---- 发送 ----
 
-// Send 推送 markdown 消息到指定群并留痕。group 为nil 安全（返回 nil 不发送）。
+// Send 推送消息到指定群（按渠道分派：webhook/telegram/smtp）并留痕。
+// group 为 nil 安全（返回 nil 不发送）。
 func (s *Service) Send(ctx context.Context, group *Group, title, content string) error {
 	if group == nil {
 		return nil
+	}
+	if group.Channel == ChannelTelegram || group.Channel == ChannelSMTP {
+		err := s.sendByChannel(ctx, group, title, content)
+		s.record(ctx, group.ID, title, content, okOr(err), errString(err))
+		return err
 	}
 	webhook := group.Webhook
 	if webhook != "" && s.cipher != nil {

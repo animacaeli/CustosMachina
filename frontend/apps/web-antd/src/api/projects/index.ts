@@ -2,20 +2,21 @@ import { requestClient } from '#/api/request';
 
 /** 通知群（webhook 已剔除，仅 hasWebhook） */
 export interface NotifyGroup {
-  createdAt: string;
-  hasWebhook: boolean;
+  channel?: 'smtp' | 'telegram' | 'webhook';
   id: number;
-  name: string; // 【P】xxx / 【dev】xxx
-  remark: string;
-  scope: 'dev' | 'prod';
+  name: string;
+  remark?: string;
+  scope: string;
+  target?: string;
 }
 
 export interface SaveNotifyGroupInput {
+  channel?: 'smtp' | 'telegram' | 'webhook';
   name: string;
-  /** 生产类 prod（正式/灰度可选） | 测试类 dev */
-  scope: 'dev' | 'prod';
   remark?: string;
-  webhook?: string; // 留空保留
+  scope: string;
+  target?: string;
+  webhook?: string;
 }
 
 export async function getNotifyGroupsApi() {
@@ -185,4 +186,29 @@ export async function saveProjectTargetsApi(
   data: SaveTargetsInput,
 ) {
   return requestClient.put(`/projects/${id}/targets`, data);
+}
+
+/** P6-M9 渠道凭据设置（Telegram Bot / SMTP，平台级） */
+export interface ChannelSettings {
+  smtpConfigured: boolean;
+  smtpFrom: string;
+  smtpHost: string;
+  smtpPort: string;
+  smtpUser: string;
+  telegramConfigured: boolean;
+}
+
+export async function getChannelSettingsApi() {
+  return requestClient.get<ChannelSettings>('/notify-settings/channels');
+}
+
+export async function saveChannelSettingsApi(data: {
+  smtpFrom?: string;
+  smtpHost?: string;
+  smtpPass?: string;
+  smtpPort?: string;
+  smtpUser?: string;
+  telegramToken?: string;
+}) {
+  return requestClient.put('/notify-settings/channels', data);
 }

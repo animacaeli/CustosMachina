@@ -89,12 +89,20 @@ func (s *sender) Send(ctx context.Context, groupID uint, webhook, title, content
 	return s.post(ctx, groupID, webhook, payload)
 }
 
+func newJSONRequest(ctx context.Context, url string, payload []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
 func (s *sender) post(ctx context.Context, groupID uint, webhook string, payload []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(payload))
+	req, err := newJSONRequest(ctx, webhook, payload)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return err
