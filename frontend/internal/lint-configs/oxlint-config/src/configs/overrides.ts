@@ -12,10 +12,15 @@ const overrides: OxlintConfig = {
     {
       // 这些 @typescript-eslint 规则此前不作用于 .vue（旧 eslint glob 不含 .vue）。
       // Vue 组件惯用 `interface Props extends XxxProps {}` 声明 props，保持迁移前行为放行。
+      // no-non-null-assertion：Vue 模板 ref/事件回调参数在 script setup 中频繁需要 `!`
+      // （Vue 官方风格也如此），关闭比逐处改 optional chain 更务实。
+      // prefer-add-event-listener：FileReader/TextDecoder 等一次性场景 `on<event> =` 直赋更简洁。
       files: ['*.vue', '**/*.vue'],
       rules: {
         'typescript/no-empty-object-type': 'off',
         'typescript/no-unsafe-function-type': 'off',
+        'typescript/no-non-null-assertion': 'off',
+        'unicorn/prefer-add-event-listener': 'off',
       },
     },
     {

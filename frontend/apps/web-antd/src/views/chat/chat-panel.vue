@@ -98,7 +98,8 @@ function scrollToBottom() {
 }
 
 async function loadMessages(id: number) {
-  messages.value = (await listMessagesApi(id)).map((m) => ({
+  const list = await listMessagesApi(id);
+  messages.value = list.map((m) => ({
     ...m,
     actions: m.actions ?? undefined,
     attachments: m.attachments ?? undefined,
