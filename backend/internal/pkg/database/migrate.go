@@ -28,6 +28,17 @@ type schemaMigration struct {
 
 func (schemaMigration) TableName() string { return "schema_migrations" }
 
+// goHooks Go 迁移钩子（按版本注册，app 层在启动早期调用 RegisterGoHook）：
+// 用于 CREATE TABLE 自增主键这类 SQLite/MySQL 双方言写不了的 DDL——钩子里
+// 用 gorm AutoMigrate 单表建表（仅允许"加新表"语义，存量列变更仍写 SQL）。
+var goHooks = map[string]func(*gorm.DB) error{}
+
+// RegisterGoHook 登记某版本的 Go 钩子（版本须存在对应 NNNN_*.sql 占位文件，
+// 保证版本链与顺序由文件驱动，钩子只填实现）。
+func RegisterGoHook(version string, fn func(*gorm.DB) error) {
+	goHooks[version] = fn
+}
+
 // migrationFile 解析后的迁移项。
 type migrationFile struct {
 	Version string // 文件名前缀（如 0001）
@@ -144,6 +155,11 @@ func Migrate(db *gorm.DB, models []any) error {
 			for _, stmt := range f.Stmts {
 				if err := tx.Exec(stmt).Error; err != nil {
 					return fmt.Errorf("版本 %s 语句失败: %w\n%s", f.Version, err, stmt)
+				}
+			}
+			if hook, ok := goHooks[f.Version]; ok {
+				if err := hook(tx); err != nil {
+					return fmt.Errorf("版本 %s Go 钩子失败: %w", f.Version, err)
 				}
 			}
 			return tx.Create(&schemaMigration{Version: f.Version, AppliedAt: time.Now()}).Error

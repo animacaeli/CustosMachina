@@ -39,6 +39,17 @@ import (
 	"github.com/custos-machina/backend/internal/server"
 )
 
+// P7 版本化迁移的 Go 钩子（存量库建新表；新库 AutoMigrate 已覆盖，钩子幂等无害）。
+// 自增主键 CREATE TABLE 写不了 SQLite/MySQL 双方言 DDL，建表走 gorm。
+func init() {
+	database.RegisterGoHook("0002", func(db *gorm.DB) error {
+		return db.AutoMigrate(&rbac.Role{}, &rbac.RoleAction{}, &rbac.RoleProject{})
+	})
+	database.RegisterGoHook("0003", func(db *gorm.DB) error {
+		return db.AutoMigrate(&notify.BusinessToken{})
+	})
+}
+
 // ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。
 func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models := identity.Models()

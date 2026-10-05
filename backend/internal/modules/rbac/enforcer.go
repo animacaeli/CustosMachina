@@ -236,11 +236,14 @@ var defaultPolicies = [][]string{
 	{"admin", "/roles", "POST"},
 	{"admin", "/roles/actions", "GET"},
 	{"admin", "/roles/*", "DELETE"},
+	// v21：业务告警凭证管理（P7-M5）——admin 签发/吊销业务告警 token
+	{"admin", "/notify-business-tokens", "GET|POST"},
+	{"admin", "/notify-business-tokens/*", "PUT"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "20" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "21" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -386,6 +389,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v19→v20：自定义角色 CRUD 路由对 admin 是新资源点
 		if len(ps) > 0 && p[0] == "admin" && oldVersion == "19" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v20→v21：业务告警凭证管理对 admin 是新资源点
+		if len(ps) > 0 && p[0] == "admin" && oldVersion == "20" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

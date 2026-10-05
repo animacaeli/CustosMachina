@@ -1,19 +1,27 @@
 package notify
 
 import (
+	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
+	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
 )
 
 type Handler struct {
 	svc *Service
+	// 业务告警入口限速（P7-M5 纪律：新公开接口一律带限速）
+	bizLimiter *ratelimit.Window
 }
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc, bizLimiter: ratelimit.NewWindow(60, time.Minute)}
+}
 
 func (h *Handler) Name() string { return "notify" }
 
@@ -42,6 +50,92 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		ru.DELETE("/:id", h.deleteRule)
 		ru.POST("/:id/test", h.testRule)
 	}
+	// P7-M5 业务告警凭证管理（admin，casbin v21）
+	bt := r.Authed.Group("/notify-business-tokens")
+	{
+		bt.GET("", h.listBusinessTokens)
+		bt.POST("", h.createBusinessToken)
+		bt.PUT("/:id/enabled", h.setBusinessTokenEnabled)
+	}
+	// P7-M5 业务告警公开入口：业务服务调用（非用户凭证），
+	// 应用级 token 鉴权 + IP 限速，投递复用统一通知路由
+	r.Public.POST("/notify/business", h.businessAlert)
+}
+
+// ---- P7-M5 业务告警 ----
+
+func (h *Handler) businessAlert(c *gin.Context) {
+	if !h.bizLimiter.Allow(c.ClientIP()) {
+		c.JSON(429, gin.H{"code": 429, "message": "请求过于频繁，请稍后重试"})
+		return
+	}
+	tok := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if tok == "" {
+		tok = c.GetHeader("X-Biz-Alert-Token")
+	}
+	if tok == "" {
+		c.JSON(401, gin.H{"code": 401, "message": "缺少业务告警凭证（Authorization: Bearer 或 X-Biz-Alert-Token）"})
+		return
+	}
+	var in BusinessAlertInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	if _, err := h.svc.VerifyBusinessToken(c.Request.Context(), tok, in.App); err != nil {
+		c.JSON(401, gin.H{"code": 401, "message": err.Error()})
+		return
+	}
+	title, detail, dedupKey := RenderBusinessAlert(in)
+	// 投递异步化：webhook 投递可达秒级（企微 API 慢），同步会把业务侧响应拖到
+	// 3s+——入口受理即返回，脱离 request ctx 投递（只发消息，无半完成态）
+	go h.svc.NotifyEvent(context.WithoutCancel(c.Request.Context()), SourceBusiness, in.Level, dedupKey, title, detail)
+	httpx.OK(c, gin.H{"accepted": true})
+}
+
+func (h *Handler) listBusinessTokens(c *gin.Context) {
+	out, err := h.svc.ListBusinessTokens(c.Request.Context())
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) createBusinessToken(c *gin.Context) {
+	var in struct {
+		Name string `json:"name" binding:"max=64"`
+		App  string `json:"app" binding:"required,max=64"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	out, err := h.svc.IssueBusinessToken(c.Request.Context(), in.Name, in.App)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+func (h *Handler) setBusinessTokenEnabled(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SetBusinessTokenEnabled(c.Request.Context(), id, in.Enabled); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
 }
 
 // ---- 路由规则（统一通知路由，P5 M1）----

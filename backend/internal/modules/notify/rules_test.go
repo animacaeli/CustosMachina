@@ -16,7 +16,7 @@ func rulesTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&Group{}, &SendRecord{}, &Rule{}, &identitySettingTable{}); err != nil {
+	if err := db.AutoMigrate(&Group{}, &SendRecord{}, &Rule{}, &BusinessToken{}, &identitySettingTable{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	return db

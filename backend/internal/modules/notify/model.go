@@ -24,12 +24,13 @@ const (
 	SourceCertExpiring = "cert_expiring" // 证书即将到期/续期失败（M5 接入）
 	SourceBackupFailed = "backup_failed" // 备份任务失败（M2 接入）
 	SourceAIDigest     = "ai_digest"     // AI 摘要投递（M6 接入）
+	SourceBusiness     = "business"      // 业务服务告警（P7-M5 轻量入口）
 )
 
 // ValidSources 可配置的事件源集合。
 var ValidSources = []string{
 	SourceCronFailed, SourceObservFailed, SourcePlatformOps, SourceO2Alert,
-	SourceCertExpiring, SourceBackupFailed, SourceAIDigest,
+	SourceCertExpiring, SourceBackupFailed, SourceAIDigest, SourceBusiness,
 }
 
 // 事件级别（rank 递增：info < warn < critical）。
@@ -95,5 +96,5 @@ func (SendRecord) TableName() string { return "notify_records" }
 
 // Models 返回本模块需要自动迁移的模型。
 func Models() []any {
-	return []any{&Group{}, &SendRecord{}, &Rule{}}
+	return []any{&Group{}, &SendRecord{}, &Rule{}, &BusinessToken{}}
 }
