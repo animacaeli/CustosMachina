@@ -18,7 +18,9 @@ import ConversationList from '#/views/chat/conversation-list.vue';
 
 defineOptions({ name: 'AiAssistant' });
 
-const ChatPanel = defineAsyncComponent(() => import('#/views/chat/chat-panel.vue'));
+const ChatPanel = defineAsyncComponent(
+  () => import('#/views/chat/chat-panel.vue'),
+);
 
 const accessStore = useAccessStore();
 const route = useRoute();
@@ -37,9 +39,11 @@ const listRef = ref();
 const bootstrapped = ref(false);
 
 // 页面上下文（用户定调：AI 感知当前所在页面，省去用户解释）：路由标题 + 路径
-const pageContext = computed(
-  () =>
-    `${(route.meta?.title as string) ?? route.path}（${route.path}）`.slice(0, 120),
+const pageContext = computed(() =>
+  `${(route.meta?.title as string) ?? route.path}（${route.path}）`.slice(
+    0,
+    120,
+  ),
 );
 
 const streaming = computed(() => panelRef.value?.isStreaming?.() ?? false);
@@ -75,7 +79,10 @@ function onKeydown(e: KeyboardEvent) {
     // 输入框组合/命令面板的 Esc 由面板自身处理（stopPropagation 不可靠，
     // 这里仅当焦点不在输入框时收起）
     const el = document.activeElement;
-    if (!el || !(el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) {
+    if (
+      !el ||
+      !(el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)
+    ) {
       open.value = false;
     }
   }
@@ -101,11 +108,17 @@ function loadSize() {
 function clampSize() {
   const maxW = Math.min(760, window.innerWidth - 140);
   panelW.value = Math.min(Math.max(panelW.value, 360), maxW);
-  panelTop.value = Math.min(Math.max(panelTop.value, 48), Math.round(window.innerHeight * 0.6));
+  panelTop.value = Math.min(
+    Math.max(panelTop.value, 48),
+    Math.round(window.innerHeight * 0.6),
+  );
 }
 
 function saveSize() {
-  localStorage.setItem(SIZE_KEY, JSON.stringify({ w: panelW.value, top: panelTop.value }));
+  localStorage.setItem(
+    SIZE_KEY,
+    JSON.stringify({ w: panelW.value, top: panelTop.value }),
+  );
 }
 
 // 拖拽：宽 = 左边缘手柄；高 = 顶边手柄（底边固定贴球上方）
@@ -194,10 +207,33 @@ onMounted(() => {
           </linearGradient>
         </defs>
         <!-- 头部圆角矩形底盘 -->
-        <rect fill="url(#aiFabGrad)" height="30" rx="10" stroke="rgb(255 255 255 / 0.85)" stroke-width="1.5" width="36" x="6" y="12" />
+        <rect
+          fill="url(#aiFabGrad)"
+          height="30"
+          rx="10"
+          stroke="rgb(255 255 255 / 0.85)"
+          stroke-width="1.5"
+          width="36"
+          x="6"
+          y="12"
+        />
         <!-- 天线 -->
-        <line stroke="#818cf8" stroke-linecap="round" stroke-width="2.5" x1="24" x2="24" y1="8" y2="12" />
-        <circle :class="{ 'ai-antenna-busy': streaming }" cx="24" cy="6.5" fill="#f472b6" r="2.5" />
+        <line
+          stroke="#818cf8"
+          stroke-linecap="round"
+          stroke-width="2.5"
+          x1="24"
+          x2="24"
+          y1="8"
+          y2="12"
+        />
+        <circle
+          :class="{ 'ai-antenna-busy': streaming }"
+          cx="24"
+          cy="6.5"
+          fill="#f472b6"
+          r="2.5"
+        />
         <!-- 耳侧 -->
         <rect fill="#818cf8" height="10" rx="2.5" width="4" x="2" y="22" />
         <rect fill="#818cf8" height="10" rx="2.5" width="4" x="42" y="22" />
@@ -207,7 +243,12 @@ onMounted(() => {
           <circle class="ai-eye" cx="31" cy="27" r="3" />
         </g>
         <!-- 嘴：微笑弧 -->
-        <path d="M18 33 Q24 37 30 33" stroke="rgb(255 255 255 / 0.85)" stroke-linecap="round" stroke-width="2" />
+        <path
+          d="M18 33 Q24 37 30 33"
+          stroke="rgb(255 255 255 / 0.85)"
+          stroke-linecap="round"
+          stroke-width="2"
+        />
       </svg>
       <!-- 回答中的光圈 -->
       <span
@@ -222,7 +263,7 @@ onMounted(() => {
       <div
         v-if="open"
         class="bg-card fixed right-[5.5rem] bottom-24 z-[999] flex max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-2xl border border-border shadow-2xl"
-        :style="{ top: `${panelTop }px`, width: `${panelW }px` }"
+        :style="{ top: `${panelTop}px`, width: `${panelW}px` }"
       >
         <!-- 尺寸拖拽手柄：左边缘调宽 / 顶边调高（拖完记忆） -->
         <div
@@ -230,23 +271,31 @@ onMounted(() => {
           title="拖拽调整宽度"
           @mousedown="startResize($event, 'w')"
         >
-          <div class="mx-auto h-full w-full rounded opacity-0 transition-opacity group-hover/h:bg-primary/50 group-hover/h:opacity-100"></div>
+          <div
+            class="mx-auto h-full w-full rounded opacity-0 transition-opacity group-hover/h:bg-primary/50 group-hover/h:opacity-100"
+          ></div>
         </div>
         <div
           class="group/v absolute top-0 right-6 left-6 z-10 h-1.5 cursor-row-resize"
           title="拖拽调整高度"
           @mousedown="startResize($event, 'h')"
         >
-          <div class="h-full w-full rounded opacity-0 transition-opacity group-hover/v:bg-primary/50 group-hover/v:opacity-100"></div>
+          <div
+            class="h-full w-full rounded opacity-0 transition-opacity group-hover/v:bg-primary/50 group-hover/v:opacity-100"
+          ></div>
         </div>
         <!-- 面板头部 -->
         <div class="flex items-center gap-2 border-b border-border px-4 py-3">
           <span class="text-sm font-medium">AI 助手</span>
-          <a-tag v-if="panelConv?.mode === 'platform'" color="geekblue">平台上下文</a-tag>
+          <a-tag v-if="panelConv?.mode === 'platform'" color="geekblue">
+            平台上下文
+          </a-tag>
           <span v-if="panelConv?.deleted" class="text-xs text-red-500">已删除 · 只读</span>
           <div class="flex-1"></div>
           <a-button size="small" type="text" @click="newChat">新对话</a-button>
-          <a-button size="small" type="text" @click="showHistory">对话历史</a-button>
+          <a-button size="small" type="text" @click="showHistory">
+            对话历史
+          </a-button>
           <a-button size="small" type="text" @click="open = false">✕</a-button>
         </div>
 
@@ -261,7 +310,10 @@ onMounted(() => {
 
         <div v-show="view === 'chat'" class="flex min-h-0 flex-1 flex-col">
           <!-- 快捷提问（无会话时的欢迎态） -->
-          <div v-if="!panelConv && !draftMode && !(panelRef?.isStreaming?.())" class="border-b border-border p-4">
+          <div
+            v-if="!panelConv && !draftMode && !panelRef?.isStreaming?.()"
+            class="border-b border-border p-4"
+          >
             <div class="mb-2 text-xs text-muted-foreground">
               有问题随时问——已接入平台实时数据（主机 / 构建 / 发布 / 定时任务）
             </div>
@@ -288,7 +340,9 @@ onMounted(() => {
               @used="onUsed"
             />
             <template #fallback>
-              <div class="flex flex-1 items-center justify-center text-muted-foreground">
+              <div
+                class="flex flex-1 items-center justify-center text-muted-foreground"
+              >
                 加载对话组件…
               </div>
             </template>
@@ -304,15 +358,17 @@ onMounted(() => {
 .ai-breathing {
   animation: ai-breathe 3.2s ease-in-out infinite;
 }
+
 @keyframes ai-breathe {
   0%,
   100% {
+    box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
     transform: scale(1);
-    box-shadow: 0 4px 14px rgb(0 0 0 / 0.18);
   }
+
   50% {
+    box-shadow: 0 6px 20px rgb(0 0 0 / 26%);
     transform: scale(1.045);
-    box-shadow: 0 6px 20px rgb(0 0 0 / 0.26);
   }
 }
 
@@ -320,41 +376,50 @@ onMounted(() => {
 .ai-antenna-busy {
   animation: ai-blink 0.9s ease-in-out infinite;
 }
+
 @keyframes ai-blink {
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.25;
   }
 }
+
 .ai-eyes-busy .ai-eye {
   animation: ai-scan 1.2s ease-in-out infinite;
 }
+
 .ai-eyes-busy .ai-eye:nth-child(2) {
   animation-delay: 0.12s;
 }
+
 @keyframes ai-scan {
   0%,
   100% {
     transform: translateX(0);
   }
+
   50% {
     transform: translateX(2.5px);
   }
 }
+
 .ai-halo {
   animation: ai-halo 1.4s ease-out infinite;
 }
+
 @keyframes ai-halo {
   0% {
-    transform: scale(1);
     opacity: 0.9;
+    transform: scale(1);
   }
+
   100% {
-    transform: scale(1.35);
     opacity: 0;
+    transform: scale(1.35);
   }
 }
 </style>
@@ -367,9 +432,10 @@ onMounted(() => {
     transform 0.22s ease,
     opacity 0.22s ease;
 }
+
 .ai-pop-enter-from,
 .ai-pop-leave-to {
-  transform: translateY(12px) scale(0.98);
   opacity: 0;
+  transform: translateY(12px) scale(0.98);
 }
 </style>

@@ -304,7 +304,10 @@ async function onDelete(p: Project) {
         <a-form-item label="项目名" required>
           <a-input v-model:value="form.name" placeholder="如 custos-machina" />
         </a-form-item>
-        <a-form-item label="Git 托管" extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins">
+        <a-form-item
+          label="Git 托管"
+          extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins"
+        >
           <a-radio-group
             v-model:value="form.provider"
             :options="[

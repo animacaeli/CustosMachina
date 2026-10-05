@@ -3,13 +3,7 @@
 import type { ChatAttachment, Conversation } from '#/api/chat';
 import type { AiSkill } from '#/api/chat/skills';
 
-import {
-  computed,
-  nextTick,
-  onMounted,
-  ref,
-  watch,
-} from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import { PaperClipOutlined } from '@ant-design/icons-vue';
 import { message as antMessage } from 'ant-design-vue';
@@ -50,7 +44,9 @@ marked.setOptions({ breaks: true, gfm: true });
 // ---- 会话状态（外壳切换经 conv prop；草稿经 currentId=null） ----
 const currentId = ref<null | number>(props.conv?.id ?? null);
 const convMode = ref<'general' | 'platform' | undefined>(props.conv?.mode);
-const activeMode = computed(() => convMode.value ?? props.initialMode ?? 'platform');
+const activeMode = computed(
+  () => convMode.value ?? props.initialMode ?? 'platform',
+);
 
 watch(
   () => props.conv,
@@ -174,7 +170,10 @@ async function send() {
       },
       onTool: (name, args) => {
         // function calling：模型调用平台工具，气泡顶部实时追加工具标签
-        assistant!.tools = [...(assistant!.tools ?? []), { arguments: args, name }];
+        assistant!.tools = [
+          ...(assistant!.tools ?? []),
+          { arguments: args, name },
+        ];
         scrollToBottom();
       },
       onAction: (a) => {
@@ -192,11 +191,11 @@ async function send() {
       },
       onError: (msg) => {
         // 无产出错误替换占位气泡；有部分内容则标注
-        if (!assistant!.content) {
-          messages.value = messages.value.filter((m) => m !== assistant);
-        } else {
+        if (assistant!.content) {
           assistant!.streaming = false;
           assistant!.status = 'error';
+        } else {
+          messages.value = messages.value.filter((m) => m !== assistant);
         }
         antMessage.error(msg);
         finish();
@@ -259,7 +258,10 @@ function onInputForSlash() {
     return;
   }
   const namePart = m[1] ?? '';
-  if (m[2] === ' ' || (namePart && activeSkill.value?.name === namePart.toLowerCase())) {
+  if (
+    m[2] === ' ' ||
+    (namePart && activeSkill.value?.name === namePart.toLowerCase())
+  ) {
     // 已锁定（/name + 空格 后继续输入问题）
     slashOpen.value = false;
     return;
@@ -291,7 +293,8 @@ function inputKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       slashIndex.value =
-        (slashIndex.value - 1 + slashMatches.value.length) % slashMatches.value.length;
+        (slashIndex.value - 1 + slashMatches.value.length) %
+        slashMatches.value.length;
       return;
     }
     if (e.key === 'Tab' || e.key === 'Enter') {
@@ -339,9 +342,13 @@ async function onFileChange(info: any) {
     return;
   }
   if (file.type.startsWith('image/') || file.size < 512 * 1024) {
-    pendingFiles.value = [...pendingFiles.value, { data: '', mime: file.type || 'text/plain', name: file.name }];
+    pendingFiles.value = [
+      ...pendingFiles.value,
+      { data: '', mime: file.type || 'text/plain', name: file.name },
+    ];
     try {
-      pendingFiles.value[pendingFiles.value.length - 1]!.data = await readAsDataURL(file);
+      pendingFiles.value[pendingFiles.value.length - 1]!.data =
+        await readAsDataURL(file);
     } catch {
       pendingFiles.value = pendingFiles.value.slice(0, -1);
       antMessage.error(`附件 ${file.name} 读取失败`);
@@ -419,13 +426,26 @@ onMounted(async () => {
             >
               <div class="flex items-center gap-2">
                 <span class="font-medium text-foreground">
-                  {{ a.type === 'restart_container' ? '🔄 容器重启建议' : a.type === 'trigger_cron' ? '⏱️ 定时任务触发建议' : a.type === 'deploy_config' ? '📤 配置下发建议' : a.type }}
+                  {{
+                    a.type === 'restart_container'
+                      ? '🔄 容器重启建议'
+                      : a.type === 'trigger_cron'
+                        ? '⏱️ 定时任务触发建议'
+                        : a.type === 'deploy_config'
+                          ? '📤 配置下发建议'
+                          : a.type
+                  }}
                 </span>
                 <span class="text-primary">操作建议</span>
               </div>
               <div class="mt-1 text-muted-foreground">{{ a.summary }}</div>
               <div class="mt-2 flex items-center gap-2">
-                <a-button v-if="a.route" size="small" type="primary" @click="$router.push(a.route)">
+                <a-button
+                  v-if="a.route"
+                  size="small"
+                  type="primary"
+                  @click="$router.push(a.route)"
+                >
                   去处理
                 </a-button>
                 <span class="text-muted-foreground">由你手动操作，AI 不会执行变更</span>
@@ -441,7 +461,10 @@ onMounted(async () => {
             <a-tag v-if="m.skill" class="mb-1" color="purple">
               ⚡ /{{ m.skill }}
             </a-tag>
-            <div v-if="m.attachments?.length" class="mb-1.5 flex flex-wrap gap-1.5">
+            <div
+              v-if="m.attachments?.length"
+              class="mb-1.5 flex flex-wrap gap-1.5"
+            >
               <img
                 v-for="(a, ai) in m.attachments"
                 :key="ai"
@@ -477,13 +500,23 @@ onMounted(async () => {
     <!-- 输入区 -->
     <div class="border-t border-border p-3">
       <div v-if="pendingFiles.length > 0" class="mb-2 flex flex-wrap gap-1.5">
-        <a-tag v-for="(f, fi) in pendingFiles" :key="fi" closable @close="pendingFiles = pendingFiles.filter((_, x) => x !== fi)">
+        <a-tag
+          v-for="(f, fi) in pendingFiles"
+          :key="fi"
+          closable
+          @close="pendingFiles = pendingFiles.filter((_, x) => x !== fi)"
+        >
           {{ f.name }}{{ f.data ? '' : '（读取中…）' }}
         </a-tag>
       </div>
       <div class="relative flex items-end gap-2">
-        <div v-if="slashOpen" class="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded-md border border-border bg-popover shadow-lg">
-          <div class="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+        <div
+          v-if="slashOpen"
+          class="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded-md border border-border bg-popover shadow-lg"
+        >
+          <div
+            class="border-b border-border px-3 py-1.5 text-xs text-muted-foreground"
+          >
             技能命令（↑↓ 选择、Tab/Enter 确认、Esc 关闭）
           </div>
           <div
@@ -500,7 +533,10 @@ onMounted(async () => {
               sk.description
             }}</span>
           </div>
-          <div v-if="slashMatches.length === 0" class="px-3 py-2 text-sm text-muted-foreground">
+          <div
+            v-if="slashMatches.length === 0"
+            class="px-3 py-2 text-sm text-muted-foreground"
+          >
             没有匹配的技能
           </div>
         </div>
@@ -511,7 +547,10 @@ onMounted(async () => {
           accept="image/*,.txt,.log,.json,.yaml,.yml,.toml,.ini,.env,.md,.conf"
           @change="onFileChange"
         >
-          <a-button :disabled="streaming || readonly" title="附件（≤3 个，单文件 ≤4MB）">
+          <a-button
+            :disabled="streaming || readonly"
+            title="附件（≤3 个，单文件 ≤4MB）"
+          >
             <PaperClipOutlined />
           </a-button>
         </a-upload>

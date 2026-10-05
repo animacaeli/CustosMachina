@@ -86,15 +86,17 @@ onMounted(load);
       <template #message>MCP 接入（P6-M2）</template>
       <template #description>
         <div>
-          平台能力已暴露为标准 MCP tools（主机/项目/构建/发布/cron/容器/上下文包，只读）。
-          Claude Desktop / IDE / 任意 MCP 客户端按以下配置接入：
+          平台能力已暴露为标准 MCP
+          tools（主机/项目/构建/发布/cron/容器/上下文包，只读）。 Claude Desktop
+          / IDE / 任意 MCP 客户端按以下配置接入：
         </div>
         <div class="mt-2 rounded bg-muted p-2 font-mono text-xs">
           URL: {{ endpointHint }}<br />
           Header: Authorization: Bearer &lt;凭证&gt;
         </div>
         <div class="mt-1 text-xs">
-          凭证绑定角色：admin 视角含敏感上下文块；dev 视角自动过滤（与平台用户同套语义）
+          凭证绑定角色：admin 视角含敏感上下文块；dev
+          视角自动过滤（与平台用户同套语义）
         </div>
       </template>
     </a-alert>
@@ -129,12 +131,19 @@ onMounted(load);
     </a-modal>
 
     <a-modal v-model:open="issuedOpen" title="凭证已签发" :footer="null">
-      <a-alert class="mb-3" message="明文只显示这一次，请立即复制保存" type="warning" show-icon />
+      <a-alert
+        class="mb-3"
+        message="明文只显示这一次，请立即复制保存"
+        type="warning"
+        show-icon
+      />
       <div class="flex items-center gap-2">
         <code class="flex-1 overflow-x-auto rounded bg-muted p-2 text-xs">
           {{ issued?.plaintext }}
         </code>
-        <a-button size="small" @click="copy(issued?.plaintext ?? '')">复制</a-button>
+        <a-button size="small" @click="copy(issued?.plaintext ?? '')">
+          复制
+        </a-button>
       </div>
     </a-modal>
 
@@ -167,7 +176,11 @@ onMounted(load);
       </a-table-column>
       <a-table-column :width="170" title="最近使用">
         <template #default="{ record }">
-          {{ record.lastUsedAt ? record.lastUsedAt.replace('T', ' ').slice(0, 16) : '未使用' }}
+          {{
+            record.lastUsedAt
+              ? record.lastUsedAt.replace('T', ' ').slice(0, 16)
+              : '未使用'
+          }}
         </template>
       </a-table-column>
       <a-table-column :width="140" key="action" title="操作">

@@ -660,7 +660,11 @@ async function onDelete(id: number, name: string) {
     <MetricsDrawer v-model:open="drawerOpen" :server="drawerServer" />
     <TerminalModal v-model:open="terminalOpen" :server="terminalServer" />
     <TerminalAudit v-model:open="auditOpen" :server-id="auditServerId" />
-    <TerminalAcl v-model:open="aclOpen" :server-id="aclServer.id" :server-name="aclServer.name" />
+    <TerminalAcl
+      v-model:open="aclOpen"
+      :server-id="aclServer.id"
+      :server-name="aclServer.name"
+    />
     <ContainersDrawer
       v-model:open="containersOpen"
       :server-id="containersServerId"

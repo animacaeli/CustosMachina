@@ -206,7 +206,10 @@ function close() {
                 style="width: 240px"
               />
             </a-form-item>
-            <a-form-item label="Git 托管" extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins">
+            <a-form-item
+              label="Git 托管"
+              extra="决定 CI 引擎：gitea → gitea Actions；gitee → Jenkins"
+            >
               <a-radio-group
                 v-model:value="config.provider"
                 :options="[

@@ -3,7 +3,10 @@ import { ref, watch } from 'vue';
 
 import { message } from 'ant-design-vue';
 
-import { getTerminalAclsApi, setTerminalAclsApi } from '#/api/resources/terminal-audit';
+import {
+  getTerminalAclsApi,
+  setTerminalAclsApi,
+} from '#/api/resources/terminal-audit';
 import { getUserListApi } from '#/api/system/user';
 
 /**
@@ -20,7 +23,9 @@ const props = defineProps<{
 
 const open = defineModel<boolean>('open');
 
-const users = ref<{ username: string; displayName: string; status: string }[]>([]);
+const users = ref<{ username: string; displayName: string; status: string }[]>(
+  [],
+);
 const selected = ref<string[]>([]);
 const saving = ref(false);
 
@@ -50,8 +55,8 @@ async function save() {
     await setTerminalAclsApi(props.serverId, selected.value);
     message.success('授权已保存（即时生效）');
     open.value = false;
-  } catch (e: any) {
-    message.error(e?.response?.data?.message ?? '保存失败');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message ?? '保存失败');
   } finally {
     saving.value = false;
   }

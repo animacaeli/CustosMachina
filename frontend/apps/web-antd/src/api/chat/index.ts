@@ -167,9 +167,18 @@ export async function chatStreamApi(
             if (event === 'delta') {
               handlers.onDelta(String(payload.text ?? ''));
             } else if (event === 'tool') {
-              handlers.onTool?.(String(payload.name ?? ''), String(payload.args ?? ''));
+              handlers.onTool?.(
+                String(payload.name ?? ''),
+                String(payload.args ?? ''),
+              );
             } else if (event === 'action') {
-              handlers.onAction?.(payload as unknown as { route?: string; summary: string; type: string });
+              handlers.onAction?.(
+                payload as unknown as {
+                  route?: string;
+                  summary: string;
+                  type: string;
+                },
+              );
             } else if (event === 'done') {
               handlers.onDone(
                 String(payload.status ?? 'done'),

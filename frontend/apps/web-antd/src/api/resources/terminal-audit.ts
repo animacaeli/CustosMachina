@@ -17,7 +17,10 @@ export async function getTerminalAclsApi(serverId: number) {
   return requestClient.get<string[]>(`/rbac/terminal-acls/${serverId}`);
 }
 
-export async function setTerminalAclsApi(serverId: number, usernames: string[]) {
+export async function setTerminalAclsApi(
+  serverId: number,
+  usernames: string[],
+) {
   return requestClient.put(`/rbac/terminal-acls/${serverId}`, { usernames });
 }
 

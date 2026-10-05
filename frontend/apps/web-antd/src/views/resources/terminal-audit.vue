@@ -58,14 +58,18 @@ async function play(s: TerminalSession) {
       source: Record<string, unknown>,
       opts: Record<string, unknown>,
     ) => { dispose?: () => void };
-    playerInstance = createFn(playerBox.value!, { data: url }, {
-      cols: 120,
-      rows: 32,
-      autoPlay: true,
-      idleTimeLimit: 2,
-    });
-  } catch (e: any) {
-    message.error(e?.response?.data?.message ?? '加载录制失败');
+    playerInstance = createFn(
+      playerBox.value!,
+      { data: url },
+      {
+        cols: 120,
+        rows: 32,
+        autoPlay: true,
+        idleTimeLimit: 2,
+      },
+    );
+  } catch (error: any) {
+    message.error(error?.response?.data?.message ?? '加载录制失败');
   }
 }
 
@@ -102,7 +106,9 @@ onBeforeUnmount(stopPlay);
     @close="emit('update:open', false)"
   >
     <div v-if="playing" class="flex h-full flex-col gap-3">
-      <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <div
+        class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+      >
         <a-button size="small" @click="stopPlay">← 返回列表</a-button>
         <span>{{ playing.server }}（#{{ playing.serverId }}）</span>
         <span>{{ playing.operator }}</span>
@@ -140,7 +146,9 @@ onBeforeUnmount(stopPlay);
       </a-table-column>
       <a-table-column title="操作" :width="80">
         <template #default="{ record }">
-          <a-button size="small" type="link" @click="play(record)">回放</a-button>
+          <a-button size="small" type="link" @click="play(record)">
+            回放
+          </a-button>
         </template>
       </a-table-column>
       <template #emptyText>

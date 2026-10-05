@@ -47,7 +47,7 @@
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
     "ant-design-vue": "catalog:",
-    "asciinema-player": "^3.17.0",
+    "asciinema-player": "catalog:",
     "dayjs": "catalog:",
     "dompurify": "catalog:",
     "marked": "catalog:",

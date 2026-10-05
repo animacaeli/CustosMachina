@@ -14,7 +14,10 @@ export async function syncAgileApi(projectId: number, env: string) {
 }
 
 export async function reconcileAgileApi(projectId: number, env: string) {
-  return requestClient.post<AgileDiff>('/config-kv/reconcile', { env, projectId });
+  return requestClient.post<AgileDiff>('/config-kv/reconcile', {
+    env,
+    projectId,
+  });
 }
 
 export async function getAgileSettingsApi() {

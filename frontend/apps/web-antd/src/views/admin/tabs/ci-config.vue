@@ -176,7 +176,9 @@ onMounted(async () => {
 <template>
   <div>
     <a-form layout="vertical" class="max-w-2xl" style="padding-top: 0.5rem">
-      <a-divider orientation="left" plain>gitea（CI = gitea Actions）</a-divider>
+      <a-divider orientation="left" plain>
+        gitea（CI = gitea Actions）
+      </a-divider>
       <a-form-item
         label="gitea 地址"
         extra="如 https://gitea.internal（不带末尾斜杠）；不用 gitea 可留空"
@@ -192,7 +194,9 @@ onMounted(async () => {
       >
         <a-input-password
           v-model:value="globalForm.giteaToken"
-          :placeholder="globalState.hasGiteaToken ? '已配置，留空保留' : '未配置'"
+          :placeholder="
+            globalState.hasGiteaToken ? '已配置，留空保留' : '未配置'
+          "
         />
       </a-form-item>
       <a-form-item
@@ -224,7 +228,9 @@ onMounted(async () => {
       >
         <a-input-password
           v-model:value="globalForm.giteeToken"
-          :placeholder="globalState.hasGiteeToken ? '已配置，留空保留' : '未配置'"
+          :placeholder="
+            globalState.hasGiteeToken ? '已配置，留空保留' : '未配置'
+          "
         />
       </a-form-item>
       <a-form-item

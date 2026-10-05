@@ -101,7 +101,14 @@ const form = reactive<{
   target: string;
   webhook: string;
   remark: string;
-}>({ name: '', scope: 'prod', channel: 'webhook', target: '', webhook: '', remark: '' });
+}>({
+  name: '',
+  scope: 'prod',
+  channel: 'webhook',
+  target: '',
+  webhook: '',
+  remark: '',
+});
 
 function openCreate() {
   editingId.value = null;
@@ -216,8 +223,20 @@ async function saveOpsGroup() {
           </a-tag>
         </template>
         <template v-else-if="column.key === 'webhook'">
-          <a-tag :color="record.channel !== 'webhook' || record.hasWebhook ? 'green' : 'orange'">
-            {{ record.channel !== 'webhook' ? (record.target || '—') : record.hasWebhook ? '已配置' : '未配置' }}
+          <a-tag
+            :color="
+              record.channel !== 'webhook' || record.hasWebhook
+                ? 'green'
+                : 'orange'
+            "
+          >
+            {{
+              record.channel !== 'webhook'
+                ? record.target || '—'
+                : record.hasWebhook
+                  ? '已配置'
+                  : '未配置'
+            }}
           </a-tag>
         </template>
         <template v-else-if="column.key === 'action'">
@@ -245,21 +264,46 @@ async function saveOpsGroup() {
       <div class="mb-2 text-sm font-medium">
         通道设置（平台级凭据）
         <span class="ml-2 text-xs font-normal text-muted-foreground">
-          SMTP 账号在此统一配置；各通知群只登记收件人（逗号分隔可群发；通知规则可将一个事件路由到多个群）
+          SMTP
+          账号在此统一配置；各通知群只登记收件人（逗号分隔可群发；通知规则可将一个事件路由到多个群）
         </span>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <a-input v-model:value="channelForm.smtpHost" placeholder="SMTP 主机" size="small" style="width: 140px" />
-        <a-input v-model:value="channelForm.smtpPort" placeholder="端口" size="small" style="width: 80px" />
-        <a-input v-model:value="channelForm.smtpUser" placeholder="账号" size="small" style="width: 130px" />
-        <a-input-password
-          v-model:value="channelForm.smtpPass"
-          :placeholder="channelState.smtpConfigured ? '密码（已配置，留空保留）' : '密码'"
+        <a-input
+          v-model:value="channelForm.smtpHost"
+          placeholder="SMTP 主机"
+          size="small"
+          style="width: 140px"
+        />
+        <a-input
+          v-model:value="channelForm.smtpPort"
+          placeholder="端口"
+          size="small"
+          style="width: 80px"
+        />
+        <a-input
+          v-model:value="channelForm.smtpUser"
+          placeholder="账号"
           size="small"
           style="width: 130px"
         />
-        <a-input v-model:value="channelForm.smtpFrom" placeholder="发件人（可选）" size="small" style="width: 150px" />
-        <a-button size="small" type="primary" @click="saveChannels">保存通道</a-button>
+        <a-input-password
+          v-model:value="channelForm.smtpPass"
+          :placeholder="
+            channelState.smtpConfigured ? '密码（已配置，留空保留）' : '密码'
+          "
+          size="small"
+          style="width: 130px"
+        />
+        <a-input
+          v-model:value="channelForm.smtpFrom"
+          placeholder="发件人（可选）"
+          size="small"
+          style="width: 150px"
+        />
+        <a-button size="small" type="primary" @click="saveChannels">
+          保存通道
+        </a-button>
       </div>
     </div>
 
@@ -285,7 +329,10 @@ async function saveOpsGroup() {
           <a-select
             v-model:value="form.channel"
             :options="[
-              { label: '群机器人 Webhook（企微 / 钉钉 / 飞书）', value: 'webhook' },
+              {
+                label: '群机器人 Webhook（企微 / 钉钉 / 飞书）',
+                value: 'webhook',
+              },
               { label: '邮件（SMTP）', value: 'smtp' },
             ]"
           />

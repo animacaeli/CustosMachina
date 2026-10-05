@@ -697,10 +697,10 @@ async function loadMerged() {
     );
     mergedBody.value = r.body;
     mergedMeta.value = { files: r.files, version: r.version };
-  } catch (e: any) {
+  } catch (error: any) {
     mergedBody.value = '';
     mergedMeta.value = null;
-    message.error(e?.response?.data?.message ?? '聚合失败');
+    message.error(error?.response?.data?.message ?? '聚合失败');
   } finally {
     mergedLoading.value = false;
   }
@@ -971,7 +971,8 @@ function openMerged() {
           @change="loadMerged"
         />
         <span v-if="mergedMeta" class="text-xs text-muted-foreground">
-          {{ mergedMeta.files }} 个文件聚合 · 版本 {{ mergedMeta.version.slice(0, 12) }}
+          {{ mergedMeta.files }} 个文件聚合 · 版本
+          {{ mergedMeta.version.slice(0, 12) }}
         </span>
         <div class="flex-1"></div>
         <a-button size="small" @click="loadMerged">刷新</a-button>
@@ -984,7 +985,10 @@ function openMerged() {
           :read-only="true"
           height="480px"
         />
-        <a-empty v-else-if="!mergedLoading" description="该应用×环境无配置文件" />
+        <a-empty
+          v-else-if="!mergedLoading"
+          description="该应用×环境无配置文件"
+        />
       </a-spin>
     </a-modal>
 

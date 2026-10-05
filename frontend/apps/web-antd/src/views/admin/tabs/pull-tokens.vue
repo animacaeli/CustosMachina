@@ -28,7 +28,9 @@ const createOpen = ref(false);
 const endpointHint = (t: PullToken) =>
   `curl ${window.location.origin}/api/config/${t.app}/${t.envs.split(',')[0]} -H "X-Config-Token: <凭证>"`;
 // 签发结果（明文只出现一次）
-const issued = ref<null | { app: string; envs: string; plaintext: string }>(null);
+const issued = ref<null | { app: string; envs: string; plaintext: string }>(
+  null,
+);
 
 const form = reactive({ app: '', envs: 'prod,test', name: '' });
 
@@ -36,7 +38,10 @@ const form = reactive({ app: '', envs: 'prod,test', name: '' });
 const agile = reactive({ configured: false, endpoint: '' });
 const agileForm = reactive({ endpoint: '', user: '', password: '' });
 const projects = ref<{ id: number; name: string }[]>([]);
-const agileTarget = reactive({ projectId: undefined as number | undefined, env: 'prod' });
+const agileTarget = reactive({
+  projectId: undefined as number | undefined,
+  env: 'prod',
+});
 const syncing = ref(false);
 const reconciling = ref(false);
 const diff = ref<AgileDiff | null>(null);
@@ -65,8 +70,8 @@ async function manualSync() {
   try {
     const n = await syncAgileApi(agileTarget.projectId, agileTarget.env);
     message.success(`已同步 ${n} 项到 AgileConfig（并上线）`);
-  } catch (e: any) {
-    message.error(e?.response?.data?.message ?? '同步失败');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message ?? '同步失败');
   } finally {
     syncing.value = false;
   }
@@ -76,10 +81,13 @@ async function manualReconcile() {
   if (!agileTarget.projectId) return;
   reconciling.value = true;
   try {
-    diff.value = await reconcileAgileApi(agileTarget.projectId, agileTarget.env);
+    diff.value = await reconcileAgileApi(
+      agileTarget.projectId,
+      agileTarget.env,
+    );
     diffOpen.value = true;
-  } catch (e: any) {
-    message.error(e?.response?.data?.message ?? '对账失败');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message ?? '对账失败');
   } finally {
     reconciling.value = false;
   }
@@ -130,19 +138,29 @@ onMounted(async () => {
     <div class="flex items-center gap-2">
       <a-button type="primary" @click="createOpen = true">签发凭证</a-button>
       <span class="text-xs text-muted-foreground">
-        应用级只读凭证：服务启动时 GET /api/config/{app}/{env} 拉取合并配置（应用名=项目名）
+        应用级只读凭证：服务启动时 GET /api/config/{app}/{env}
+        拉取合并配置（应用名=项目名）
       </span>
       <div class="flex-1"></div>
       <a-button :loading="loading" @click="load">刷新</a-button>
     </div>
 
     <!-- 签发结果：明文只出现一次 -->
-    <a-alert v-if="issued" type="success" show-icon closable @close="issued = null">
+    <a-alert
+      v-if="issued"
+      type="success"
+      show-icon
+      closable
+      @close="issued = null"
+    >
       <template #message>凭证已签发（明文仅此一次，请立即保存）</template>
       <template #description>
         <div class="break-all font-mono text-xs">{{ issued.plaintext }}</div>
         <div class="mt-1 text-xs">
-          接入示例：<span class="font-mono">curl /api/config/{{ issued.app }}/{{ issued.envs.split(',')[0] }} -H "X-Config-Token: 上述凭证"</span>
+          接入示例：<span class="font-mono">curl /api/config/{{ issued.app }}/{{
+              issued.envs.split(',')[0]
+            }}
+            -H "X-Config-Token: 上述凭证"</span>
         </div>
       </template>
     </a-alert>
@@ -159,7 +177,11 @@ onMounted(async () => {
       <a-table-column title="环境范围" data-index="envs" :width="120" />
       <a-table-column title="最近使用" data-index="lastUsedAt" :width="160">
         <template #default="{ record }">
-          {{ record.lastUsedAt ? String(record.lastUsedAt).slice(0, 19).replace('T', ' ') : '—' }}
+          {{
+            record.lastUsedAt
+              ? String(record.lastUsedAt).slice(0, 19).replace('T', ' ')
+              : '—'
+          }}
         </template>
       </a-table-column>
       <a-table-column title="状态" :width="90">
@@ -171,7 +193,10 @@ onMounted(async () => {
       </a-table-column>
       <a-table-column title="接入示例" :width="220">
         <template #default="{ record }">
-          <span class="cursor-pointer font-mono text-xs text-muted-foreground" :title="endpointHint(record)">
+          <span
+            class="cursor-pointer font-mono text-xs text-muted-foreground"
+            :title="endpointHint(record)"
+          >
             {{ `/api/config/${record.app}/…` }}
           </span>
         </template>
@@ -179,7 +204,11 @@ onMounted(async () => {
       <a-table-column title="操作" :width="90">
         <template #default="{ record }">
           <a-popconfirm
-            :title="record.enabled ? '停用后服务拉取立即失效，确认？' : '确认重新启用？'"
+            :title="
+              record.enabled
+                ? '停用后服务拉取立即失效，确认？'
+                : '确认重新启用？'
+            "
             @confirm="toggle(record, !record.enabled)"
           >
             <a-button danger size="small" type="link">
@@ -198,13 +227,29 @@ onMounted(async () => {
           {{ agile.configured ? '已连接' : '未配置' }}
         </a-tag>
         <span class="text-xs text-muted-foreground">
-          env/ini 配置文件「下发」时自动同步；应用嵌 AgileConfig SDK 获得键值热更。文件是唯一编辑入口
+          env/ini 配置文件「下发」时自动同步；应用嵌 AgileConfig SDK
+          获得键值热更。文件是唯一编辑入口
         </span>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <a-input v-model:value="agileForm.endpoint" placeholder="http://agileconfig:5000" size="small" style="width: 220px" />
-        <a-input v-model:value="agileForm.user" placeholder="admin 用户名（默认 admin）" size="small" style="width: 180px" />
-        <a-input-password v-model:value="agileForm.password" placeholder="admin 密码（留空保留）" size="small" style="width: 180px" />
+        <a-input
+          v-model:value="agileForm.endpoint"
+          placeholder="http://agileconfig:5000"
+          size="small"
+          style="width: 220px"
+        />
+        <a-input
+          v-model:value="agileForm.user"
+          placeholder="admin 用户名（默认 admin）"
+          size="small"
+          style="width: 180px"
+        />
+        <a-input-password
+          v-model:value="agileForm.password"
+          placeholder="admin 密码（留空保留）"
+          size="small"
+          style="width: 180px"
+        />
         <a-button size="small" @click="saveAgile">保存连接</a-button>
         <div class="flex-1"></div>
         <a-select
@@ -223,33 +268,64 @@ onMounted(async () => {
           size="small"
           style="width: 100px"
         />
-        <a-button :loading="reconciling" size="small" @click="manualReconcile">对账</a-button>
-        <a-button :loading="syncing" size="small" type="primary" @click="manualSync">手动同步</a-button>
+        <a-button :loading="reconciling" size="small" @click="manualReconcile">
+          对账
+        </a-button>
+        <a-button
+          :loading="syncing"
+          size="small"
+          type="primary"
+          @click="manualSync"
+        >
+          手动同步
+        </a-button>
       </div>
     </div>
 
     <!-- 对账结果 -->
-    <a-modal v-model:open="diffOpen" title="对账结果（AgileConfig 漂移检测）" footer-only-close>
+    <a-modal
+      v-model:open="diffOpen"
+      title="对账结果（AgileConfig 漂移检测）"
+      footer-only-close
+    >
       <template v-if="diff">
         <a-alert
-          v-if="diff.drifted.length + diff.extra.length + diff.missing.length === 0"
+          v-if="
+            diff.drifted.length + diff.extra.length + diff.missing.length === 0
+          "
           message="无漂移：远端与平台文件派生键值一致"
           type="success"
           show-icon
         />
         <div v-else class="space-y-3 text-sm">
-          <a-alert message="检测到漂移（平台文件为真相源：下发覆盖改值项；控制台手加项不自动删除）" type="warning" show-icon />
+          <a-alert
+            message="检测到漂移（平台文件为真相源：下发覆盖改值项；控制台手加项不自动删除）"
+            type="warning"
+            show-icon
+          />
           <div v-if="diff.missing.length">
-            <div class="mb-1 font-medium">平台有、远端缺（{{ diff.missing.length }}）</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ diff.missing.join('、') }}</div>
+            <div class="mb-1 font-medium">
+              平台有、远端缺（{{ diff.missing.length }}）
+            </div>
+            <div class="font-mono text-xs text-muted-foreground">
+              {{ diff.missing.join('、') }}
+            </div>
           </div>
           <div v-if="diff.drifted.length">
-            <div class="mb-1 font-medium">值不同（{{ diff.drifted.length }}）</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ diff.drifted.join('、') }}</div>
+            <div class="mb-1 font-medium">
+              值不同（{{ diff.drifted.length }}）
+            </div>
+            <div class="font-mono text-xs text-muted-foreground">
+              {{ diff.drifted.join('、') }}
+            </div>
           </div>
           <div v-if="diff.extra.length">
-            <div class="mb-1 font-medium">远端多出（控制台手加，{{ diff.extra.length }}）</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ diff.extra.join('、') }}</div>
+            <div class="mb-1 font-medium">
+              远端多出（控制台手加，{{ diff.extra.length }}）
+            </div>
+            <div class="font-mono text-xs text-muted-foreground">
+              {{ diff.extra.join('、') }}
+            </div>
           </div>
         </div>
       </template>

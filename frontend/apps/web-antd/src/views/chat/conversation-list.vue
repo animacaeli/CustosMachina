@@ -47,7 +47,10 @@ async function load() {
   try {
     conversations.value = await listConversationsApi(
       isAdmin.value
-        ? { deleted: showDeleted.value, userId: filterUserId.value || myId.value }
+        ? {
+            deleted: showDeleted.value,
+            userId: filterUserId.value || myId.value,
+          }
         : {},
     );
   } finally {
@@ -101,11 +104,7 @@ defineExpose({ load });
           }
         "
       >
-        <a-select-option
-          v-for="u in users"
-          :key="u.id"
-          :value="u.id"
-        >
+        <a-select-option v-for="u in users" :key="u.id" :value="u.id">
           {{ u.displayName || u.username }}（{{ u.username }}）
         </a-select-option>
       </a-select>
@@ -127,7 +126,9 @@ defineExpose({ load });
       <a-button size="small" type="primary" @click="emit('new', 'general')">
         <PlusOutlined /> 新对话
       </a-button>
-      <a-button size="small" @click="emit('new', 'platform')">平台上下文</a-button>
+      <a-button size="small" @click="emit('new', 'platform')">
+        平台上下文
+      </a-button>
     </div>
 
     <a-spin :spinning="loading">
@@ -146,14 +147,18 @@ defineExpose({ load });
             >
               {{ c.title || '新对话' }}
             </div>
-            <div class="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+            <div
+              class="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground"
+            >
               <span v-if="c.deleted" class="text-red-500">已删除</span>
               <span v-if="c.deleted">·</span>
               <span v-if="c.owner" class="text-primary">{{ c.owner }}</span>
               <span v-if="c.owner">·</span>
               <span>{{ c.mode === 'platform' ? '平台上下文' : '通用' }}</span>
               <span>·</span>
-              <span>{{ (c.updatedAt ?? '').slice(5, 16).replace('T', ' ') }}</span>
+              <span>{{
+                (c.updatedAt ?? '').slice(5, 16).replace('T', ' ')
+              }}</span>
             </div>
           </div>
           <a-popconfirm
