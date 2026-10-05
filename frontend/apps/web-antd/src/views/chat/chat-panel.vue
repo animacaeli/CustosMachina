@@ -399,7 +399,7 @@ onMounted(async () => {
         :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
       >
         <div
-          class="max-w-[85%] rounded-lg px-3.5 py-2.5 text-sm"
+          class="max-w-[85%] min-w-0 rounded-lg px-3.5 py-2.5 text-sm"
           :class="
             m.role === 'user'
               ? 'bg-primary text-primary-foreground'
@@ -434,7 +434,7 @@ onMounted(async () => {
           <!-- eslint-disable-next-line vue/no-v-html 内容经 renderMd 内 DOMPurify 消毒（AI 输出属不可信输入） -->
           <div
             v-if="m.role === 'assistant'"
-            class="prose prose-sm dark:prose-invert max-w-none break-words text-foreground [&_a]:text-primary [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:text-foreground [&_code]:text-xs [&_code]:text-foreground [&_li]:text-foreground [&_p]:text-foreground"
+            class="prose prose-sm dark:prose-invert max-w-none break-words text-foreground [&_a]:text-primary [&_img]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-muted [&_pre]:p-2 [&_pre]:text-foreground [&_code]:text-xs [&_code]:text-foreground [&_li]:text-foreground [&_p]:text-foreground [&_svg]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:whitespace-nowrap"
             v-html="renderMd(m.content || (m.streaming ? '' : '（无内容）'))"
           ></div>
           <template v-else>
