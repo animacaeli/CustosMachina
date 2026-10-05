@@ -140,9 +140,9 @@ P1~P5 的运维功能是 AI 主线的**地基**（数据、通道、审计、上
 
 | 绑定点 | 现状 | 通用化方向 | 优先级 |
 |---|---|---|---|
-| Git 服务（CI 源） | gitea 原生 API + webhook 兼容层 | GitProvider 接口（gitea/forgejo/gogs API 高度兼容，一家适配器通吃；GitHub/GitLab 另立适配器） | 高（开源用户第一门槛） |
+| Git 服务（CI 源） | gitea 原生 API + webhook 兼容层 | GitProvider 接口（gitea/forgejo/gogs API 高度兼容，一家适配器通吃） | 高（开源用户第一门槛）。GitHub/GitLab 适配器已砍（2026-10-05：GitLab 重型组件不合定位；见 P6 计划 M9 裁定） |
 | IM 通知 | 企微/钉钉/飞书三家 | 已是插件式；补 Telegram/邮件(SMTP) 适配器 | 高（海外用户） |
-| IM 扫码登录 | 企微 CorpApp / 钉钉 | OAuthProvider 接口化，同样补 GitHub OAuth | 中 |
+| IM 扫码登录 | 企微 CorpApp / 钉钉 | 不再扩展外部 OAuth（2026-10-05 砍 GitHub OAuth：内部平台用户/权限不可控，账号生命周期必须由企业管理） | 中 |
 | 观测后端 | OpenObserve | ObservBackend 接口（告警模板/日志查询/外链生成） | 中（P5 先写 O2 具体实现；Grafana/Loki 需求出现再抽接口） |
 | 配置中心 | AgileConfig（P5 接入） | **不预期第二实现，不抽 ConfigProvider 接口**（多生态明确不做，决策记录见下）；唯一"免费"的第二形态是转 k3s 后的 ConfigMap | 高（决策记录见下） |
 | 对象存储 | （P5 备份引入） | S3 兼容协议为标准（MinIO/云 OSS/阿里 OSS 全覆盖），无需多适配 | 低 |

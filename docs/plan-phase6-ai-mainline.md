@@ -175,45 +175,16 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 
 **明确不做（本里程碑内）**：Jenkins 构建触发（平台只读状态，构建由 gitee webhook 驱动，避免平台成为 CI 控制面）；GitHub/GitLab 适配器归 M9（不在本里程碑赶工）。
 
-### M9 开源生态适配批次（约 3~5 周；用户 2026-10-04 追加拍板：全做，不留 backlog）
+### M9 开源生态适配批次（2026-10-05 裁定：仅第一块交付，后两块砍掉）
 
-**范围（roadmap §六生态通用化表格中仅剩的未完成适配项，逐块独立）**：
+**已交付**：Telegram Bot + SMTP 邮件通知（3d8869a）——通知渠道泛化，群级凭据与平台级凭据分离，限速/DLP/留痕同既有链路。
 
-- **Telegram Bot + SMTP 邮件通知**（0.5~1 周）：notify sender 渠道泛化——`notify_groups` 加渠道类型（webhook / telegram / smtp，现有按 webhook 域名探测厂商的逻辑只对 webhook 型生效）；Telegram 走 Bot API `sendMessage`（bot token + chat id，解析模式与截断规则对齐企微调研结论）；SMTP 走标准发信（标题 + 正文，markdown 降级纯文本）；UI 通知群表单加渠道选择；限速与 DLP 同既有链路；
-- **OAuthProvider 接口化 + GitHub OAuth 登录**（约 1 周）：auth 既有企微 CorpApp / 钉钉扫码路径抽 OAuthProvider 接口（authorize URL 构造 / code 换 token / 身份映射 / 绑定解绑），GitHub OAuth App 走标准 code 流（`/login/oauth/access_token` + `/user`）；登录页"第三方登录"区块按已配置项渲染（未配置即隐藏）；回调公共接口过限速与伪造审视（对齐 M1 欠账清偿纪律）；
-- **GitHub + GitLab 适配器**（1.5~2 周/家，roadmap 明示工作量远大于表格观感：webhook 语义、commit status 回写、token 模型差异，排期单列）：
-  - GitProvider 扩展：GitHub（webhook `X-Hub-Signature-256`、tag push 解析、contents API 取 compose 部署描述、commit status）；GitLab（`X-Gitlab-Token`、repository files API）；
-  - CIProvider 扩展：GitHub Actions（check runs / workflow runs API 状态与日志）、GitLab CI（pipelines/jobs API）——开源用户在这两家的 CI 形态即各自内置 CI，适配器成对出现；
-  - **裁剪线：先 GitHub**（开源门面最大），GitLab 视阶段余量，余量不足则 GitLab 单独留为 M9 尾巴随 M6 收尾段补齐；
-  - 两块均依赖 M8 已抽好的 GitProvider/CIProvider 接口，纯加实现，存量 gitea/gitee 零扰动。
+**砍掉（用户 2026-10-05 定向，理由落档）**：
 
-**验收标准**：
+- **GitHub OAuth 登录**：本项目的用户体系与企业 IM 深度绑定（企微/钉钉扫码，人员离职即无法登录，账号生命周期由企业管理）。引入 GitHub OAuth 意味着任何 GitHub 账号都可能登录后台——违背"公司内部运维平台"定位；人员与权限不可控，账号/授权/审计的复杂度上升数个量级。
+- **GitHub + GitLab 适配器**：GitLab 与 GitLab CI/CD 属重型组件，不符合轻量定位；GitHub 适配器随 OAuth 一并砍掉（同属外部开放生态引入）。
 
-- Telegram 群与 SMTP 邮箱各真机收到一条告警通知（格式可读、截断规则生效）；
-- GitHub OAuth 登录 → 绑定 → 解绑真机一例；企微/钉钉既有扫码登录回归不受影响；
-- GitHub 仓库 + Actions 项目全链路真机一例：tag push 建 Build 记录 → 状态回读 → 日志在平台可看 → tag 发布到目标机；gitee+Jenkins 与 gitea 项目回归；
-- 未配置的渠道/登录方式在 UI 优雅隐藏（能力探测 + 配置驱动，未配置降级）。
-
-### M10 全站 AI 悬浮助手（优化项，约 1 周；用户 2026-10-05 拍板加入本期，排期靠后——M9 之后、M6 欠账清点之前）
-
-**动机**：运维场景里用户在项目/主机/发布页看到异常时最想问 AI，独立 /chat 菜单是弱入口；云服务商 AI 助手悬浮球是成熟心智（零跳转就地提问）。同时抽屉是 M4 NL→操作的天然常驻载体（后续"帮我把 demo 发到 test"就在抽屉里确认执行）。
-
-**范围**：
-
-- **ChatPanel 组件化重构（前置）**：chat-page.vue 从"页面"拆出可复用组件——消息区 + 输入区（含 / 命令面板、附件、SSE 流式、markdown 消毒渲染），/chat 页与抽屉共用；重构量约一天，一次投入两处受益；
-- **悬浮球**：右下角全局悬浮按钮（自定义 logo，layout 层挂载、路由无关；支持 ESC 关闭、位置不遮挡页面关键操作）；
-- **抽屉对话壳**：antd Drawer（placement right，约 400px，窄屏自适应）内嵌 ChatPanel，内容 defineAsyncComponent 惰性加载（不点开不加载对话 bundle，全站零负担）；
-- **抽屉交互做减法**：400px 放不下会话侧栏——默认接续最近会话或新建，顶部「完整历史 →」链接跳 /chat（历史管理/admin 按用户查看/软删留档仍在完整页）；/命令、附件、停止生成全保留；
-- **状态独立**：抽屉与 /chat 页各自独立会话状态（后端会话归属制天然支持，无 store 耦合）。
-
-**明确不做（本期）**：页面上下文隐式继承（在项目页打开抽屉自动聚焦当前项目）——与已否决的挂载配置不同（无用户配置、纯自动继承），但一期先保持全平台上下文语义不变，验证入口价值后再评估；对话历史侧栏进抽屉。
-
-**验收标准**：
-
-- 任意页面右下角可见悬浮球，点击开抽屉可完整对话（流式/`/` 命令/附件/停止生成）；
-- 抽屉与 /chat 页同一套 ChatPanel，行为一致；/chat 完整功能（用户下拉/显示已删除/软删留档）回归无损；
-- 未点开悬浮球时对话相关 bundle 不加载（network 面板验证）；
-- ESC 关闭、再开接续上次抽屉会话。
+**通用原则（后续所有阶段的裁剪判据）**：不引入重型组件；一切以"公司内部运维平台"为定位评估——用户管理、权限管理、审计链路的复杂度增量是硬约束。git 托管与 CI 的外部形态收敛为：gitea（自托管）+ gitee + Jenkins（M8 已交付）。
 
 ### M6 欠账批次（约 1~1.5 周，裁剪线之后，但本阶段必须清）
 
@@ -236,7 +207,8 @@ M6 欠账批次（独立，阶段收尾段，但本阶段不清则再顺延一�
 - AgileConfig **服务发现**（compose 期需求弱，P7 再评估；接入本身见 M7）；
 - Jenkins 构建触发与 pipeline 管理（平台只读 CI 状态，构建由 git webhook 驱动）；
 - k3s 主线（触发判据满足后另立计划）；
-- 工单/多租户等 roadmap §八清单项。
+- 工单/多租户等 roadmap §八清单项；
+- **GitHub OAuth 登录与 GitHub/GitLab 适配器**（2026-10-05 砍：内部平台用户/权限不可控 + 重型组件，详见 M9 裁定）。
 
 ## 五、开源适配层审视（rule of two 逐项判定）
 
