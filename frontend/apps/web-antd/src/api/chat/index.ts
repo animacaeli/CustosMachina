@@ -101,6 +101,7 @@ export async function chatStreamApi(
   handlers: ChatStreamHandlers,
   attachments: ChatAttachment[] = [],
   skill = '',
+  page = '',
 ): Promise<() => void> {
   const token = useAccessStore().accessToken;
   const controller = new AbortController();
@@ -116,6 +117,7 @@ export async function chatStreamApi(
         body: JSON.stringify({
           content,
           skill: skill || undefined,
+          ...(page ? { page } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
         }),
         signal: controller.signal,

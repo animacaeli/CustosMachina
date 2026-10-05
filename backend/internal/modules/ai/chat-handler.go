@@ -218,6 +218,7 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	var in struct {
 		Content     string           `json:"content" binding:"required,max=32000"`
 		Skill       string           `json:"skill" binding:"omitempty,max=64"`
+		Page        string           `json:"page" binding:"omitempty,max=128"` // 用户当前页面（标题+路径），AI 感知场景
 		Attachments []ChatAttachment `json:"attachments" binding:"omitempty,max=3,dive"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -245,7 +246,7 @@ func (h *ChatHandler) chat(c *gin.Context) {
 	go func() {
 		defer wg.Done()
 		// 生产者：CompleteStream 的 onDelta/onTool 投递；断连时靠 reqCtx 解除阻塞
-		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Skill, in.Attachments, viewerRoles(c), func(delta string) {
+		msg, err := h.svc.ChatStream(reqCtx, claims.UserID, id, in.Content, in.Skill, in.Page, in.Attachments, viewerRoles(c), func(delta string) {
 			select {
 			case ch <- chatEvent{"delta", gin.H{"text": delta}}:
 			case <-reqCtx.Done():

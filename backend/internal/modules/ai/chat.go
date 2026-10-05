@@ -359,7 +359,7 @@ func (s *ChatService) acquire(convID uint) (release func(), err error) {
 // onDelta 在 relay 读到增量时同步调用（调用方负责转发 SSE——写慢会自然背压到上游）；
 // onTool 在模型发起工具调用时同步回调（前端展示工具活动；nil = 不关心）；
 // onAction 在生成操作建议卡时同步回调（前端渲染建议卡，无执行语义）。
-func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string), onTool func(name, args string), onAction func(ActionTrace)) (*ChatMessage, error) {
+func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, content string, skillName string, page string, attachments []ChatAttachment, viewerRoles []string, onDelta func(string), onTool func(name, args string), onAction func(ActionTrace)) (*ChatMessage, error) {
 	if !s.relay.Configured(ctx) {
 		return nil, ErrNotConfigur
 	}
@@ -403,6 +403,14 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	}
 
 	msgs, redactions, err := s.buildPrompt(ctx, c, viewerRoles, skill, content)
+	if err != nil {
+		return nil, err
+	}
+	// 页面上下文（P6-M10 用户定调）：感知用户当前所在页面——回答贴合场景、
+	// 需要页面数据时优先用查询工具（不额外注入数据，避免越权面扩大）
+	if page != "" && c.Mode == ChatModePlatform {
+		msgs[0].Content = fmt.Sprintf("%s\n当前用户正在浏览页面：%s——回答可结合该页面场景，需要相关数据时用查询工具获取。", msgs[0].Content, page)
+	}
 	if err != nil {
 		return nil, err
 	}

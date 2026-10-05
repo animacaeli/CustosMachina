@@ -128,7 +128,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var deltas atomic.Int32
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", nil, []string{"admin"}, func(string) { deltas.Add(1) }, nil, nil)
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "你好", "", "", nil, []string{"admin"}, func(string) { deltas.Add(1) }, nil, nil)
 	if err != nil {
 		t.Fatalf("对话失败: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestChatStreamEndToEnd(t *testing.T) {
 	}
 	// 会话互斥：进行中重复发消息被拒——串行场景下第二次正常（上轮已结束），
 	// 互斥行为由 handler 层并发触发，此处验证会话可继续
-	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", nil, []string{"dev"}, nil, nil, nil); err != nil {
+	if _, err := svc.ChatStream(t.Context(), 7, conv.ID, "再来一轮", "", "", nil, []string{"dev"}, nil, nil, nil); err != nil {
 		t.Fatalf("第二轮对话失败: %v", err)
 	}
 }
@@ -483,7 +483,7 @@ func TestChatFunctionCalling(t *testing.T) {
 		t.Fatalf("建会话失败: %v", err)
 	}
 	var toolEvents []string
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, func(name, args string) {
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", "", nil, []string{"admin"}, nil, func(name, args string) {
 		toolEvents = append(toolEvents, name+" "+args)
 	}, nil)
 	if err != nil {
@@ -526,7 +526,7 @@ func TestChatToolDegradation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建会话失败: %v", err)
 	}
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", nil, []string{"admin"}, nil, nil, nil)
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "看下构建", "", "", nil, []string{"admin"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("降级对话失败: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestChatSuggestFlow(t *testing.T) {
 
 	conv, _ := svc.CreateConversation(t.Context(), 7, ChatModePlatform, nil)
 	var cards []ActionTrace
-	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "触发下任务5", "", nil, []string{"admin"}, nil, nil, func(a ActionTrace) {
+	msg, err := svc.ChatStream(t.Context(), 7, conv.ID, "触发下任务5", "", "", nil, []string{"admin"}, nil, nil, func(a ActionTrace) {
 		cards = append(cards, a)
 	})
 	if err != nil {

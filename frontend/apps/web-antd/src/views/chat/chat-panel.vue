@@ -35,6 +35,8 @@ defineOptions({ name: 'ChatPanel' });
 const props = defineProps<{
   conv?: Conversation | null;
   initialMode?: 'general' | 'platform';
+  /** 页面上下文：用户当前所在页面（标题+路径），AI 感知后回答更贴合场景 */
+  pageContext?: string;
   readonly?: boolean;
 }>();
 
@@ -213,6 +215,7 @@ async function send() {
     },
     atts,
     skill,
+    props.pageContext,
   );
 }
 
@@ -378,7 +381,11 @@ defineExpose({
   sendText,
 });
 
-onMounted(loadSkills);
+// 初始会话加载放 onMounted（watch immediate 会踩 streaming 的 TDZ——watch 块在消息状态声明之前）
+onMounted(async () => {
+  await loadSkills();
+  if (props.conv?.id) await loadMessages(props.conv.id);
+});
 </script>
 
 <template>

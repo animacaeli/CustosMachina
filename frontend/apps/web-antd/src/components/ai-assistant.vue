@@ -2,11 +2,12 @@
 import type { Conversation } from '#/api/chat';
 
 import { computed, defineAsyncComponent, nextTick, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 
 import { useAccessStore } from '@vben/stores';
 
 import { listConversationsApi } from '#/api/chat';
+import ConversationList from '#/views/chat/conversation-list.vue';
 
 /**
  * 全站 AI 悬浮助手（P6-M10）：挂在 App 根（router-view 外）——路由切换
@@ -20,15 +21,26 @@ defineOptions({ name: 'AiAssistant' });
 const ChatPanel = defineAsyncComponent(() => import('#/views/chat/chat-panel.vue'));
 
 const accessStore = useAccessStore();
-const router = useRouter();
+const route = useRoute();
 
 // 登录/初始化页不显示
 const visible = computed(() => !!accessStore.accessToken);
 
 const open = ref(false);
+// 抽屉双视图（用户定调：功能全收进抽屉，不做独立菜单页）：对话 / 历史
+const view = ref<'chat' | 'history'>('chat');
 const panelConv = ref<Conversation | null>(null);
+// 草稿模式（历史视图点「新对话/平台上下文」进入）
+const draftMode = ref<'general' | 'platform' | null>(null);
 const panelRef = ref();
+const listRef = ref();
 const bootstrapped = ref(false);
+
+// 页面上下文（用户定调：AI 感知当前所在页面，省去用户解释）：路由标题 + 路径
+const pageContext = computed(
+  () =>
+    `${(route.meta?.title as string) ?? route.path}（${route.path}）`.slice(0, 120),
+);
 
 const streaming = computed(() => panelRef.value?.isStreaming?.() ?? false);
 
@@ -72,11 +84,26 @@ function onKeydown(e: KeyboardEvent) {
 function newChat() {
   if (panelRef.value?.isStreaming?.()) return;
   panelConv.value = null;
+  draftMode.value = null;
+  view.value = 'chat';
 }
 
-function goFullHistory() {
-  open.value = false;
-  router.push('/chat');
+function showHistory() {
+  view.value = 'history';
+  listRef.value?.load?.(); // 每次进历史刷新列表
+}
+
+// 历史视图：选中会话回到对话视图
+function pickConv(c: Conversation) {
+  panelConv.value = c;
+  view.value = 'chat';
+}
+
+// 历史视图：新建（草稿）回到对话视图
+function newFromHistory(mode: 'general' | 'platform') {
+  panelConv.value = null;
+  draftMode.value = mode;
+  view.value = 'chat';
 }
 
 // 抽屉内会话被创建/使用：同步引用（保持接续语义）
@@ -93,7 +120,7 @@ onMounted(() => {
   <template v-if="visible">
     <!-- 悬浮球：自绘 SVG 机器人（渐变 + 呼吸；回答时眼睛扫描动画） -->
     <button
-      class="ai-fab group fixed bottom-6 right-6 z-[1000] flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform duration-200 hover:-translate-y-1"
+      class="ai-fab group fixed bottom-6 right-6 z-[1000] flex h-14 w-14 items-center justify-center rounded-full border border-white/25 bg-[rgb(30 41 59)] shadow-lg transition-transform duration-200 hover:-translate-y-1"
       :class="open ? 'scale-95' : 'ai-breathing'"
       title="AI 助手"
       type="button"
@@ -107,18 +134,19 @@ onMounted(() => {
       >
         <defs>
           <linearGradient id="aiFabGrad" x1="0" y1="0" x2="48" y2="48">
-            <stop offset="0%" stop-color="var(--primary)" />
-            <stop offset="100%" stop-color="rgb(139 92 246)" />
+            <stop offset="0%" stop-color="#38bdf8" />
+            <stop offset="55%" stop-color="#6366f1" />
+            <stop offset="100%" stop-color="#a855f7" />
           </linearGradient>
         </defs>
         <!-- 头部圆角矩形底盘 -->
-        <rect fill="url(#aiFabGrad)" height="30" rx="10" width="36" x="6" y="12" />
+        <rect fill="url(#aiFabGrad)" height="30" rx="10" stroke="rgb(255 255 255 / 0.85)" stroke-width="1.5" width="36" x="6" y="12" />
         <!-- 天线 -->
-        <line stroke="rgb(139 92 246)" stroke-linecap="round" stroke-width="2.5" x1="24" x2="24" y1="8" y2="12" />
-        <circle :class="{ 'ai-antenna-busy': streaming }" cx="24" cy="6.5" fill="rgb(139 92 246)" r="2.5" />
+        <line stroke="#818cf8" stroke-linecap="round" stroke-width="2.5" x1="24" x2="24" y1="8" y2="12" />
+        <circle :class="{ 'ai-antenna-busy': streaming }" cx="24" cy="6.5" fill="#f472b6" r="2.5" />
         <!-- 耳侧 -->
-        <rect fill="rgb(139 92 246)" height="10" rx="2.5" width="4" x="2" y="22" />
-        <rect fill="rgb(139 92 246)" height="10" rx="2.5" width="4" x="42" y="22" />
+        <rect fill="#818cf8" height="10" rx="2.5" width="4" x="2" y="22" />
+        <rect fill="#818cf8" height="10" rx="2.5" width="4" x="42" y="22" />
         <!-- 眼睛：常态两点；回答时扫描动画 -->
         <g :class="streaming ? 'ai-eyes-busy' : ''" fill="#fff">
           <circle class="ai-eye" cx="17" cy="27" r="3" />
@@ -148,42 +176,54 @@ onMounted(() => {
           <span v-if="panelConv?.deleted" class="text-xs text-red-500">已删除 · 只读</span>
           <div class="flex-1"></div>
           <a-button size="small" type="text" @click="newChat">新对话</a-button>
-          <a-button size="small" type="text" @click="goFullHistory">完整历史</a-button>
+          <a-button size="small" type="text" @click="showHistory">对话历史</a-button>
           <a-button size="small" type="text" @click="open = false">✕</a-button>
         </div>
 
-        <!-- 快捷提问（无会话时的欢迎态） -->
-        <div v-if="!panelConv && !(panelRef?.isStreaming?.())" class="border-b border-border p-4">
-          <div class="mb-2 text-xs text-muted-foreground">
-            有问题随时问——已接入平台实时数据（主机 / 构建 / 发布 / 定时任务）
-          </div>
-          <div class="grid grid-cols-1 gap-2">
-            <button
-              v-for="q in QUICK_QUESTIONS"
-              :key="q"
-              class="rounded-md border border-border bg-background px-3 py-2 text-left text-xs transition-colors hover:border-primary/50 hover:bg-accent"
-              type="button"
-              @click="panelRef?.sendText(q)"
-            >
-              {{ q }}
-            </button>
-          </div>
-        </div>
+        <!-- 历史子视图：会话列表（v-show 常驻——切视图不断流不丢对话状态） -->
+        <ConversationList
+          v-show="view === 'history'"
+          ref="listRef"
+          :active-id="panelConv?.id"
+          @new="newFromHistory"
+          @pick="pickConv"
+        />
 
-        <!-- 对话面板（异步加载；切路由不销毁） -->
-        <Suspense>
-          <ChatPanel
-            ref="panelRef"
-            :conv="panelConv"
-            initial-mode="platform"
-            @used="onUsed"
-          />
-          <template #fallback>
-            <div class="flex flex-1 items-center justify-center text-muted-foreground">
-              加载对话组件…
+        <div v-show="view === 'chat'" class="flex min-h-0 flex-1 flex-col">
+          <!-- 快捷提问（无会话时的欢迎态） -->
+          <div v-if="!panelConv && !draftMode && !(panelRef?.isStreaming?.())" class="border-b border-border p-4">
+            <div class="mb-2 text-xs text-muted-foreground">
+              有问题随时问——已接入平台实时数据（主机 / 构建 / 发布 / 定时任务）
             </div>
-          </template>
-        </Suspense>
+            <div class="grid grid-cols-1 gap-2">
+              <button
+                v-for="q in QUICK_QUESTIONS"
+                :key="q"
+                class="rounded-md border border-border bg-background px-3 py-2 text-left text-xs transition-colors hover:border-primary/50 hover:bg-accent"
+                type="button"
+                @click="panelRef?.sendText(q)"
+              >
+                {{ q }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 对话面板（异步加载；切路由不销毁） -->
+          <Suspense>
+            <ChatPanel
+              ref="panelRef"
+              :conv="panelConv"
+              :initial-mode="draftMode ?? 'platform'"
+              :page-context="pageContext"
+              @used="onUsed"
+            />
+            <template #fallback>
+              <div class="flex flex-1 items-center justify-center text-muted-foreground">
+                加载对话组件…
+              </div>
+            </template>
+          </Suspense>
+        </div>
       </div>
     </transition>
   </template>
