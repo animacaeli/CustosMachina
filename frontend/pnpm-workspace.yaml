@@ -39,6 +39,7 @@ overrides:
 catalog:
   '@ant-design/icons-vue': ^7.0.1
   'ant-design-x-vue': ^1.6.0
+  asciinema-player: ^3.17.0
   dompurify: ^3
   marked: ^16
   '@ast-grep/napi': ^0.45.2
