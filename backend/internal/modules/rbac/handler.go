@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"github.com/gin-gonic/gin"
+	"strconv"
 
 	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/identity"
@@ -29,6 +30,41 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	}
 	// 当前用户权限下发：任何登录用户可查自己的
 	r.Authed.GET("/auth/permissions", h.myPermissions)
+	// P6-M6 主机终端登录名级授权（堡垒机细粒度；admin）
+	ta := r.Authed.Group("/rbac/terminal-acls")
+	{
+		ta.GET("/:serverId", h.getTerminalACLs)
+		ta.PUT("/:serverId", h.setTerminalACLs)
+	}
+}
+
+func (h *Handler) getTerminalACLs(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("serverId"), 10, 64)
+	if err != nil || id == 0 {
+		httpx.FailBadRequest(c, "serverId 无效")
+		return
+	}
+	httpx.OK(c, h.svc.ServerTerminalACLs(uint(id)))
+}
+
+func (h *Handler) setTerminalACLs(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("serverId"), 10, 64)
+	if err != nil || id == 0 {
+		httpx.FailBadRequest(c, "serverId 无效")
+		return
+	}
+	var in struct {
+		Usernames []string `json:"usernames" binding:"max=100"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.SetServerTerminalACLs(uint(id), in.Usernames); err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, nil)
 }
 
 func (h *Handler) list(c *gin.Context) {

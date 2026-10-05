@@ -94,27 +94,39 @@ type terminalSession struct {
 	started  time.Time
 }
 
-// openAudit 创建审计文件并写入元数据行。
+// openAudit 创建审计文件并写 asciinema v2 cast 头（P6-M6：录制带时序帧，
+// 支持网页回放）。env 内嵌 operator/server 元数据（列表解析用）。
 func (ts *terminalSession) openAudit() error {
 	dir := filepath.Join(terminalAuditDir, fmt.Sprintf("%d", ts.server.ID))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	name := fmt.Sprintf("%s.log", ts.started.Format("20060102-150405.000"))
+	name := fmt.Sprintf("%s.cast", ts.started.Format("20060102-150405.000"))
 	f, err := os.Create(filepath.Join(dir, name))
 	if err != nil {
 		return err
 	}
 	ts.file = f
-	meta := fmt.Sprintf(`{"server":%q,"serverId":%d,"operator":%q,"start":%q}`+"\n",
-		ts.server.Name, ts.server.ID, ts.operator, ts.started.Format(time.RFC3339))
-	_, err = f.WriteString(meta)
+	header, _ := json.Marshal(map[string]any{
+		"version": 2, "width": ptyCols, "height": ptyRows,
+		"timestamp": ts.started.Unix(),
+		"title":     fmt.Sprintf("%s@%s", ts.operator, ts.server.Name),
+		"env": map[string]string{
+			"TERM": "xterm-256color", "operator": ts.operator,
+			"serverId": fmt.Sprint(ts.server.ID), "server": ts.server.Name,
+		},
+	})
+	_, err = f.Write(append(header, '\n'))
 	return err
 }
 
+// writeAudit 追加 cast 输出帧：[相对秒, "o", 数据]（JSON 字符串转义由
+// Marshal 处理）。审计写失败不影响会话。
 func (ts *terminalSession) writeAudit(p []byte) {
 	if ts.file != nil {
-		_, _ = ts.file.Write(p) // 审计写失败不影响会话
+		delta := float64(time.Since(ts.started).Nanoseconds()) / 1e9
+		frame, _ := json.Marshal([]any{delta, "o", string(p)})
+		_, _ = ts.file.Write(append(frame, '\n'))
 	}
 }
 

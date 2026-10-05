@@ -36,7 +36,10 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		servers.PUT("/:id", h.updateServer)
 		servers.DELETE("/:id", h.deleteServer)
 		servers.POST("/:id/test", h.testServer)
-		servers.GET("/:id/terminal", h.handleTerminal) // WebSocket；admin 专属（casbin 种子未授予其他角色）
+		servers.GET("/:id/terminal", h.handleTerminal) // WebSocket；admin 通配 + 用户级细粒度授权（M6）
+		// P6-M6 终端会话审计（admin，种子 v19）
+		r.Authed.GET("/server-terminals", h.listTerminalSessions)
+		r.Authed.GET("/server-terminals/content", h.terminalCastContent)
 	}
 	// 独立前缀避免与 /servers/:id 通配冲突；只读，走内存环形缓冲优先
 	metrics := r.Authed.Group("/server-metrics")
@@ -289,4 +292,43 @@ func (h *Handler) deleteGroup(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// ---- P6-M6 终端会话审计 ----
+
+func (h *Handler) listTerminalSessions(c *gin.Context) {
+	var sid uint
+	if v := c.Query("server_id"); v != "" {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil || n == 0 {
+			httpx.FailBadRequest(c, "server_id 无效")
+			return
+		}
+		sid = uint(n)
+	}
+	list, err := h.svc.ListTerminalSessions(sid)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, list)
+}
+
+func (h *Handler) terminalCastContent(c *gin.Context) {
+	var sid uint
+	if v := c.Query("server_id"); v != "" {
+		n, _ := strconv.ParseUint(v, 10, 64)
+		sid = uint(n)
+	}
+	if sid == 0 {
+		httpx.FailBadRequest(c, "server_id 必填")
+		return
+	}
+	cast, err := h.svc.ReadTerminalCast(sid, c.Query("file"))
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Data(200, "text/plain; charset=utf-8", []byte(cast))
 }

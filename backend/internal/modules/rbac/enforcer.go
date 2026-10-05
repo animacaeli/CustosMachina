@@ -130,6 +130,11 @@ var defaultPolicies = [][]string{
 	{"admin", "/config-pull-tokens", "GET|POST|PUT"},
 	{"admin", "/config-pull-tokens/*", "PUT"},
 	// v18：配置中心同步/对账（P6 M7，AgileConfig 纯后端通道）——admin/ops 运维职能
+	// v19：终端会话审计与细粒度授权（P6-M6 堡垒机）——admin 专属
+	{"admin", "/server-terminals", "GET"},
+	{"admin", "/server-terminals/*", "GET"},
+	{"admin", "/rbac/terminal-acls", "GET|PUT"},
+	{"admin", "/rbac/terminal-acls/*", "GET|PUT"},
 	{"admin", "/config-kv", "GET|POST|PUT"},
 	{"admin", "/config-kv/*", "GET|POST|PUT"},
 	{"ops", "/config-kv", "GET|POST|PUT"},
@@ -231,7 +236,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "18" // v18：config-kv（P6-M7 K/V 配置，对齐 config-files 权限面） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "19" // v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -369,6 +374,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v17→v18：config-kv 对 admin/ops/dev 都是新资源点
 		if len(ps) > 0 && oldVersion == "17" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v18→v19：server-terminals/terminal-acls 对 admin 是新资源点
+		if len(ps) > 0 && p[0] == "admin" && oldVersion == "18" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

@@ -29,6 +29,8 @@ import ContainersDrawer from './containers-drawer.vue';
 import FilesDrawer from './files-drawer.vue';
 import MetricsDrawer from './metrics-drawer.vue';
 import Sparkline from './sparkline.vue';
+import TerminalAcl from './terminal-acl.vue';
+import TerminalAudit from './terminal-audit.vue';
 import TerminalModal from './terminal-modal.vue';
 
 defineOptions({ name: 'ResourcesServer' });
@@ -75,10 +77,16 @@ function hostTooltip(raw: string): string {
 
 const userStore = useUserStore();
 // 终端仅 admin 以上（后端 casbin 兜底，这里只控制按钮可见性）
+// P6-M6 终端审计/授权（admin）
+const auditOpen = ref(false);
+const auditServerId = ref<number | undefined>();
+const aclOpen = ref(false);
+const aclServer = ref<{ id?: number; name?: string }>({});
 const canTerminal = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
   return roles.includes('superadmin') || roles.includes('admin');
 });
+const isAdmin = canTerminal; // 审计/授权入口与终端按钮同权限面
 
 const loading = ref(false);
 const list = ref<ManagedServer[]>([]);
@@ -497,6 +505,34 @@ async function onDelete(id: number, name: string) {
               终端
             </a-button>
             <a-button
+              v-if="isAdmin"
+              size="small"
+              type="link"
+              title="终端会话审计与回放"
+              @click="
+                () => {
+                  auditServerId = record.id;
+                  auditOpen = true;
+                }
+              "
+            >
+              审计
+            </a-button>
+            <a-button
+              v-if="isAdmin"
+              size="small"
+              type="link"
+              title="按账号授权可开该机终端"
+              @click="
+                () => {
+                  aclServer = { id: record.id, name: record.name };
+                  aclOpen = true;
+                }
+              "
+            >
+              授权
+            </a-button>
+            <a-button
               size="small"
               type="link"
               :loading="testingId === record.id"
@@ -623,6 +659,8 @@ async function onDelete(id: number, name: string) {
 
     <MetricsDrawer v-model:open="drawerOpen" :server="drawerServer" />
     <TerminalModal v-model:open="terminalOpen" :server="terminalServer" />
+    <TerminalAudit v-model:open="auditOpen" :server-id="auditServerId" />
+    <TerminalAcl v-model:open="aclOpen" :server-id="aclServer.id" :server-name="aclServer.name" />
     <ContainersDrawer
       v-model:open="containersOpen"
       :server-id="containersServerId"

@@ -53,7 +53,13 @@ func NewMiddleware(deps MiddlewareDeps) gin.HandlerFunc {
 		}
 		obj := strings.TrimPrefix(c.Request.URL.Path, "/api")
 		if !exemptAnyRole[obj] {
-			ok, err := EnforceAny(deps.Enforcer, identity.ParseRoleList(u.Roles), obj, c.Request.Method)
+			// sub 除角色外并入登录名：用户级授权策略（如单主机终端授权，M6）
+			// 生效点——username 只会命中显式写给它的策略，无通配副作用
+			subs := identity.ParseRoleList(u.Roles)
+			if un := u.UsernameOf(); un != "" {
+				subs = append(subs, un)
+			}
+			ok, err := EnforceAny(deps.Enforcer, subs, obj, c.Request.Method)
 			if err != nil {
 				httpx.FailServer(c, err)
 				c.Abort()
