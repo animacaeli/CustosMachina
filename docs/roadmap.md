@@ -117,7 +117,7 @@ P1~P5 的运维功能是 AI 主线的**地基**（数据、通道、审计、上
      （确认层）触发操作。Context Pack 的供给与角色过滤也在 tools 层实现，一套协议两处复用。
    - 开源视角的放大器：Claude Desktop / IDE / 任意 MCP 客户端可直接接入 CustosMachina，
      对话 UI 不是唯一入口。
-2. **平台作为 MCP Client**（P6 末~P7）：管理员在后台注册外部 MCP servers
+2. **平台作为 MCP Client**（原计划 P6 末~P7；P7 搁置，见 plan-phase7 §三"明确不做"，触发另行评估）：管理员在后台注册外部 MCP servers
    （HTTP Streamable 传输为主；stdio 仅限后端本地拉起，单镜像部署下受限支持），
    对话 Agent 可调用外部工具（拨测查询、文档检索等）。
 

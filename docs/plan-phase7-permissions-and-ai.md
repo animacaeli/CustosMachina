@@ -1,6 +1,7 @@
 # 第七阶段计划：权限体系 + AI 深化 + 轻量生态
 
 > 定稿：2026-10-05（P6 v0.10.0 收官后，用户提出三大方向讨论落地）
+> 修订：2026-10-05 整体审核修正——接口事实核对（CIProvider 复用既有 `Log`；`get_git_commits` 标注为新增能力）、M1 补三个实施决策点、M2 补分析硬超时与 digest 升级关系、M3 收敛首版范围 + advisory 纪律、M4 标注窗口配置需新增、M5 补鉴权与契约对齐。
 > 性质：跨阶段路由文档（与 roadmap.md 配合使用）；实施时按里程碑逐项细化。
 > 核心判断：P6 完成了"AI 成为主线功能"，P7 解决"权限不够精细"和"AI 不够深入"两个核心痛点。
 
@@ -33,6 +34,10 @@ P6 交付后平台的 AI 能力已成型（对话/工具调用/悬浮助手/建�
 - **环境隔离**：发布权限按环境分（test/canary/prod），prod 发布需要特定角色
 - **密钥查看独立权限**：与配置编辑分开，需要"安全审计"类角色
 - **项目级授权**：某个角色只能操作特定项目（扩展 M6 主机终端细粒度的模式）
+- **实施细化时须先拍板的三个决策点**（2026-10-05 审核补充）：
+  1. **动作执行机制**：业务动作在中间件层做"动作 → 路由 + 方法"映射，还是 handler 层显式 action gate（config reveal 是典型改造点）——决定改造面与后续新接口的接入纪律
+  2. **存量迁移**：现有权限矩阵页挂在内置角色上的 HTTP 级策略编辑如何迁到新模型；casbin 种子版本须随迁移递增（历史欠过"种子版本未递增"账）
+  3. **角色管理权边界**：自定义角色的动作集不得超出授予者自身权限（admin 不能拼出等同 superadmin 的角色）；密钥查看 / prod 发布等敏感动作的授予范围单列声明
 - **不做审批流**（双人复核/授权窗口等）——太重，不符合轻量定位
 
 **验收标准**：
@@ -70,21 +75,23 @@ AI 分析（并行查：最近 git 提交 / 最近发版 / 配置变更 / 日志
 |---|---|---|
 | `search_o2_logs` | O2 日志查询 | O2 API 连接（P5 已建） |
 | `query_o2_metrics` | O2 指标查询 | O2 API 连接（P5 已建） |
-| `get_build_logs` | 构建日志（Jenkins/gitea Actions） | CIProvider 接口（M8 已建） |
-| `get_git_commits` | Git 提交记录/diff | GitProvider 接口（M8 已建） |
+| `get_build_logs` | 构建日志（Jenkins/gitea Actions） | CIProvider 既有 `Log` 方法（M8 已建，双实现） |
+| `get_git_commits` | Git 提交记录/diff | GitProvider 适配器壳已有（M8），提交/diff 查询是**新接口方法 + gitea/gitee 双实现**（本里程碑新增，勿按"已建"估工时） |
 | `get_config_changes` | 配置变更历史 | AgileConfig 同步 + 文件版本（M5/M7 已建） |
 
 **构建日志的获取链路**（用户问"Jenkins 的日志怎么拿"的落档）：
 
-- CIProvider 接口加 `GetBuildLog(ctx, buildID) (string, error)` 方法——gitea 实现走 gitea Actions API，Jenkins 实现走 Jenkins REST consoleText；AI 工具调用统一接口，不感知 CI 差异。
-- **可靠性保障**：`builds` 表加 `log_tail TEXT` 字段——Poller 轮询到 build 终态（success/failed）时，顺手拉取 consoleText 最后 200 行存入。AI 工具优先查 DB 的 log_tail（快、Jenkins 不可达时可用），需要完整日志时再实时调 CIProvider（回退路径）。
+- CIProvider 接口**已有** `Log(ctx, BuildRef)` 统一方法——gitea 实现走 gitea Actions API，Jenkins 实现走 Jenkins REST consoleText（P6-M8 落地，`ci/provider.go`）。直接复用，**不新增 GetBuildLog 接口方法**；AI 工具调用统一接口，不感知 CI 差异。
+- **可靠性保障**：`builds` 表加 `log_tail TEXT` 字段——Poller 轮询到 build 终态（success/failed）时，顺手调用既有 `Log` 取尾部 200 行存入。AI 工具优先查 DB 的 log_tail（快、Jenkins 不可达时可用），需要完整日志时再实时调 `Log`（回退路径，工具结果沿用现有 8000 字符截断纪律，避免超长 consoleText 撑爆上下文）。
 - 发布日志是平台 SSH 执行产生的，已在平台 DB——不依赖外部服务。
 
 **关键设计决策**：
 - critical 级告警**先发再分析**（避免 AI 延迟导致漏报），warn/info 级先分析再发
+- **分析硬超时 60s**（2026-10-05 审核补充）：function calling 多轮工具调用可能 30s+，不只"失败不阻塞"，"慢"同样不阻塞——超时立即降级为原始告警直接发送，AI 分析结果事后异步补发（沿用 ai_digest 第二条形态）；与通知聚合窗口/静默时段的交互在实施时验证
 - 分析结果附在通知正文（"AI 分析：可能是 xxx 导致，建议 xxx"）
 - AI 分析失败不阻塞原始告警发送（降级为普通通知）
 - 外部服务不可达时，AI 基于已有平台数据分析（不因为 O2/Jenkins 挂了就完全不分析）
+- **与 P5 digest 的关系：升级替代，不并存**——现有 digest.go 的单次 Context Pack（serverEvents/cronFailures/configSnapshot 打包喂给模型）升级为 function calling 主动查证（上表五个新工具），最终只保留一条告警 AI 链路，避免两套并存各自演化
 
 **验收标准**：
 - 触发一条 warn 级告警 → 通知内容包含 AI 生成的原因分析和处理建议
@@ -103,12 +110,16 @@ AI 分析（并行查：最近 git 提交 / 最近发版 / 配置变更 / 日志
 |---|---|---|
 | docker-compose.yml 编写 | 编辑器工具栏 AI 按钮 | 根据"你要部署什么服务"生成骨架 |
 | 配置文件排错 | 编辑器右键 → "AI 分析此配置" | 检查语法/逻辑错误、对照最近变更 |
-| 发布前检查 | 发布按钮旁 AI 图标 | 分析构建状态+配置变更+回滚路径，给出 GO/NO-GO |
+| 发布前检查（后置） | 发布按钮旁 AI 图标 | 分析构建状态+配置变更+回滚路径，给出 GO/NO-GO |
 | cron 表达式 | 输入框旁 AI 图标 | "每天凌晨 3 点备份" → 生成 cron 表达式 |
 | 告警规则编写 | 告警模板编辑器 AI 按钮 | 根据"监控什么指标"生成 PromQL/SQL |
-| YAML⇄env 转换建议 | 格式切换时 AI 提示 | 建议转换并预览 |
+| YAML⇄env 转换建议（后置） | 格式切换时 AI 提示 | 建议转换并预览 |
 
 **实现方式**：在 Monaco 编辑器组件加 AI 工具栏按钮，点击弹出侧面板，携带当前文件内容 + 文件类型 + 页面上下文调用 AI。复用 ChatPanel 的 function calling 能力（AI 可调用平台工具获取上下文）。
+
+**范围与纪律（2026-10-05 审核收敛）**：
+- 首版收敛到三个高频场景：**compose 骨架/排错、cron 表达式、告警规则生成**；表中"发布前检查"与"YAML⇄env 转换建议"后置——先做一版看效果再扩
+- 全部场景均为 **advisory**：AI 输出是建议与草稿，写入编辑器前必经用户确认（覆盖/插入由用户选）；"发布前 GO/NO-GO"即使后续做，也只是提示不构成发布闸门（AI 安全四红线——AI 只建议不执行）
 
 **验收标准**：
 - 在 compose 编辑器点 AI 按钮 → 输入"帮我生成一个 MySQL + Redis 的 compose" → 生成可用骨架
@@ -123,7 +134,7 @@ AI 分析（并行查：最近 git 提交 / 最近发版 / 配置变更 / 日志
 - **token 计数**：调用前估算当前 prompt 的 token 数（中文字符 ÷ 1.5 近似），超阈值时截断最早轮次
 - **自动压缩**：超过模型窗口 70% 时，把最早的对话摘要为一段"前情提要"替换原始消息
 - **手动 /compact**：用户在对话框输入 `/compact`，AI 把全部历史压缩成 500 字摘要，后续对话基于摘要继续
-- **上下文窗口感知**：不同模型窗口不同（DeepSeek 64K / Claude 200K / GPT 128K），从中转层配置获取
+- **上下文窗口感知**：不同模型窗口不同（DeepSeek 64K / Claude 200K / GPT 128K）——中转层模型配置**需新增窗口大小字段**（现状无此配置项），未配置时按保守默认 32K 处理
 
 **验收标准**：
 - 长对话（30+ 轮）不报 token 超限错误
@@ -137,21 +148,24 @@ AI 分析（并行查：最近 git 提交 / 最近发版 / 配置变更 / 日志
 
 ```json
 {
-  "source": "app-attribution",
-  "level": "error",
+  "app": "app-attribution",
+  "level": "warn",
   "title": "请求失败率突增",
   "detail": "最近 5 分钟失败率 15%，正常 < 1%",
   "metadata": { "endpoint": "/api/v1/track", "count": 230 }
 }
 ```
 
+- **鉴权与防滥用（2026-10-05 审核补充，必做）**：沿用 P6 配置拉取 API 的应用级凭证模式——应用级 token（Bearer 头，管理后台签发）+ IP 限速（复用 configs 模块 ratelimit 模式）。公开无鉴权的通知入口是垃圾通知注入面，不可接受
+- **契约对齐既有枚举**：`level` 取 info/warn/critical（平台通知级别枚举）；`source` 固定为 `business`（ValidSources 新增一项），业务名走 `app` 字段、渲染进标题与正文——规则页按 source=business + minLevel 配置路由，零结构性改动，业务服务无需感知平台内部枚举
 - 平台走既有通知路由（source + level → 目标群）
 - 不需要 O2，一个 HTTP 调用即可接入
 - 与 O2 基础设施告警共存，互不依赖
 
 **验收标准**：
-- 业务服务 curl 调用该 API → 收到企业 IM/邮件通知
-- 通知内容包含 source + title + detail
+- 业务服务带 token curl 调用该 API → 收到企业 IM/邮件通知
+- 通知内容包含 app + title + detail
+- 无 token 或错误 token → 401；超频调用 → 429
 
 ### M6 k3s 预研（触发判据后另立计划，本阶段不做）
 
