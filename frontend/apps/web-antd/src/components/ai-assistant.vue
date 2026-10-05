@@ -290,7 +290,9 @@ onMounted(() => {
           <a-tag v-if="panelConv?.mode === 'platform'" color="geekblue">
             平台上下文
           </a-tag>
-          <span v-if="panelConv?.deleted" class="text-xs text-red-500">已删除 · 只读</span>
+          <span v-if="panelConv?.deleted" class="text-xs text-red-500"
+            >已删除 · 只读</span
+          >
           <div class="flex-1"></div>
           <a-button size="small" type="text" @click="newChat">新对话</a-button>
           <a-button size="small" type="text" @click="showHistory">

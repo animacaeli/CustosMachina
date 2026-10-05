@@ -157,10 +157,12 @@ onMounted(async () => {
       <template #description>
         <div class="break-all font-mono text-xs">{{ issued.plaintext }}</div>
         <div class="mt-1 text-xs">
-          接入示例：<span class="font-mono">curl /api/config/{{ issued.app }}/{{
+          接入示例：<span class="font-mono"
+            >curl /api/config/{{ issued.app }}/{{
               issued.envs.split(',')[0]
             }}
-            -H "X-Config-Token: 上述凭证"</span>
+            -H "X-Config-Token: 上述凭证"</span
+          >
         </div>
       </template>
     </a-alert>
@@ -222,7 +224,9 @@ onMounted(async () => {
     <!-- AgileConfig 配置中心（P6-M7）：文件下发自动同步的通道设置 + 手动同步/对账 -->
     <div class="mt-2 rounded-lg border border-border p-3">
       <div class="mb-2 flex items-center gap-2">
-        <span class="text-sm font-medium">配置中心（AgileConfig 热更通道）</span>
+        <span class="text-sm font-medium"
+          >配置中心（AgileConfig 热更通道）</span
+        >
         <a-tag :color="agile.configured ? 'green' : 'default'">
           {{ agile.configured ? '已连接' : '未配置' }}
         </a-tag>

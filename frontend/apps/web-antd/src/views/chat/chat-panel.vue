@@ -448,7 +448,9 @@ onMounted(async () => {
                 >
                   去处理
                 </a-button>
-                <span class="text-muted-foreground">由你手动操作，AI 不会执行变更</span>
+                <span class="text-muted-foreground"
+                  >由你手动操作，AI 不会执行变更</span
+                >
               </div>
             </div>
           </div>
