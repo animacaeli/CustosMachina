@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -139,9 +140,10 @@ func (h *Handler) trigger(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// 手动触发高危（等于在目标机执行任意脚本）：仅管理员，与 casbin 层互补
-	if claims := jwt.ClaimsFromContext(c); claims == nil || !claims.IsAdmin {
-		httpx.Fail(c, http.StatusForbidden, 403, "手动执行仅管理员可操作")
+	// P7-M1：手动触发是独立动作（等于在目标机执行任意脚本），动作 gate 裁决
+	// （替代原 IsAdmin 判断；admin/超管种子即含该动作，行为不变）
+	if !rbac.Can(c, "cron.trigger") {
+		httpx.Fail(c, http.StatusForbidden, 403, "手动执行需独立权限（cron.trigger）")
 		return
 	}
 	run, err := h.svc.Trigger(c.Request.Context(), id, TriggerManual)

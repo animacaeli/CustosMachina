@@ -7,6 +7,7 @@ import { useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
+import { requestClient } from '#/api/request';
 import {
   createUserApi,
   getUserListApi,
@@ -24,6 +25,20 @@ const BUILTIN_ROLES = computed(() =>
   isSuper.value ? ['admin', 'ops', 'dev', 'guest'] : ['ops', 'dev', 'guest'],
 );
 
+// P7-M1：自定义角色也进可分配集合（后端 ValidateRoles 经角色表校验）
+const customRoles = ref<string[]>([]);
+async function loadCustomRoles() {
+  try {
+    const rows = await requestClient.get<
+      { builtin: boolean; name: string }[]
+    >('/roles');
+    customRoles.value = rows.filter((r) => !r.builtin).map((r) => r.name);
+  } catch {
+    customRoles.value = [];
+  }
+}
+const assignableRoles = computed(() => [...BUILTIN_ROLES.value, ...customRoles.value]);
+
 const loading = ref(false);
 const list = ref<PlatformUser[]>([]);
 
@@ -36,7 +51,10 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  loadCustomRoles();
+});
 
 // --- 创建用户 ---
 const createOpen = ref(false);
@@ -137,7 +155,7 @@ async function submitRoles() {
         <a-form-item label="角色">
           <a-select
             v-model:value="createForm.roles"
-            :options="BUILTIN_ROLES.map((r) => ({ label: r, value: r }))"
+            :options="assignableRoles.map((r) => ({ label: r, value: r }))"
           />
         </a-form-item>
       </a-form>
@@ -152,7 +170,7 @@ async function submitRoles() {
         v-model:value="editRoles"
         class="flex flex-col gap-2 py-2"
       >
-        <a-checkbox v-for="r in BUILTIN_ROLES" :key="r" :value="r">
+        <a-checkbox v-for="r in assignableRoles" :key="r" :value="r">
           {{ r }}
         </a-checkbox>
       </a-checkbox-group>

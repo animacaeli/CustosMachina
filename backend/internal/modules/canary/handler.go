@@ -1,10 +1,12 @@
 package canary
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -133,10 +135,16 @@ func outputTail(out string) string {
 	return "\n" + out
 }
 
+// projectParam 全部端点的公共入口：解析 projectId 并顺带执行 P7-M1 项目范围
+// 守卫（scoped 用户访问范围外项目 → 403）。
 func projectParam(c *gin.Context) (uint, bool) {
 	id64, err := strconv.ParseUint(c.Param("projectId"), 10, 64)
 	if err != nil || id64 == 0 {
 		httpx.FailBadRequest(c, "无效的 projectId")
+		return 0, false
+	}
+	if !rbac.InProjectScope(c, uint(id64)) {
+		httpx.Fail(c, http.StatusForbidden, 403, "该项目不在你的授权范围内")
 		return 0, false
 	}
 	return uint(id64), true

@@ -14,14 +14,27 @@ func newTestEnforcer(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&identity.PlatformSetting{}); err != nil {
-		t.Fatalf("迁移 settings 表失败: %v", err)
+	if err := db.AutoMigrate(&identity.PlatformSetting{}, &identity.User{}); err != nil {
+		t.Fatalf("迁移 settings/users 表失败: %v", err)
+	}
+	if err := db.AutoMigrate(Models()...); err != nil {
+		t.Fatalf("迁移角色表失败: %v", err)
+	}
+	users := identity.NewUserRepository(db)
+	u := &identity.User{DisplayName: "测试超管", Roles: "admin"}
+	u.SetUsername("测试超管")
+	if err := users.Create(t.Context(), u); err != nil {
+		t.Fatalf("建测试用户失败: %v", err)
 	}
 	e, _, err := NewEnforcer(db)
 	if err != nil {
 		t.Fatalf("初始化 enforcer 失败: %v", err)
 	}
-	return NewService(e)
+	svc, err := NewService(db, e, users)
+	if err != nil {
+		t.Fatalf("初始化 rbac service 失败: %v", err)
+	}
+	return svc
 }
 
 func TestDefaultPolicies_Enforce(t *testing.T) {

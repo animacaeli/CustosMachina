@@ -245,8 +245,13 @@ func (s *Service) Rollback(ctx context.Context, releaseID uint, operator string)
 // DB 暴露只读查询入口（handler 单条查询用；写操作仍收在 service 内）。
 func (s *Service) DB() *gorm.DB { return s.db }
 
-func (s *Service) List(ctx context.Context, projectID uint, env string, page, size int) ([]Release, int64, error) {
+// List 发布记录分页。scopeIDs（P7-M1 项目范围）非 nil 时仅返回授权项目，
+// 与 projectID 过滤叠加（scoped 用户查未授权项目 → 空集）。
+func (s *Service) List(ctx context.Context, projectID uint, env string, page, size int, scopeIDs []uint) ([]Release, int64, error) {
 	tx := s.db.WithContext(ctx).Model(&Release{})
+	if scopeIDs != nil {
+		tx = tx.Where("project_id IN ?", scopeIDs)
+	}
 	if projectID > 0 {
 		tx = tx.Where("project_id = ?", projectID)
 	}

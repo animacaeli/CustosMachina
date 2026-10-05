@@ -22,11 +22,16 @@ func NewHandler(svc *Service, users identity.UserRepository) *Handler {
 func (h *Handler) Name() string { return "rbac" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
-	// 权限矩阵管理仅 admin（中间件对非 admin 校验策略，默认矩阵不含 /roles，即仅超管可用）
+	// 角色管理仅 admin（种子含 admin /roles 读+矩阵写；超管中间件放行）
 	roles := r.Authed.Group("/roles")
 	{
 		roles.GET("", h.list)
 		roles.PUT("/:role/policies", h.replace)
+		// P7-M1：自定义角色 CRUD + 动作目录
+		roles.GET("/actions", h.listActions)
+		roles.POST("", h.createRole)
+		roles.PUT("/:role", h.updateRole)
+		roles.DELETE("/:role", h.deleteRole)
 	}
 	// 当前用户权限下发：任何登录用户可查自己的
 	r.Authed.GET("/auth/permissions", h.myPermissions)
@@ -36,6 +41,67 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		ta.GET("/:serverId", h.getTerminalACLs)
 		ta.PUT("/:serverId", h.setTerminalACLs)
 	}
+}
+
+// listActions 动作目录（前端勾选面板数据源）。注意须先于 /:role 注册已保证不冲突。
+func (h *Handler) listActions(c *gin.Context) {
+	httpx.OK(c, ActionCatalog)
+}
+
+type saveRoleRequest struct {
+	Name        string   `json:"name" binding:"required,max=32"`
+	Description string   `json:"description" binding:"max=255"`
+	Actions     []string `json:"actions" binding:"max=32,dive,max=64"`
+	ProjectIDs  []uint   `json:"projectIds" binding:"max=100"`
+}
+
+// updateRoleRequest 更新载荷：角色名以路径为准、不可改。
+type updateRoleRequest struct {
+	Description string   `json:"description" binding:"max=255"`
+	Actions     []string `json:"actions" binding:"max=32,dive,max=64"`
+	ProjectIDs  []uint   `json:"projectIds" binding:"max=100"`
+}
+
+func (h *Handler) createRole(c *gin.Context) {
+	var in saveRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	claims := auth.ClaimsFromContext(c)
+	role, err := h.svc.CreateRole(SaveRoleInput(in), claims != nil && claims.IsAdmin)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, role)
+}
+
+func (h *Handler) updateRole(c *gin.Context) {
+	var in updateRoleRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	claims := auth.ClaimsFromContext(c)
+	if err := h.svc.UpdateRole(c.Param("role"), SaveRoleInput{
+		Name:        c.Param("role"),
+		Description: in.Description,
+		Actions:     in.Actions,
+		ProjectIDs:  in.ProjectIDs,
+	}, claims != nil && claims.IsAdmin); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
+}
+
+func (h *Handler) deleteRole(c *gin.Context) {
+	if err := h.svc.DeleteRole(c.Param("role")); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, nil)
 }
 
 func (h *Handler) getTerminalACLs(c *gin.Context) {

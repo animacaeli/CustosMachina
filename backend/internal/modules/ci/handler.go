@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
+
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 	"github.com/custos-machina/backend/internal/server"
@@ -203,6 +205,16 @@ func (h *Handler) listBuilds(c *gin.Context) {
 	if v := c.Query("projectId"); v != "" {
 		q.ProjectID = uint(atoiDefault(v, 0))
 	}
+	// P7-M1 项目范围：scoped 用户只见授权项目（空授权 = 恒空集）
+	if all, ids := rbac.ProjectScope(c); !all {
+		if len(ids) == 0 {
+			httpx.OK(c, gin.H{"items": []any{}, "total": 0})
+			return
+		}
+		if q.ProjectID == 0 || !containsUint(ids, q.ProjectID) {
+			q.ScopeIDs = ids
+		}
+	}
 	list, total, err := h.svc.ListBuilds(c.Request.Context(), q)
 	if err != nil {
 		httpx.FailServer(c, err)
@@ -245,4 +257,14 @@ func atoiDefault(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+// containsUint P7-M1 范围辅助。
+func containsUint(ids []uint, v uint) bool {
+	for _, id := range ids {
+		if id == v {
+			return true
+		}
+	}
+	return false
 }

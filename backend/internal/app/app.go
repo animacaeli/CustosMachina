@@ -42,6 +42,7 @@ import (
 // ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。
 func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models := identity.Models()
+	models = append(models, rbac.Models()...)
 	models = append(models, resources.Models()...)
 	models = append(models, notify.Models()...)
 	models = append(models, backup.Models()...)

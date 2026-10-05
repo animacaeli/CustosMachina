@@ -59,6 +59,8 @@ func NewMiddleware(deps MiddlewareDeps) gin.HandlerFunc {
 			if un := u.UsernameOf(); un != "" {
 				subs = append(subs, un)
 			}
+			// P7-M1：主体塞入 context，动作 gate（rbac.Can）免二次查库
+			c.Set(subjectCtxKey, subject{IsAdmin: false, Roles: identity.ParseRoleList(u.Roles)})
 			ok, err := EnforceAny(deps.Enforcer, subs, obj, c.Request.Method)
 			if err != nil {
 				httpx.FailServer(c, err)

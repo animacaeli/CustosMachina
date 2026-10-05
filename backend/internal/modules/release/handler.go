@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -46,7 +47,15 @@ func (h *Handler) list(c *gin.Context) {
 	if v := c.Query("projectId"); v != "" {
 		q.projectID = uint(atoiDefault(v, 0))
 	}
-	list, total, err := h.svc.List(c.Request.Context(), q.projectID, q.env, q.page, q.size)
+	// P7-M1 项目范围：scoped 用户只见授权项目（nil = 全局不限）
+	var scopeIDs []uint
+	if all, ids := rbac.ProjectScope(c); !all {
+		scopeIDs = ids
+		if len(scopeIDs) == 0 {
+			scopeIDs = []uint{0} // 无任何授权项目：恒空集
+		}
+	}
+	list, total, err := h.svc.List(c.Request.Context(), q.projectID, q.env, q.page, q.size, scopeIDs)
 	if err != nil {
 		httpx.FailServer(c, err)
 		return
@@ -98,12 +107,18 @@ func (h *Handler) execute(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	// 正式环境发布高危：仅管理员（灰度允许 ops，与 casbin 层互补）
-	if in.EnvType == "prod" {
-		if claims := jwt.ClaimsFromContext(c); claims == nil || !claims.IsAdmin {
-			httpx.Fail(c, http.StatusForbidden, 403, "正式环境发布仅管理员可操作")
-			return
-		}
+	// P7-M1 环境隔离：发布权限按环境分派（release.publish.test/canary/prod），
+	// 环境在 body 里、路由层不可表达——handler gate 裁决
+	envAction := map[string]string{
+		"test": "release.publish.test", "canary": "release.publish.canary", "prod": "release.publish.prod",
+	}[in.EnvType]
+	if envAction == "" {
+		httpx.FailBadRequest(c, "envType 须为 test/canary/prod")
+		return
+	}
+	if !rbac.Can(c, envAction) {
+		httpx.Fail(c, http.StatusForbidden, 403, "发布到 "+in.EnvType+" 环境需要对应权限（"+envAction+"）")
+		return
 	}
 	// 发布是长链路（门禁最长 3 分钟 + drain 30s）：脱离 request ctx，
 	// 客户端断开不产生"conf 已切但记录未落"的半完成状态
@@ -118,6 +133,11 @@ func (h *Handler) execute(c *gin.Context) {
 func (h *Handler) rollback(c *gin.Context) {
 	id, ok := httpx.ParamID(c)
 	if !ok {
+		return
+	}
+	// P7-M1：回滚是独立发布动作（与 POST /releases 同路由面，gate 分派）
+	if !rbac.Can(c, "release.rollback") {
+		httpx.Fail(c, http.StatusForbidden, 403, "回滚发布需独立权限（release.rollback）")
 		return
 	}
 	rel, err := h.svc.Rollback(c.Request.Context(), id, operatorOf(c))

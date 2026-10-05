@@ -1,6 +1,7 @@
 package configs
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/pkg/ratelimit"
@@ -140,6 +142,11 @@ func (h *Handler) getContent(c *gin.Context) {
 		return
 	}
 	reveal := c.Query("reveal") == "true"
+	// P7-M1：密钥明文查看是独立动作（与配置编辑分离），reveal 请求一律过 gate
+	if reveal && !rbac.Can(c, "config.reveal") {
+		httpx.Fail(c, http.StatusForbidden, 403, "密钥明文查看需独立权限（config.reveal）")
+		return
+	}
 	content, f, err := h.svc.GetContent(c.Request.Context(), id, reveal, actor(c))
 	if err != nil {
 		httpx.FailNotFound(c, err.Error())
@@ -172,6 +179,11 @@ func (h *Handler) deploy(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// P7-M1：下发是与编辑分离的动作（POST /config-files/* 路由层不可分）
+	if !rbac.Can(c, "config.deploy") {
+		httpx.Fail(c, http.StatusForbidden, 403, "配置下发需独立权限（config.deploy）")
+		return
+	}
 	if err := h.svc.Deploy(c.Request.Context(), id, actor(c)); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -201,6 +213,10 @@ func (h *Handler) getVersionContent(c *gin.Context) {
 	}
 	vid := uint(vid64)
 	reveal := c.Query("reveal") == "true"
+	if reveal && !rbac.Can(c, "config.reveal") {
+		httpx.Fail(c, http.StatusForbidden, 403, "密钥明文查看需独立权限（config.reveal）")
+		return
+	}
 	content, _, err := h.svc.GetVersionContent(c.Request.Context(), vid, reveal)
 	if err != nil {
 		httpx.FailNotFound(c, err.Error())
@@ -221,6 +237,11 @@ func (h *Handler) rollback(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	// P7-M1：版本回退是编辑语义（PUT/POST 路由层不可分）
+	if !rbac.Can(c, "config.edit") {
+		httpx.Fail(c, http.StatusForbidden, 403, "配置回退需编辑权限（config.edit）")
+		return
+	}
 	if err := h.svc.Rollback(c.Request.Context(), id, in.VersionID, actor(c)); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
@@ -233,6 +254,11 @@ func (h *Handler) envSync(c *gin.Context) {
 	var in EnvSyncInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	// P7-M1：env 同步即下发语义
+	if !rbac.Can(c, "config.deploy") {
+		httpx.Fail(c, http.StatusForbidden, 403, "环境同步需下发权限（config.deploy）")
 		return
 	}
 	created, updated, err := h.svc.EnvSync(c.Request.Context(), in, actor(c))

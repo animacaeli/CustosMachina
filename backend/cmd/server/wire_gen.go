@@ -60,7 +60,12 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	service := rbac.NewService(syncedEnforcer)
+	service, err := rbac.NewService(db, syncedEnforcer, userRepository)
+	if err != nil {
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
 	rbacHandler := rbac.NewHandler(service, userRepository)
 	serverRepository := resources.NewServerRepository(db)
 	groupRepository := resources.NewGroupRepository(db)

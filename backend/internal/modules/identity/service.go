@@ -30,7 +30,16 @@ func (s *UserService) List(ctx context.Context) ([]User, error) { return s.repo.
 
 var ErrAdminAssignForbidden = errors.New("admin 角色仅超管可任命")
 
-// ValidateRoles 校验角色串：每项须为内置可分配角色（superadmin 不可分配）。
+// ExtraRoleValidator 自定义角色校验钩子（P7-M1：app 层装配时由 rbac 注入，
+// 查角色表；nil = 仅内置角色）。identity 不反向依赖 rbac，避免环。
+var ExtraRoleValidator func(role string) bool
+
+// UsernameReserved 用户名保留字校验钩子（P7-M1：用户名与角色名同为 casbin sub，
+// 同名会劫持 M6 用户级授权策略；由 rbac 注入，nil = 不校验）。
+var UsernameReserved func(name string) bool
+
+// ValidateRoles 校验角色串：每项须为内置可分配角色（superadmin 不可分配）
+// 或角色表中存在的自定义角色（经 ExtraRoleValidator）。
 // 未知角色在 casbin 默认拒绝下虽无权限，但仍拒绝写入以保持数据干净。
 func ValidateRoles(s string) error {
 	for _, r := range ParseRoleList(s) {
@@ -41,8 +50,11 @@ func ValidateRoles(s string) error {
 				break
 			}
 		}
+		if !known && ExtraRoleValidator != nil && ExtraRoleValidator(r) {
+			known = true
+		}
 		if !known {
-			return fmt.Errorf("未知角色: %s（可选：%s）", r, strings.Join(BuiltinRoles, "/"))
+			return fmt.Errorf("未知角色: %s（可选：%s 或自定义角色）", r, strings.Join(BuiltinRoles, "/"))
 		}
 	}
 	return nil
@@ -70,6 +82,10 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput, actorSuper
 	if in.Username != "" {
 		if _, err := s.repo.GetByUsername(ctx, in.Username); err == nil {
 			return nil, ErrAlreadyExists
+		}
+		// P7-M1：用户名与角色名同为 casbin sub，撞名会劫持用户级授权策略
+		if UsernameReserved != nil && UsernameReserved(in.Username) {
+			return nil, fmt.Errorf("该用户名与角色名冲突，不可用")
 		}
 	}
 	u := &User{DisplayName: in.DisplayName, Roles: in.Roles}

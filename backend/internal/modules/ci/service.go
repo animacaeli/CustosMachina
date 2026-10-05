@@ -405,13 +405,18 @@ func validCanaryTag(tag string) bool {
 // ---- 构建 ----
 
 type BuildQuery struct {
-	ProjectID  uint
-	EnvType    string
+	ProjectID uint
+	EnvType   string
+	// ScopeIDs P7-M1 项目范围（nil = 不限）：scoped 用户只见授权项目
+	ScopeIDs   []uint
 	Page, Size int
 }
 
 func (s *Service) ListBuilds(ctx context.Context, q BuildQuery) ([]Build, int64, error) {
 	tx := s.db.WithContext(ctx).Model(&Build{})
+	if q.ScopeIDs != nil {
+		tx = tx.Where("project_id IN ?", q.ScopeIDs)
+	}
 	if q.ProjectID > 0 {
 		tx = tx.Where("project_id = ?", q.ProjectID)
 	}
