@@ -59,19 +59,39 @@ AI 分析（并行查：最近 git 提交 / 最近发版 / 配置变更 / 日志
 **分析维度**（AI 主动调用平台只读工具）：
 - 最近 git 提交（哪个 commit 最可能引入问题）
 - 最近发版记录（发版时间和告警时间的相关性）
+- 构建日志（Jenkins/gitea Actions 构建失败的具体错误）
 - 配置变更（AgileConfig/文件下发记录）
 - 日志尾部（相关容器的 error 日志）
 - 指标异常（CPU/内存/网络是否同时异常）
+
+**外部服务数据打通（P7 核心增量）**：AI 不直接连外部服务，而是通过平台已有的集成层取数（权限/审计/DLP 统一走平台）。具体是给 AI 加新的只读工具，全部基于平台已有连接：
+
+| AI 工具 | 数据来源 | 平台已有集成 |
+|---|---|---|
+| `search_o2_logs` | O2 日志查询 | O2 API 连接（P5 已建） |
+| `query_o2_metrics` | O2 指标查询 | O2 API 连接（P5 已建） |
+| `get_build_logs` | 构建日志（Jenkins/gitea Actions） | CIProvider 接口（M8 已建） |
+| `get_git_commits` | Git 提交记录/diff | GitProvider 接口（M8 已建） |
+| `get_config_changes` | 配置变更历史 | AgileConfig 同步 + 文件版本（M5/M7 已建） |
+
+**构建日志的获取链路**（用户问"Jenkins 的日志怎么拿"的落档）：
+
+- CIProvider 接口加 `GetBuildLog(ctx, buildID) (string, error)` 方法——gitea 实现走 gitea Actions API，Jenkins 实现走 Jenkins REST consoleText；AI 工具调用统一接口，不感知 CI 差异。
+- **可靠性保障**：`builds` 表加 `log_tail TEXT` 字段——Poller 轮询到 build 终态（success/failed）时，顺手拉取 consoleText 最后 200 行存入。AI 工具优先查 DB 的 log_tail（快、Jenkins 不可达时可用），需要完整日志时再实时调 CIProvider（回退路径）。
+- 发布日志是平台 SSH 执行产生的，已在平台 DB——不依赖外部服务。
 
 **关键设计决策**：
 - critical 级告警**先发再分析**（避免 AI 延迟导致漏报），warn/info 级先分析再发
 - 分析结果附在通知正文（"AI 分析：可能是 xxx 导致，建议 xxx"）
 - AI 分析失败不阻塞原始告警发送（降级为普通通知）
+- 外部服务不可达时，AI 基于已有平台数据分析（不因为 O2/Jenkins 挂了就完全不分析）
 
 **验收标准**：
 - 触发一条 warn 级告警 → 通知内容包含 AI 生成的原因分析和处理建议
 - critical 级告警 → 立即发送原始告警（不等 AI），AI 分析结果异步补充
-- AI 分析引用了真实的 git 提交/发版/配置变更数据
+- AI 分析引用了真实的 git 提交/发版/配置变更/构建日志数据
+- 构建失败时 AI 能引用 Jenkins consoleText 的具体错误行（log_tail 兜底）
+- Jenkins 不可达时 AI 仍能基于 DB 中的 log_tail 做分析
 
 ### M3 编辑器 AI 介入（约 1 周，上下文 AI 助手）
 
