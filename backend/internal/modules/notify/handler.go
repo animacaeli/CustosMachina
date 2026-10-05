@@ -239,19 +239,18 @@ func (h *Handler) getChannelSettings(c *gin.Context) {
 
 func (h *Handler) putChannelSettings(c *gin.Context) {
 	var in struct {
-		TelegramToken string `json:"telegramToken"`
-		SMTPHost      string `json:"smtpHost"`
-		SMTPPort      string `json:"smtpPort"`
-		SMTPUser      string `json:"smtpUser"`
-		SMTPPass      string `json:"smtpPass"`
-		SMTPFrom      string `json:"smtpFrom"`
+		SMTPHost string `json:"smtpHost"`
+		SMTPPort string `json:"smtpPort"`
+		SMTPUser string `json:"smtpUser"`
+		SMTPPass string `json:"smtpPass"`
+		SMTPFrom string `json:"smtpFrom"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
 	if err := h.svc.SaveChannelSettings(c.Request.Context(),
-		in.TelegramToken, in.SMTPHost, in.SMTPPort, in.SMTPUser, in.SMTPPass, in.SMTPFrom); err != nil {
+		in.SMTPHost, in.SMTPPort, in.SMTPUser, in.SMTPPass, in.SMTPFrom); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}

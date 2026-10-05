@@ -41,7 +41,6 @@ async function load() {
 
 // ---- P6-M9 渠道凭据设置（Telegram Bot / SMTP，平台级）----
 const channelForm = reactive({
-  telegramToken: '',
   smtpHost: '',
   smtpPort: '',
   smtpUser: '',
@@ -49,25 +48,21 @@ const channelForm = reactive({
   smtpFrom: '',
 });
 const channelState = reactive({
-  telegramConfigured: false,
   smtpConfigured: false,
 });
 
 async function loadChannels() {
   const s = await getChannelSettingsApi();
-  channelState.telegramConfigured = s.telegramConfigured;
   channelState.smtpConfigured = s.smtpConfigured;
   channelForm.smtpHost = s.smtpHost ?? '';
   channelForm.smtpPort = s.smtpPort ?? '';
   channelForm.smtpUser = s.smtpUser ?? '';
   channelForm.smtpFrom = s.smtpFrom ?? '';
-  channelForm.telegramToken = '';
   channelForm.smtpPass = '';
 }
 
 async function saveChannels() {
   await saveChannelSettingsApi({
-    ...(channelForm.telegramToken ? { telegramToken: channelForm.telegramToken } : {}),
     ...(channelForm.smtpHost ? { smtpHost: channelForm.smtpHost } : {}),
     ...(channelForm.smtpPort ? { smtpPort: channelForm.smtpPort } : {}),
     ...(channelForm.smtpUser ? { smtpUser: channelForm.smtpUser } : {}),
@@ -102,7 +97,7 @@ const editingId = ref<null | number>(null);
 const form = reactive<{
   name: string;
   scope: 'dev' | 'prod';
-  channel: 'smtp' | 'telegram' | 'webhook';
+  channel: 'smtp' | 'webhook';
   target: string;
   webhook: string;
   remark: string;
@@ -217,7 +212,7 @@ async function saveOpsGroup() {
         </template>
         <template v-else-if="column.key === 'channel'">
           <a-tag>
-            {{ record.channel === 'telegram' ? 'Telegram' : record.channel === 'smtp' ? '邮件' : 'Webhook' }}
+            {{ record.channel === 'smtp' ? '邮件' : 'Webhook' }}
           </a-tag>
         </template>
         <template v-else-if="column.key === 'webhook'">
@@ -250,16 +245,10 @@ async function saveOpsGroup() {
       <div class="mb-2 text-sm font-medium">
         通道设置（平台级凭据）
         <span class="ml-2 text-xs font-normal text-muted-foreground">
-          Telegram Bot Token 与 SMTP 账号在此统一配置；各通知群只登记投递目标（chat id / 收件人）
+          SMTP 账号在此统一配置；各通知群只登记收件人（逗号分隔可群发；通知规则可将一个事件路由到多个群）
         </span>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <a-input-password
-          v-model:value="channelForm.telegramToken"
-          :placeholder="channelState.telegramConfigured ? 'Telegram Bot Token（已配置，留空保留）' : 'Telegram Bot Token'"
-          size="small"
-          style="width: 260px"
-        />
         <a-input v-model:value="channelForm.smtpHost" placeholder="SMTP 主机" size="small" style="width: 140px" />
         <a-input v-model:value="channelForm.smtpPort" placeholder="端口" size="small" style="width: 80px" />
         <a-input v-model:value="channelForm.smtpUser" placeholder="账号" size="small" style="width: 130px" />
@@ -297,7 +286,6 @@ async function saveOpsGroup() {
             v-model:value="form.channel"
             :options="[
               { label: '群机器人 Webhook（企微 / 钉钉 / 飞书）', value: 'webhook' },
-              { label: 'Telegram Bot', value: 'telegram' },
               { label: '邮件（SMTP）', value: 'smtp' },
             ]"
           />
@@ -308,14 +296,6 @@ async function saveOpsGroup() {
           extra="企微 / 钉钉 / 飞书群机器人地址；编辑时留空保留"
         >
           <a-input-password v-model:value="form.webhook" />
-        </a-form-item>
-        <a-form-item
-          v-if="form.channel === 'telegram'"
-          label="Chat ID"
-          extra="群 chat id（负数）或频道 @名；Bot Token 在下方通道设置统一配置"
-          required
-        >
-          <a-input v-model:value="form.target" placeholder="-1001234567890" />
         </a-form-item>
         <a-form-item
           v-if="form.channel === 'smtp'"

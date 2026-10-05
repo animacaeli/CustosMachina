@@ -47,7 +47,7 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 type SaveGroupInput struct {
 	Name    string `json:"name" binding:"required,max=64"`
 	Scope   string `json:"scope" binding:"required,oneof=prod dev"`
-	Channel string `json:"channel" binding:"omitempty,oneof=webhook telegram smtp"`
+	Channel string `json:"channel" binding:"omitempty,oneof=webhook smtp"`
 	Webhook string `json:"webhook" binding:"omitempty,max=1024"`
 	Target  string `json:"target" binding:"omitempty,max=512"`
 	Remark  string `json:"remark" binding:"max=255"`
@@ -56,10 +56,6 @@ type SaveGroupInput struct {
 // validateGroupTarget 渠道目标校验（webhook 渠道沿用 webhook 格式校验）。
 func validateGroupTarget(channel, target string) error {
 	switch channel {
-	case ChannelTelegram:
-		if target == "" {
-			return fmt.Errorf("Telegram 渠道须填写 chat id（数字或 @频道名）")
-		}
 	case ChannelSMTP:
 		if target == "" || !strings.Contains(target, "@") {
 			return fmt.Errorf("SMTP 渠道须填写收件人邮箱（多个逗号分隔）")
@@ -165,7 +161,7 @@ func (s *Service) Send(ctx context.Context, group *Group, title, content string)
 	if group == nil {
 		return nil
 	}
-	if group.Channel == ChannelTelegram || group.Channel == ChannelSMTP {
+	if group.Channel == ChannelSMTP {
 		err := s.sendByChannel(ctx, group, title, content)
 		s.record(ctx, group.ID, title, content, okOr(err), errString(err))
 		return err

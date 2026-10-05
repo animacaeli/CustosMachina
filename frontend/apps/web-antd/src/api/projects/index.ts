@@ -2,7 +2,7 @@ import { requestClient } from '#/api/request';
 
 /** 通知群（webhook 已剔除，仅 hasWebhook） */
 export interface NotifyGroup {
-  channel?: 'smtp' | 'telegram' | 'webhook';
+  channel?: 'smtp' | 'webhook';
   id: number;
   name: string;
   remark?: string;
@@ -11,7 +11,7 @@ export interface NotifyGroup {
 }
 
 export interface SaveNotifyGroupInput {
-  channel?: 'smtp' | 'telegram' | 'webhook';
+  channel?: 'smtp' | 'webhook';
   name: string;
   remark?: string;
   scope: string;
@@ -195,7 +195,6 @@ export interface ChannelSettings {
   smtpHost: string;
   smtpPort: string;
   smtpUser: string;
-  telegramConfigured: boolean;
 }
 
 export async function getChannelSettingsApi() {
@@ -208,7 +207,6 @@ export async function saveChannelSettingsApi(data: {
   smtpPass?: string;
   smtpPort?: string;
   smtpUser?: string;
-  telegramToken?: string;
 }) {
   return requestClient.put('/notify-settings/channels', data);
 }

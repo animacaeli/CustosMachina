@@ -3,9 +3,7 @@ package notify
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"net"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -127,24 +125,6 @@ func TestSaveGroupInputBinding(t *testing.T) {
 
 // ---- P6-M9 渠道泛化：Telegram / SMTP ----
 
-// fakeTelegram 本地模拟 Bot API（telegramBase 注入）。
-func fakeTelegram(t *testing.T) (*httptest.Server, *map[string]string) {
-	t.Helper()
-	got := map[string]string{}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/bottok/sendMessage", func(w http.ResponseWriter, r *http.Request) {
-		var m map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&m)
-		got["chat_id"], _ = m["chat_id"].(string)
-		got["text"], _ = m["text"].(string)
-		got["parse_mode"], _ = m["parse_mode"].(string)
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv, &got
-}
-
 func notifyTestService(t *testing.T) *Service {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -162,41 +142,6 @@ func notifyTestService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	return NewService(db, cipher)
-}
-
-func TestSendTelegramChannel(t *testing.T) {
-	srv, got := fakeTelegram(t)
-	old := telegramBase
-	telegramBase = srv.URL
-	t.Cleanup(func() { telegramBase = old })
-
-	svc := notifyTestService(t)
-	ctx := context.Background()
-	if err := svc.SaveChannelSettings(ctx, "tok", "", "", "", "", ""); err != nil {
-		t.Fatalf("保存渠道设置失败: %v", err)
-	}
-	out, err := svc.Create(ctx, SaveGroupInput{
-		Name: "【P】tg 告警群", Scope: ScopeProd, Channel: ChannelTelegram, Target: "-100123",
-	})
-	if err != nil {
-		t.Fatalf("建群失败: %v", err)
-	}
-	g, _ := svc.Get(ctx, out.ID)
-	if err := svc.Send(ctx, g, "磁盘告警", "使用率 **91%**"); err != nil {
-		t.Fatalf("发送失败: %v", err)
-	}
-	if (*got)["chat_id"] != "-100123" || (*got)["parse_mode"] != "Markdown" {
-		t.Fatalf("Telegram 载荷异常: %v", *got)
-	}
-	if !strings.Contains((*got)["text"], "*磁盘告警*") || !strings.Contains((*got)["text"], "91%") {
-		t.Fatalf("Telegram 文本异常: %q", (*got)["text"])
-	}
-	// 留痕
-	var rec SendRecord
-	svc.db.Last(&rec)
-	if rec.Status != "ok" {
-		t.Fatalf("留痕异常: %+v", rec)
-	}
 }
 
 // fakeSMTP 最小 SMTP 应答机（记录 DATA 正文）。
@@ -266,7 +211,7 @@ func TestSendSMTPChannel(t *testing.T) {
 	host, port, _ := strings.Cut(addr, ":")
 	svc := notifyTestService(t)
 	ctx := context.Background()
-	if err := svc.SaveChannelSettings(ctx, "", host, port, "alert@x.com", "pass", "noreply@x.com"); err != nil {
+	if err := svc.SaveChannelSettings(ctx, host, port, "alert@x.com", "pass", "noreply@x.com"); err != nil {
 		t.Fatalf("保存渠道设置失败: %v", err)
 	}
 	out, err := svc.Create(ctx, SaveGroupInput{
@@ -293,10 +238,6 @@ func TestSendSMTPChannel(t *testing.T) {
 
 func TestGroupTargetValidation(t *testing.T) {
 	svc := notifyTestService(t)
-	if _, err := svc.Create(context.Background(), SaveGroupInput{
-		Name: "x", Scope: ScopeDev, Channel: ChannelTelegram}); err == nil {
-		t.Fatal("telegram 缺 chat id 应拒")
-	}
 	if _, err := svc.Create(context.Background(), SaveGroupInput{
 		Name: "y", Scope: ScopeDev, Channel: ChannelSMTP, Target: "not-an-email"}); err == nil {
 		t.Fatal("smtp 非邮箱应拒")

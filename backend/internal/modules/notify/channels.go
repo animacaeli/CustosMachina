@@ -6,7 +6,6 @@ package notify
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"mime"
 	"net/smtp"
@@ -14,31 +13,28 @@ import (
 	"strings"
 )
 
-// 渠道取值。
+// 渠道取值（Telegram 已移除：国内不用，用户 2026-10-05 定调）。
 const (
-	ChannelWebhook  = "webhook"
-	ChannelTelegram = "telegram"
-	ChannelSMTP     = "smtp"
+	ChannelWebhook = "webhook"
+	ChannelSMTP    = "smtp"
 )
 
 // 平台级渠道凭据设置键（凭据 AES）。
 const (
-	settingTelegramToken = "notify.telegram_token"
-	settingSMTPHost      = "notify.smtp_host"
-	settingSMTPPort      = "notify.smtp_port"
-	settingSMTPUser      = "notify.smtp_user"
-	settingSMTPPass      = "notify.smtp_pass" // AES
-	settingSMTPFrom      = "notify.smtp_from"
+	settingSMTPHost = "notify.smtp_host"
+	settingSMTPPort = "notify.smtp_port"
+	settingSMTPUser = "notify.smtp_user"
+	settingSMTPPass = "notify.smtp_pass" // AES
+	settingSMTPFrom = "notify.smtp_from"
 )
 
 // ChannelSettingsOut 渠道设置视图（凭据只回"已配置"状态）。
 type ChannelSettingsOut struct {
-	TelegramConfigured bool   `json:"telegramConfigured"`
-	SMTPHost           string `json:"smtpHost"`
-	SMTPPort           string `json:"smtpPort"`
-	SMTPUser           string `json:"smtpUser"`
-	SMTPFrom           string `json:"smtpFrom"`
-	SMTPConfigured     bool   `json:"smtpConfigured"`
+	SMTPHost       string `json:"smtpHost"`
+	SMTPPort       string `json:"smtpPort"`
+	SMTPUser       string `json:"smtpUser"`
+	SMTPFrom       string `json:"smtpFrom"`
+	SMTPConfigured bool   `json:"smtpConfigured"`
 }
 
 func (s *Service) setSetting(ctx context.Context, key, value string) error {
@@ -48,19 +44,7 @@ func (s *Service) setSetting(ctx context.Context, key, value string) error {
 }
 
 // SaveChannelSettings 保存渠道凭据（留空保留；token/pass AES）。
-func (s *Service) SaveChannelSettings(ctx context.Context, telegramToken, smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom string) error {
-	if telegramToken != "" {
-		if s.cipher == nil {
-			return fmt.Errorf("平台主密钥未配置，无法加密凭据")
-		}
-		enc, err := s.cipher.Encrypt(telegramToken)
-		if err != nil {
-			return err
-		}
-		if err := s.setSetting(ctx, settingTelegramToken, enc); err != nil {
-			return err
-		}
-	}
+func (s *Service) SaveChannelSettings(ctx context.Context, smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom string) error {
 	if smtpHost != "" {
 		if err := s.setSetting(ctx, settingSMTPHost, smtpHost); err != nil {
 			return err
@@ -99,9 +83,6 @@ func (s *Service) SaveChannelSettings(ctx context.Context, telegramToken, smtpHo
 // ChannelSettings 读取渠道设置（不回明文凭据）。
 func (s *Service) ChannelSettings(ctx context.Context) ChannelSettingsOut {
 	out := ChannelSettingsOut{}
-	if v, ok, _ := s.setting(ctx, settingTelegramToken); ok {
-		out.TelegramConfigured = v != ""
-	}
 	out.SMTPHost, _, _ = s.setting(ctx, settingSMTPHost)
 	out.SMTPPort, _, _ = s.setting(ctx, settingSMTPPort)
 	out.SMTPUser, _, _ = s.setting(ctx, settingSMTPUser)
@@ -110,44 +91,6 @@ func (s *Service) ChannelSettings(ctx context.Context) ChannelSettingsOut {
 		out.SMTPConfigured = v != ""
 	}
 	return out
-}
-
-// telegramBase 可注入（测试用本地 fake）。
-var telegramBase = "https://api.telegram.org"
-
-// SendTelegram Bot API sendMessage（Markdown 解析，4096 上限对齐企微 4000 截断结论）。
-func (s *sender) SendTelegram(ctx context.Context, groupID uint, token, chatID, title, content string) error {
-	if err := s.acquire(groupID); err != nil {
-		return err
-	}
-	text := "*" + title + "*\n" + content
-	if len(text) > 4000 {
-		text = text[:4000]
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"chat_id": chatID, "text": text, "parse_mode": "Markdown",
-	})
-	url := telegramBase + "/bot" + token + "/sendMessage"
-	req, err := newJSONRequest(ctx, url, payload)
-	if err != nil {
-		return err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	var out struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return err
-	}
-	if !out.OK {
-		return fmt.Errorf("Telegram: %s", out.Description)
-	}
-	return nil
 }
 
 // SMTPConfig 一次发信所需的连接信息（Service.Send 解密后传入 sender）。
@@ -214,16 +157,6 @@ func stripMarkdown(s string) string {
 // Send 渠道分派（Service 侧解密凭据后进入）。
 func (s *Service) sendByChannel(ctx context.Context, group *Group, title, content string) error {
 	switch group.Channel {
-	case ChannelTelegram:
-		enc, ok, _ := s.setting(ctx, settingTelegramToken)
-		if !ok || enc == "" {
-			return fmt.Errorf("Telegram Bot 未配置（管理后台「通知群聊」通道设置）")
-		}
-		token, err := s.cipher.Decrypt(enc)
-		if err != nil {
-			return fmt.Errorf("Telegram token 解密失败: %v", err)
-		}
-		return s.sender.SendTelegram(ctx, group.ID, token, group.Target, title, content)
 	case ChannelSMTP:
 		var cfg SMTPConfig
 		cfg.Host, _, _ = s.setting(ctx, settingSMTPHost)
