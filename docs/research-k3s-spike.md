@@ -78,3 +78,9 @@ metadata:
 - 多副本 Deployment 的 Service 负载均衡验证（spike 单副本足够回答语义问题）。
 - k3s **裸机安装路径**（非容器化）：`INSTALL_K3S_SKIP_DOWNLOAD` 离线安装 + daocloud/aliun 镜像预热——部署向导的真机部分。
 - 观测栈 DaemonSet 化（node-exporter/fluent-bit）模板。
+
+## 五、实施状态（补记）
+
+M3.2/M3.3 已按本文判定实施完毕（internal/modules/k3s + release 双轨分流，v0.12.0 交付）：
+翻译表逐条落地、Rollback 为 revision 回写实现、灰度滑杆映射 canary-weight 已留接缝。
+本文保留为 k3s 载体的排障与环境事实参考（§二坑清单）。

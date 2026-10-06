@@ -6,7 +6,7 @@
 
 - **主机与终端**：agentless SSH 纳管（不装 Agent）；Web 终端堡垒机，按主机细粒度授权、会话审计回放（asciinema）
 - **项目与环境**：多项目隔离，test / canary / prod 环境强语义
-- **部署与发布**：docker-compose 载体部署；蓝绿 / 灰度发布（域名跟随活跃色切换、drain 收尾）；快速执行、失败重试、一键回滚
+- **部署与发布**：双轨载体——docker-compose（SSH 主机，蓝绿 / 灰度发布，域名跟随活跃色切换）或 **k3s**（集群 API 零 SSH，蓝绿=原生 rollout、灰度=Ingress canary 权重、域名=Ingress 自动组装）；快速执行、失败重试、一键回滚
 - **CI 集成**：gitea Actions 与 Jenkins 双适配（gitea / gitee webhook 驱动），构建与发布记录串联
 - **配置管理**：文件管理器 UI（目录树 / 版本历史 / diff / 环境同步 / 导入导出，Monaco 多语言编辑）；与 AgileConfig 共存一套 UI（env / ini 下发自动同步）；应用侧配置拉取 API（应用级 token + ETag 短缓存）
 - **任务调度**：标准 5 段 cron（未来 5 次预览）、手动触发、执行日志下载
@@ -100,13 +100,13 @@ custos-machina/
   - `repository.go` 接口 + gorm 实现（单测用 mock 替换）
 - `internal/pkg/*` — 无业务语义的基础设施（database / jwt / httpx / crypto）
 
-业务模块（23 个，按域分组）：
+业务模块（24 个，按域分组）：
 
 | 域 | 模块 |
 |---|---|
 | 基础 | `auth` `identity` `rbac` `setup` `health` `timeline` |
 | 资源与运行时 | `resources` `runtime` `slots`（Web 终端） |
-| 项目与交付 | `projects` `release` `canary` `ci` |
+| 项目与交付 | `projects` `release` `canary` `ci` `k3s`（集群凭证 / 双轨载体部署） |
 | 配置与任务 | `configs` `cron` |
 | 观测与通知 | `observ` `alerting` `notify` |
 | 生态集成 | `integration`（组件凭证 / 健康巡检） |

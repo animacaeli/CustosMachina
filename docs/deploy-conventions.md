@@ -134,3 +134,20 @@ server {
   改动依赖容器重建才生效。
 - 日志采集类组件（vector）过滤 `middlewares::access_log` 签名行是默认模板行为：
   采集目标（O2）自身的访问日志回流会形成每秒一条的无限自激环。
+
+## 八、k3s 载体约定（P8-M3 起，双轨部署）
+
+项目部署目标（环境管理 → 项目详情）二选一，**同库共存、互不干扰**：
+
+| | compose 载体（原路径） | k3s 载体 |
+|---|---|---|
+| 部署通道 | SSH 到目标主机（§一/§二约定全部适用） | 集群 API（kubeconfig AES 落库，**零 SSH**） |
+| 命名域 | `/opt/custos-machina/compose/<域名>/` | namespace `custos-<项目ID>-<环境>`；对象带 `custos-machina/managed` 标签 |
+| 蓝绿 | 双颜色域 + nginx conf 切换 | 原生 rollout（readiness 门控），回滚=revision 回写 |
+| 灰度 | split_clients 权重 | Ingress canary annotation 权重（热生效） |
+| 域名 | `<proj>.conf` 整份管理 | Ingress host=`<项目名>-<环境>.<集群域名后缀>`（集群管理页配置后缀） |
+
+- **k3s 项目不走本文 §一/§二**：不落 compose 文件、不写 nginx conf——平台只调 K8s API。
+- compose 文件仍是**部署描述唯一真相源**（k3s 载体下由翻译器转换为 Deployment/Service/Ingress：主服务 + sidecar 同 Pod；未知字段宽容忽略）。
+- 观测栈：k3s 集群经管理后台一键部署 DaemonSet（node-exporter + fluent-bit）；fluent-bit 输入为 `/var/log/pods`（containerd），与 compose 期 docker.sock 形态不同但 O2 输出语义一致。
+- 集群侧前置：ingress-nginx（RBAC 需含 endpointslices/secrets，否则 404）；国内镜像源建议阿里云 google_containers + daocloud 兜底（详见 research-k3s-spike.md §二）。
