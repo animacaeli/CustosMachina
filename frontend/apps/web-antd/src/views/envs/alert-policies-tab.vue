@@ -25,6 +25,7 @@ import {
   upsertAlertFromTemplateApi,
 } from '#/api/observ/alerts';
 import YamlEditor from '#/components/yaml-editor.vue';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'ProjectAlertPoliciesTab' });
 
@@ -117,7 +118,7 @@ async function refreshPreview() {
     const r = await renderAlertTemplateApi(form.templateId, params.value);
     previewSql.value = r.sql;
   } catch (error: any) {
-    previewSql.value = `⚠ ${error?.response?.data?.message ?? error?.message ?? '渲染失败'}`;
+    previewSql.value = `⚠ ${extractErrMsg(error, '渲染失败')}`;
   } finally {
     previewing.value = false;
   }

@@ -8,10 +8,8 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { usePreferences } from '@vben/preferences';
 
 import * as monaco from 'monaco-editor';
-// oxlint-disable-next-line import/default
-import editorWorker from 'monaco-editor/editor/editor.worker?worker';
-// oxlint-disable-next-line import/default
-import yamlWorker from 'monaco-yaml/yaml.worker?worker';
+
+import { ensureMonacoEnv } from '#/utils/monaco-env';
 
 const props = withDefaults(
   defineProps<{
@@ -29,16 +27,8 @@ const sideBySide = ref(true);
 const containerRef = ref<HTMLDivElement>();
 let editor: monaco.editor.IDiffEditor | null = null;
 
-const YamlWorkerCtor = yamlWorker as unknown as new () => Worker;
-const EditorWorkerCtor = editorWorker as unknown as new () => Worker;
-globalThis.MonacoEnvironment = {
-  getWorker(_, label) {
-    if (label === 'yaml') return new YamlWorkerCtor();
-    return new EditorWorkerCtor();
-  },
-};
-
 onMounted(() => {
+  ensureMonacoEnv();
   if (!containerRef.value) return;
   const { isDark } = usePreferences();
   editor = monaco.editor.createDiffEditor(containerRef.value, {

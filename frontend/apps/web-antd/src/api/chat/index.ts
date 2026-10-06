@@ -2,6 +2,8 @@ import { useAccessStore } from '@vben/stores';
 
 import { apiURL, requestClient } from '#/api/request';
 
+import { refreshTokenApi } from '../core';
+
 /** AI 对话（P6 M1）：会话 CRUD + SSE 流式 */
 
 export type ChatMode = 'general' | 'platform';
@@ -103,26 +105,46 @@ export async function chatStreamApi(
   skill = '',
   page = '',
 ): Promise<() => void> {
-  const token = useAccessStore().accessToken;
   const controller = new AbortController();
-  try {
-    const resp = await fetch(
-      `${apiURL}/ai/chat/conversations/${conversationId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          content,
-          skill: skill || undefined,
-          ...(page ? { page } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-        }),
-        signal: controller.signal,
+
+  const doFetch = (token: null | string) =>
+    fetch(`${apiURL}/ai/chat/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify({
+        content,
+        skill: skill || undefined,
+        ...(page ? { page } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+  try {
+    let resp = await doFetch(useAccessStore().accessToken);
+    // 裸 fetch 不经过 requestClient 的 401 拦截（SSE 无法走 axios）——
+    // 此前会话过期后聊天持续报错而用户停在登录态假象里（v0.12.3 复核）：
+    // 401 时刷新一次重试，刷新失败走登录过期
+    if (resp.status === 401) {
+      try {
+        const pair = await refreshTokenApi();
+        const accessStore = useAccessStore();
+        accessStore.setAccessToken(pair.accessToken);
+        if (pair.refreshToken) {
+          accessStore.setRefreshToken(pair.refreshToken);
+        }
+        resp = await doFetch(pair.accessToken);
+      } catch {
+        const accessStore = useAccessStore();
+        accessStore.setAccessToken(null);
+        accessStore.setLoginExpired(true);
+        handlers.onError('登录已过期，请重新登录');
+        return () => controller.abort();
+      }
+    }
     if (!resp.ok || !resp.body) {
       let msg = `HTTP ${resp.status}`;
       try {

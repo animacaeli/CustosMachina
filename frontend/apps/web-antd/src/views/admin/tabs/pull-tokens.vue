@@ -18,6 +18,7 @@ import {
   setPullTokenEnabledApi,
 } from '#/api/configs/pull';
 import { getProjectsApi } from '#/api/projects';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'AdminPullTokens' });
 
@@ -71,7 +72,7 @@ async function manualSync() {
     const n = await syncAgileApi(agileTarget.projectId, agileTarget.env);
     message.success(`已同步 ${n} 项到 AgileConfig（并上线）`);
   } catch (error: any) {
-    message.error(error?.response?.data?.message ?? '同步失败');
+    message.error(extractErrMsg(error, '同步失败'));
   } finally {
     syncing.value = false;
   }
@@ -87,7 +88,7 @@ async function manualReconcile() {
     );
     diffOpen.value = true;
   } catch (error: any) {
-    message.error(error?.response?.data?.message ?? '对账失败');
+    message.error(extractErrMsg(error, '对账失败'));
   } finally {
     reconciling.value = false;
   }

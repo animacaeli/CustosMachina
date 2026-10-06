@@ -4,6 +4,7 @@ import { onMounted, reactive, ref } from 'vue';
 import { message } from 'ant-design-vue';
 
 import { requestClient } from '#/api/request';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'AdminAiConfig' });
 
@@ -64,7 +65,7 @@ async function test() {
     await requestClient.post('/ai/test');
     message.success('中转层连通正常');
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '测试失败');
+    message.error(extractErrMsg(error, '测试失败'));
   } finally {
     testing.value = false;
   }

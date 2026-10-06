@@ -9,6 +9,7 @@ import {
   getTerminalCastApi,
   listTerminalSessionsApi,
 } from '#/api/resources/terminal-audit';
+import { extractErrMsg } from '#/utils/extract-err';
 
 /**
  * 终端会话审计（P6-M6）：录制列表 + 网页回放（asciinema-player 自托管，
@@ -74,7 +75,7 @@ async function play(s: TerminalSession) {
       },
     );
   } catch (error: any) {
-    message.error(error?.response?.data?.message ?? '加载录制失败');
+    message.error(extractErrMsg(error, '加载录制失败'));
   }
 }
 
@@ -90,7 +91,7 @@ async function download(s: TerminalSession) {
     a.click();
     URL.revokeObjectURL(url);
   } catch (error: any) {
-    message.error(error?.response?.data?.message ?? '下载录制失败');
+    message.error(extractErrMsg(error, '下载录制失败'));
   }
 }
 

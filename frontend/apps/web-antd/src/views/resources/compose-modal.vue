@@ -177,7 +177,7 @@ async function doDeploy(sid: number, name: string) {
               按以下步骤安装（完成后再点重新检测）：
             </div>
             <pre
-              class="max-h-64 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200"
+              class="max-h-64 overflow-auto rounded custos-term-bg p-3 text-xs leading-5 text-gray-200"
               >{{ guide }}</pre>
           </template>
         </template>
@@ -233,7 +233,7 @@ async function doDeploy(sid: number, name: string) {
         class="mb-3"
       />
       <pre
-        class="max-h-96 overflow-auto rounded bg-[#1e1e1e] p-3 text-xs leading-5 text-gray-200"
+        class="max-h-96 overflow-auto rounded custos-term-bg p-3 text-xs leading-5 text-gray-200"
         >{{ deployOutput }}</pre>
       <div class="flex justify-end pt-3">
         <a-button type="primary" @click="open = false">完成</a-button>

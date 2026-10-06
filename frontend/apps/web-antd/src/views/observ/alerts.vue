@@ -15,6 +15,7 @@ import {
   updateO2AlertApi,
 } from '#/api/observ/alerts';
 import AiAssist from '#/components/ai-assist.vue';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'ObservAlerts' });
 
@@ -130,7 +131,7 @@ async function save() {
     formOpen.value = false;
     setTimeout(load, 800);
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '保存失败');
+    message.error(extractErrMsg(error, '保存失败'));
   } finally {
     saving.value = false;
   }

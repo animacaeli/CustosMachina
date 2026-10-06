@@ -17,6 +17,8 @@ import { initSetupVbenForm } from './adapter/form';
 import App from './app.vue';
 import { router } from './router';
 
+import './styles/custos.css';
+
 async function bootstrap(namespace: string) {
   // 偏好快照（localStorage）优先于 preferences.ts 的静态覆盖，历史缓存里的
   // accordion=true 会一直生效——启动时运行时强制一次，写回缓存后即持久生效

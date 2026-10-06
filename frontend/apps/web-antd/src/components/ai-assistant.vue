@@ -146,6 +146,7 @@ function startResize(e: MouseEvent, axis: 'h' | 'w') {
   const onUp = () => {
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
+    window.removeEventListener('mousedown', selfHeal); // 正常收尾同样摘除（v0.12.3 复核）
     document.body.style.userSelect = '';
     saveSize();
   };

@@ -21,6 +21,7 @@ import {
 import { getServerListApi } from '#/api/resources/server';
 import AiAssist from '#/components/ai-assist.vue';
 import CodeEditor from '#/components/yaml-editor.vue';
+import { extractErrMsg } from '#/utils/extract-err';
 
 import RunsDrawer from './runs-drawer.vue';
 
@@ -242,8 +243,7 @@ async function loadPreview() {
   } catch (error: any) {
     // 优先取后端 message（HTTP 400 时 axios 的 e.message 只有
     // "Request failed with status code 400"，真正的语法错误在 response.data.message）
-    previewError.value =
-      error?.response?.data?.message ?? error?.message ?? '表达式不合法';
+    previewError.value = extractErrMsg(error, '表达式不合法');
     previewTimes.value = [];
   } finally {
     previewLoading.value = false;

@@ -53,7 +53,7 @@ async function start() {
   term = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    theme: { background: '#1e1e1e' },
+    theme: { background: '#1e1e1e' }, // xterm 主题对象不吃 CSS var
   });
   fit = new FitAddon();
   term.loadAddon(fit);
@@ -131,8 +131,8 @@ function toggleFullscreen() {
   >
     <div
       ref="containerRef"
-      :style="{ height: fullscreen ? '100%' : '76vh', background: '#1e1e1e' }"
-      class="p-1"
+      class="custos-term-bg p-1"
+      :style="{ height: fullscreen ? '100%' : '76vh' }"
     ></div>
     <template #title>
       <div class="flex items-center gap-2">

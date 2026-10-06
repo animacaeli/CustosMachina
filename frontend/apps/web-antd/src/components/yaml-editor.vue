@@ -11,14 +11,10 @@ import { usePreferences } from '@vben/preferences';
 
 import * as monaco from 'monaco-editor';
 // oxlint-disable-next-line import/default
-import editorWorker from 'monaco-editor/editor/editor.worker?worker';
-// oxlint-disable-next-line import/default
-import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 import { configureMonacoYaml } from 'monaco-yaml';
-// oxlint-disable-next-line import/default
-import yamlWorker from 'monaco-yaml/yaml.worker?worker';
 
 import composeSchema from '#/schemas/compose-spec.json';
+import { ensureMonacoEnv } from '#/utils/monaco-env';
 
 const props = withDefaults(
   defineProps<{
@@ -38,43 +34,29 @@ const containerRef = ref<HTMLDivElement>();
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 
 // vite worker 直连打包（不走 CDN，离线单镜像可用）
-const YamlWorkerCtor = yamlWorker as unknown as new () => Worker;
-const EditorWorkerCtor = editorWorker as unknown as new () => Worker;
+ensureMonacoEnv();
 
-globalThis.MonacoEnvironment = {
-  getWorker(_, label) {
-    if (label === 'yaml') return new YamlWorkerCtor();
-    return new EditorWorkerCtor();
-  },
-};
-
-// JSONC：json 允许 // 注释与尾逗号（配置文件惯例；保存不校验合法性）。
-// 显式引入 json 语言 contribution——monaco.languages.json 是惰性挂载的，
-// 顶层直接访问在 contribution 未加载时是 undefined；该模块同时导出类型安全的
-// jsonDefaults。
-jsonDefaults.setDiagnosticsOptions({
-  allowComments: true,
-  trailingComma: 'ignore',
-  validate: true,
-});
-
-// monaco-yaml v5：configureMonacoYaml 单实例配置，schema 用内置 vendored 副本
-// （仅 yaml 语言且显式要求 compose schema 时挂补全，其他语言不受影响）
-configureMonacoYaml(monaco, {
-  completion: true,
-  hover: true,
-  validate: true,
-  schemas:
-    props.schema && props.language === 'yaml'
-      ? [
-          {
-            fileMatch: ['*'],
-            schema: composeSchema as any,
-            uri: 'https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json',
-          },
-        ]
-      : [],
-});
+// compose schema 补全（monaco-yaml 单例配置）：仅显式要求时更新一次——
+// 无 schema 的实例不触碰全局配置，避免清掉其他编辑器挂上的补全
+// （v0.12.3 复核残留项）
+let schemaApplied = false;
+function applyComposeSchema() {
+  if (schemaApplied || !props.schema || props.language !== 'yaml') return;
+  schemaApplied = true;
+  configureMonacoYaml(monaco, {
+    completion: true,
+    hover: true,
+    validate: true,
+    schemas: [
+      {
+        fileMatch: ['*'],
+        schema: composeSchema as any,
+        uri: 'https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json',
+      },
+    ],
+  });
+}
+applyComposeSchema();
 
 // 跟随应用主题切换明暗
 const { isDark } = usePreferences();

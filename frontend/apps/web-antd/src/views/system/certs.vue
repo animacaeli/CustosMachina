@@ -13,6 +13,7 @@ import {
   updateCertApi,
 } from '#/api/certs';
 import { getServerListApi } from '#/api/resources/server';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'SystemCerts' });
 
@@ -165,7 +166,7 @@ async function save() {
     formOpen.value = false;
     await load();
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '保存失败');
+    message.error(extractErrMsg(error, '保存失败'));
   } finally {
     saving.value = false;
   }
@@ -178,7 +179,7 @@ async function renew(c: Cert) {
     message.success('签发/续期成功');
     await load();
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '签发失败');
+    message.error(extractErrMsg(error, '签发失败'));
     await load();
   } finally {
     renewing.value = 0;

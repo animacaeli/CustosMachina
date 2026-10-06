@@ -14,6 +14,7 @@ import {
   runBackupJobApi,
   updateBackupJobApi,
 } from '#/api/system/backup';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'SystemBackup' });
 
@@ -163,7 +164,7 @@ async function save() {
     formOpen.value = false;
     await load();
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '保存失败');
+    message.error(extractErrMsg(error, '保存失败'));
   } finally {
     saving.value = false;
   }

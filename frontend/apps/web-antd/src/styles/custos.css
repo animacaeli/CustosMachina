@@ -1,0 +1,13 @@
+/*
+ * CustosMachina 应用级自定义样式（在 @vben/styles 之后加载）。
+ * 终端/日志类视图刻意保持深色（设计取向，同 IDE 集成终端）——
+ * 颜色集中于此单一定义，后续主题化只改这一处（v0.12.3 复核残留项：
+ * 此前 6 处硬编码 #1e1e1e 散落各组件）。
+ */
+:root {
+  --custos-term-bg: #1e1e1e;
+}
+
+.custos-term-bg {
+  background-color: var(--custos-term-bg);
+}

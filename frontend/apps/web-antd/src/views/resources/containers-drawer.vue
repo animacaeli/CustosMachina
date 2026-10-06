@@ -236,6 +236,14 @@ const logsOpen = ref(false);
 const logsCid = ref('');
 const logsName = ref('');
 const logsText = ref('');
+// 显示视图封顶（缓冲上限 500KB）：SSE 每块日志都会触发 <pre> 重渲染，
+// 无界文本高频日志必掉帧（v0.12.3 复核残留项）——只渲染末 64KB
+const logsView = computed(() => {
+  const t = logsText.value;
+  return t.length > 64_000
+    ? `…（已省略 ${t.length - 64_000} 字节）\n${t.slice(-64_000)}`
+    : t;
+});
 const logsLoading = ref(false);
 const follow = ref(false);
 const autoscroll = ref(true);
@@ -473,7 +481,7 @@ function stopFollowOnClose() {
         </div>
         <pre
           v-if="recreateOutput"
-          class="mt-3 max-h-60 overflow-auto rounded bg-[#1e1e1e] p-2 text-xs text-gray-200"
+          class="mt-3 max-h-60 overflow-auto rounded custos-term-bg p-2 text-xs text-gray-200"
           >{{ recreateOutput }}</pre>
       </a-spin>
     </a-modal>
@@ -502,9 +510,9 @@ function stopFollowOnClose() {
       <a-spin :spinning="logsLoading">
         <pre
           ref="logsPreRef"
-          class="max-h-[72vh] overflow-auto rounded bg-[#1e1e1e] p-2 text-xs leading-5 text-gray-200"
+          class="max-h-[72vh] overflow-auto rounded custos-term-bg p-2 text-xs leading-5 text-gray-200"
           @scroll="onLogsScroll"
-          >{{ logsText || '（暂无日志）' }}</pre>
+          >{{ logsView || '（暂无日志）' }}</pre>
       </a-spin>
     </a-drawer>
   </a-drawer>

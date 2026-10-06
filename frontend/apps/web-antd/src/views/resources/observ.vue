@@ -16,6 +16,7 @@ import {
 } from '#/api/observ';
 import { getServerListApi } from '#/api/resources/server';
 import CodeEditor from '#/components/yaml-editor.vue';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'ResourcesObserv' });
 
@@ -206,9 +207,7 @@ async function onUninstall(comp: ObservComponent) {
         await uninstallObservApi(sid, comp.name);
       } catch (error: any) {
         failed++;
-        reasons.push(
-          `#${sid}: ${error?.response?.data?.message ?? error?.message ?? '失败'}`,
-        );
+        reasons.push(`#${sid}: ${extractErrMsg(error, '失败')}`);
       }
     }
     if (failed === 0) {

@@ -8,6 +8,7 @@ import {
   setTerminalAclsApi,
 } from '#/api/resources/terminal-audit';
 import { getUserListApi } from '#/api/system/user';
+import { extractErrMsg } from '#/utils/extract-err';
 
 /**
  * 主机终端授权（P6-M6 堡垒机细粒度）：勾选可开该机终端的本地账号。
@@ -71,7 +72,7 @@ async function save() {
     message.success('授权已保存（即时生效）');
     open.value = false;
   } catch (error: any) {
-    message.error(error?.response?.data?.message ?? '保存失败');
+    message.error(extractErrMsg(error, '保存失败'));
   } finally {
     saving.value = false;
   }

@@ -5,6 +5,7 @@ import { useQRCode } from '@vueuse/integrations/useQRCode';
 import * as ww from '@wecom/jssdk';
 
 import { requestClient } from '#/api/request';
+import { extractErrMsg } from '#/utils/extract-err';
 
 /**
  * IM 扫码登录统一组件：
@@ -45,7 +46,7 @@ async function exchangeCode(code: string, state: string) {
     emit('success', result);
   } catch (error: any) {
     // 优先取后端 message（axios 泛化文案在 response.data.message）
-    err.value = error?.response?.data?.message || '登录失败，请重试';
+    err.value = extractErrMsg(error, '登录失败，请重试');
   } finally {
     loading.value = false;
   }

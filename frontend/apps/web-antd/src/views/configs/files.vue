@@ -34,6 +34,7 @@ import AiAssist from '#/components/ai-assist.vue';
 import DiffEditor from '#/components/diff-editor.vue';
 import YamlEditor from '#/components/yaml-editor.vue';
 import { CONFIG_FORMATS, convertView } from '#/utils/config-format';
+import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'ConfigsFiles' });
 
@@ -349,7 +350,7 @@ async function deploy() {
     message.success('已下发（旧文件已备份 .bak.时间戳）');
     await loadVersions(selected.value.id);
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '下发失败');
+    message.error(extractErrMsg(error, '下发失败'));
   } finally {
     deploying.value = 0;
   }
@@ -543,7 +544,7 @@ async function doEnvSync() {
     envSyncOpen.value = false;
     await load();
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '同步失败');
+    message.error(extractErrMsg(error, '同步失败'));
   } finally {
     envSyncing.value = false;
   }
@@ -674,7 +675,7 @@ async function save() {
     formOpen.value = false;
     await load();
   } catch (error: any) {
-    message.error(error?.response?.data?.message || '保存失败');
+    message.error(extractErrMsg(error, '保存失败'));
   } finally {
     saving.value = false;
   }
@@ -709,7 +710,7 @@ async function loadMerged() {
   } catch (error: any) {
     mergedBody.value = '';
     mergedMeta.value = null;
-    message.error(error?.response?.data?.message ?? '聚合失败');
+    message.error(extractErrMsg(error, '聚合失败'));
   } finally {
     mergedLoading.value = false;
   }
