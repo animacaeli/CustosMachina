@@ -364,6 +364,13 @@ func (h *Handler) pullConfig(c *gin.Context) {
 		h.pullCache.Store(app+"|"+env, pullCacheEntry{
 			body: out.Body, version: out.Version, format: out.Format, files: out.Files, at: time.Now(),
 		})
+		// 惰性清扫：应用/环境被删后缓存键不再被读，避免只增不减
+		h.pullCache.Range(func(k, v any) bool {
+			if e, ok := v.(pullCacheEntry); ok && time.Since(e.at) > 10*time.Minute {
+				h.pullCache.Delete(k)
+			}
+			return true
+		})
 	}
 
 	etag := `"` + out.Version + `"`

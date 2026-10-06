@@ -16,6 +16,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/shellx"
 )
 
 // 环境探测 + 安装引导 + compose 部署（M4）。
@@ -200,9 +201,7 @@ func validateComposePath(p string) error {
 	return nil
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+func shellQuote(s string) string { return shellx.Quote(s) }
 
 var projectNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 

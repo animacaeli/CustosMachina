@@ -411,9 +411,9 @@ func (s *Service) notifySlot(ctx context.Context, p *projectRow, slot *Slot, tex
 	if err != nil {
 		return
 	}
-	go func() {
+	jobs.GoSafe("slots:test-notify", func() {
 		_ = s.notify.Send(context.WithoutCancel(ctx), g, "测试槽位："+p.Name, text)
-	}()
+	})
 }
 
 func deployName(projectName, slotName string) string {
@@ -432,7 +432,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n]
+	return strx.Truncate(s, n) // rune 安全（防切碎中文，v0.12.0 审计）
 }
 
 // Sweeper 到期扫描任务（占位主类型，便于 wire 聚合 cleanup）。

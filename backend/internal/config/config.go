@@ -1,13 +1,16 @@
 // Package config 负责加载与校验平台配置。
 // 所有配置项均可通过环境变量覆盖（CUSTOS_ 前缀），与 deploy/ 下的 env 示例对应。
+// 实现为纯 os.Getenv + 默认值表（v0.12.0 审计依赖瘦身：viper 的
+// 配置文件/TOML/Watch 等能力全部闲置，却拖入 hcl/toml/ini/fsnotify 等
+// 数十个间接包——30 行 getenv 表语义完全等价）。
 package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 type Config struct {
@@ -73,86 +76,87 @@ type IM struct {
 	FrontendURL string // 回调成功后重定向回的前端地址
 }
 
+// env 读 CUSTOS_<KEY>，未设置返回 def。
+func env(key, def string) string {
+	if v, ok := os.LookupEnv("CUSTOS_" + key); ok && v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v, ok := os.LookupEnv("CUSTOS_" + key); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envBool(key string) bool {
+	v, _ := os.LookupEnv("CUSTOS_" + key)
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v, ok := os.LookupEnv("CUSTOS_" + key); ok && v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
+
 func Load() (*Config, error) {
-	v := viper.New()
-	v.SetEnvPrefix("CUSTOS")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	v.SetDefault("http.addr", ":8080")
-	v.SetDefault("http.mode", "debug")
-	v.SetDefault("http.shutdown_timeout", "10s")
-	v.SetDefault("database.driver", "sqlite")
-	v.SetDefault("database.dsn", "data/custos.db")
-	v.SetDefault("auth.jwt_secret", "change-me-in-production")
-	v.SetDefault("auth.token_ttl", "24h")
-	v.SetDefault("auth.issuer", "custos-machina")
-	v.SetDefault("secrets.master_key", "")
-	v.SetDefault("im.provider", "wecom")
-	v.SetDefault("im.public_url", "")
-	v.SetDefault("im.frontend_url", "http://localhost:5666")
-	v.SetDefault("redis.addr", "")
-	v.SetDefault("redis.password", "")
-	v.SetDefault("redis.db", 0)
-	v.SetDefault("log.level", "info")
-	v.SetDefault("log.dir", "data/logs")
-	v.SetDefault("log.max_size_mb", 50)
-	v.SetDefault("log.max_backups", 5)
-	v.SetDefault("log.max_age_days", 14)
-	// CORS 默认同源（不回 CORS 头）：单镜像部署前后端同源，无需跨域；
-	// 跨域部署显式配置来源白名单（P5 M1 安全欠账收敛，旧默认 * 已废弃）
-	v.SetDefault("cors.origins", "")
-	// 可信代理：单镜像内 nginx(127.0.0.1) + 自托管常见私网链路；
-	// 外层代理须设置 X-Forwarded-For，否则限速/审计按代理 IP 聚合（见 deploy-conventions）
-	v.SetDefault("http.trusted_proxies", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
-
-	// 注意：viper 的 AutomaticEnv 对嵌套 key 的 Unmarshal 不可靠，
-	// 这里显式逐项读取，保证 env 覆盖一定生效。
 	cfg := &Config{
 		HTTP: HTTP{
-			Addr:            v.GetString("http.addr"),
-			Mode:            v.GetString("http.mode"),
-			ShutdownTimeout: v.GetDuration("http.shutdown_timeout"),
-			TrustedProxies:  v.GetString("http.trusted_proxies"),
+			Addr:            env("HTTP_ADDR", ":8080"),
+			Mode:            env("HTTP_MODE", "debug"),
+			ShutdownTimeout: envDuration("HTTP_SHUTDOWN_TIMEOUT", 10*time.Second),
+			// 可信代理：单镜像内 nginx(127.0.0.1) + 自托管常见私网链路；
+			// 外层代理须设置 X-Forwarded-For，否则限速/审计按代理 IP 聚合（见 deploy-conventions）
+			TrustedProxies: env("HTTP_TRUSTED_PROXIES", "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"),
 		},
 		Database: Database{
-			Driver: v.GetString("database.driver"),
-			DSN:    v.GetString("database.dsn"),
+			Driver: env("DATABASE_DRIVER", "sqlite"),
+			DSN:    env("DATABASE_DSN", "data/custos.db"),
 		},
 		Auth: Auth{
-			JWTSecret: v.GetString("auth.jwt_secret"),
-			TokenTTL:  v.GetDuration("auth.token_ttl"),
-			Issuer:    v.GetString("auth.issuer"),
+			JWTSecret: env("AUTH_JWT_SECRET", "change-me-in-production"),
+			TokenTTL:  envDuration("AUTH_TOKEN_TTL", 24*time.Hour),
+			Issuer:    env("AUTH_ISSUER", "custos-machina"),
 		},
 		Secrets: Secrets{
-			MasterKey: v.GetString("secrets.master_key"),
+			MasterKey: env("SECRETS_MASTER_KEY", ""),
 		},
 		IM: IM{
-			Provider:    v.GetString("im.provider"),
-			PublicURL:   v.GetString("im.public_url"),
-			FrontendURL: v.GetString("im.frontend_url"),
+			Provider:    env("IM_PROVIDER", "wecom"),
+			PublicURL:   env("IM_PUBLIC_URL", ""),
+			FrontendURL: env("IM_FRONTEND_URL", "http://localhost:5666"),
 		},
 		Redis: Redis{
-			Addr:     v.GetString("redis.addr"),
-			Password: v.GetString("redis.password"),
-			DB:       v.GetInt("redis.db"),
+			Addr:     env("REDIS_ADDR", ""),
+			Password: env("REDIS_PASSWORD", ""),
+			DB:       envInt("REDIS_DB", 0),
 		},
 		CORS: CORS{
-			Origins: v.GetString("cors.origins"),
+			// CORS 默认同源（不回 CORS 头）：单镜像部署前后端同源，无需跨域；
+			// 跨域部署显式配置来源白名单（P5 M1 安全欠账收敛，旧默认 * 已废弃）
+			Origins: env("CORS_ORIGINS", ""),
 		},
 		Log: Log{
-			Level:      v.GetString("log.level"),
-			Dir:        v.GetString("log.dir"),
-			MaxSizeMB:  v.GetInt("log.max_size_mb"),
-			MaxBackups: v.GetInt("log.max_backups"),
-			MaxAgeDays: v.GetInt("log.max_age_days"),
+			Level:      env("LOG_LEVEL", "info"),
+			Dir:        env("LOG_DIR", "data/logs"),
+			MaxSizeMB:  envInt("LOG_MAX_SIZE_MB", 50),
+			MaxBackups: envInt("LOG_MAX_BACKUPS", 5),
+			MaxAgeDays: envInt("LOG_MAX_AGE_DAYS", 14),
 		},
 	}
 	// P8-M1 安全硬化：JWT secret 为默认值或过短一律拒绝启动（生产防呆；
 	// 双 token 会话体系全系签名依赖它）。开发直跑显式豁免：
 	// CUSTOS_AUTH_ALLOW_DEFAULT_SECRET=1（make dev 已注入）。
 	if cfg.Auth.JWTSecret == "change-me-in-production" || len(cfg.Auth.JWTSecret) < 32 {
-		if !v.GetBool("auth.allow_default_secret") {
+		if !envBool("AUTH_ALLOW_DEFAULT_SECRET") {
 			return nil, fmt.Errorf("CUSTOS_AUTH_JWT_SECRET 未设置或过短（<32 字节）——生产部署必须显式配置强随机密钥；本地开发可设 CUSTOS_AUTH_ALLOW_DEFAULT_SECRET=1 豁免")
 		}
 	}

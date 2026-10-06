@@ -33,6 +33,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # wire 生成物新鲜度门禁（v0.12.0 审计：wire_gen 靠人肉同步，
+      # 漏跑 go generate 不会被 CI 发现）——重新生成后必须零 diff
+      - name: wire 生成物新鲜度
+        run: |
+          go generate ./cmd/server
+          git diff --exit-code -- cmd/server/wire_gen.go || {
+            echo "wire_gen.go 与 wire.go 不同步：请本地执行 go generate ./cmd/server 并提交"
+            exit 1
+          }
+
       - name: 单元测试（含竞态检测）
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 

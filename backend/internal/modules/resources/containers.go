@@ -321,13 +321,6 @@ type containerStatsJSON struct {
 	} `json:"memory_stats"`
 }
 
-func min(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // dockerStatsLine docker stats --format '{{json .}}' 的单行结构。
 type dockerStatsLine struct {
 	ID       string `json:"ID"`

@@ -15,6 +15,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 const (
@@ -164,9 +165,8 @@ type Collector struct {
 
 // EventNotifier 平台级运维事件出口（notify.Service 统一路由实现；
 // 空实现 = 只落库不推送）。不可达/恢复走 platform_ops 事件源。
-type EventNotifier interface {
-	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
-}
+// EventNotifier 统一别名（notify 是唯一生产实现；历史上 6 份逐字相同的声明收敛于此）。
+type EventNotifier = notify.EventNotifier
 
 // NewCollector 构造并启动采集任务；wire 聚合返回的 cleanup 会在停机时调用 Stop。
 func NewCollector(db *gorm.DB, servers *ServerRepository, svc *Service) (*Collector, func(), error) {
@@ -334,9 +334,9 @@ func (c *Collector) SetNotifier(n EventNotifier) { c.notifier = n }
 func (c *Collector) emitEvent(ctx context.Context, serverID uint, typ, msg string) {
 	ev := ServerEvent{ServerID: serverID, Type: typ, Message: truncate(msg, 255)}
 	if err := c.db.WithContext(ctx).Create(&ev).Error; err != nil {
-		fmt.Printf("[resources] 落事件失败 server=%d type=%s: %v\n", serverID, typ, err)
+		logger.Errorf("[resources] 落事件失败 server=%d type=%s: %v", serverID, typ, err)
 	}
-	fmt.Printf("[resources] server=%d %s: %s\n", serverID, typ, msg)
+	logger.Infof("[resources] server=%d %s: %s", serverID, typ, msg)
 	if c.notifier != nil && (typ == "unreachable" || typ == "recovered") {
 		title := "服务器" + map[string]string{"unreachable": "不可达", "recovered": "已恢复"}[typ]
 		detail := fmt.Sprintf("服务器 ID=%d\n事件：%s", serverID, msg)
@@ -350,7 +350,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n]
+	return strx.Truncate(s, n) // rune 安全（防切碎中文，v0.12.0 审计）
 }
 
 // flush 批量落库。

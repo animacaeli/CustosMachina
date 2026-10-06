@@ -33,15 +33,22 @@ func main() {
 	}
 	defer cleanup()
 
+	// 服务错误经 channel 交主流程处理：后台 goroutine 内 Fatalf 会 os.Exit(1)
+	// 跳过全部 defer（连接池关闭、日志 Sync），v0.12.0 审计中等项
+	runErr := make(chan error, 1)
 	go func() {
 		if err := srv.Run(); err != nil {
-			logger.Fatalf("%v", err)
+			runErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
+	select {
+	case err := <-runErr:
+		logger.Errorf("HTTP 服务退出: %v", err)
+	case <-quit:
+	}
 
 	if err := srv.GracefulShutdown(); err != nil {
 		logger.Errorf("优雅关闭失败: %v", err)

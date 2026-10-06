@@ -21,7 +21,7 @@ func NewEngine(cfg *config.Config, modules Modules, auth AuthMiddleware, authz g
 		logger.Warnf("[server] 可信代理配置无效 %q: %v", cfg.HTTP.TrustedProxies, err)
 		_ = e.SetTrustedProxies(nil)
 	}
-	e.Use(requestLogger(), gin.Recovery(), cors(cfg.CORS.Origins))
+	e.Use(requestLogger(), zapRecovery(), cors(cfg.CORS.Origins))
 
 	api := e.Group("/api")
 	public := api.Group("")
@@ -42,6 +42,20 @@ func requestLogger() gin.HandlerFunc {
 		c.Next()
 		logger.Infof("[gin] %3d | %13v | %-7s %s",
 			c.Writer.Status(), time.Since(start), c.Request.Method, c.Request.URL.Path)
+	}
+}
+
+// zapRecovery panic 恢复走 zap（结构化、可关联请求）——gin.Recovery 会把
+// 明文堆栈直写 stderr，绕过日志管线（v0.12.0 审计中等项）。
+func zapRecovery() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				logger.Errorf("[gin] panic: %v\n%s %s", err, c.Request.Method, c.Request.URL.Path)
+				c.AbortWithStatus(http.StatusInternalServerError)
+			}
+		}()
+		c.Next()
 	}
 }
 
