@@ -94,6 +94,19 @@
 
 **执行顺序**：M1 权限（2~3 周）→ M5 业务告警 API（2 天，并行）→ M2 告警 AI（1~2 周）→ M3 编辑器 AI（1 周）→ M4 上下文管理（0.5 周）。预估总工期 5~7 周。
 
+## 四-B、P8：收官硬化 + k3s 基建演进（2026-10-06 定稿，v0.11.0 后盘点）
+
+> 详见 **docs/plan-phase8-hardening-and-k3s.md**。
+
+功能线收官后的硬化阶段，不新增产品功能面，三条线（2026-10-06 全量盘点落地，用户拍板 k3s 预研转正）：
+
+1. **M1 安全硬化与欠账清偿**（3~4 天，最高优先级）：JWT secret release fail-fast、RefreshStore 过期清扫、IM 凭证保存校验、前端死路径清理、MySQL/PG 双方言冒烟。盘点核销说明：登录限速/锁定、登录时序侧信道、setup 竞态、钉钉 Verify 弱等历史欠账已随各阶段硬化修复。
+2. **M2 体验与功能小尾巴**（2~3 天）：终端审计查看/回放 UI（堡垒机闭环）、cron 运行抽屉自动轮询、发布前 GO/NO-GO（advisory）、前端 composable 抽取、P7 验收遗留 UI 复测。
+3. **M3 k3s 基建演进**（3~5 周，P6 §十一预研档升格）：双轨载体（项目级 compose|k3s 一等公民，存量零迁移）→ k3s 最小承载（Deployment/Service/Ingress 翻译 compose 语义，client-go 直连）→ 发布语义翻译（蓝绿=原生 rollout、灰度=Ingress canary annotation、域名=Ingress）→ 观测栈 DaemonSet 化。不做集群生命周期/多集群/operator。
+4. **M4 部署侧尾巴**（非代码，随发版窗口）：生产配置收口、HTTPS 反代+CORS 收紧、gitee webhook 公网验证。
+
+**执行顺序**：M1 → M2 →（发 v0.11.1）→ M3 三小段 →（发 v0.12.0）。预估 5~8 周。
+
 ## 五、AI 规划（主线，分两批 + 对话 UI）
 
 ### 架构底座（P5 落地）
