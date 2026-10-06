@@ -1,7 +1,14 @@
 <script lang="ts" setup>
 import type { Conversation } from '#/api/chat';
 
-import { computed, defineAsyncComponent, nextTick, onMounted, ref } from 'vue';
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+} from 'vue';
 import { useRoute } from 'vue-router';
 
 import { useAccessStore } from '@vben/stores';
@@ -145,6 +152,13 @@ function startResize(e: MouseEvent, axis: 'h' | 'w') {
   document.body.style.userSelect = 'none';
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
+  // 窗口外松开鼠标不触发上面的 mouseup：下次任意按下先复位，
+  // 不留「整页无法选中文字」残留（v0.12.1 复核）
+  const selfHeal = () => {
+    document.body.style.userSelect = '';
+    window.removeEventListener('mousedown', selfHeal);
+  };
+  window.addEventListener('mousedown', selfHeal);
 }
 
 function newChat() {
@@ -180,6 +194,12 @@ function onUsed(conv: Conversation) {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
   loadSize();
+});
+
+// 卸载兜底（App 根单例当前不会卸载，但监听不该随组件逃逸）
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown);
+  document.body.style.userSelect = ''; // 拖拽中途卸载不留全局禁选
 });
 </script>
 

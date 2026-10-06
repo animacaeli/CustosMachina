@@ -146,12 +146,22 @@ function toggleFullscreen() {
 </template>
 
 <style>
-/* 全屏抽屉（wrap-class-name 引用；非 scoped 才能作用到 wrap 层） */
-.full-modal .ant-drawer-content {
+/* 全屏弹窗：wrap-class-name 落在 .ant-modal-wrap 层（a-modal 非 a-drawer，v0.12.1 复核修正选择器） */
+.full-modal .ant-modal {
+  top: 0;
+  padding-bottom: 0;
+  width: 100vw;
+  max-width: 100vw;
+}
+
+.full-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
 }
 
-.full-modal .ant-drawer-body {
-  padding-top: 0;
+.full-modal .ant-modal-body {
+  flex: 1;
+  min-height: 0;
 }
 </style>

@@ -33,7 +33,12 @@ watch(
   () => [open.value, props.serverId],
   async ([v]) => {
     if (!v || !props.serverId) return;
-    selected.value = await getTerminalAclsApi(props.serverId);
+    selected.value = []; // 先清空：失败不残留上一台勾选（防 A 机授权存到 B 机）
+    try {
+      selected.value = await getTerminalAclsApi(props.serverId);
+    } catch {
+      // 拦截器已提示
+    }
     if (users.value.length === 0) {
       const list = await getUserListApi();
       // 仅本地账号可授权（IM 账号 username 为空，无稳定 sub）

@@ -6,7 +6,14 @@
  */
 import type { AlertTemplate, O2Alert } from '#/api/observ/alerts';
 
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from 'vue';
 
 import { message } from 'ant-design-vue';
 
@@ -118,6 +125,7 @@ async function refreshPreview() {
 
 // 每次击键都渲染预览会打爆后端：400ms 防抖
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
+onBeforeUnmount(() => clearTimeout(previewTimer));
 watch(
   params,
   () => {
