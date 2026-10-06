@@ -11,7 +11,7 @@
 
 ## 一、总判断
 
-盘点依据：审核留档清单（custosmachina-review-debt）、各阶段计划已知边界、P5/P6/P7 收官尾巴。**核对后多项历史欠账已随各阶段硬化修复**（登录限速/锁定 ✅、登录时序侧信道 dummyHash ✅、setup 竞态 EnsureLocalAdmin 幂等 ✅、钉钉 Verify invalid_client 区分 ✅）——P8 只收真实在账项，不重复已修。
+盘点依据：审核留档清单（项目内部留档）、各阶段计划已知边界、P5/P6/P7 收官尾巴。**核对后多项历史欠账已随各阶段硬化修复**（登录限速/锁定 ✅、登录时序侧信道 dummyHash ✅、setup 竞态 EnsureLocalAdmin 幂等 ✅、钉钉 Verify invalid_client 区分 ✅）——P8 只收真实在账项，不重复已修。
 
 ## 二、里程碑
 

@@ -23,7 +23,7 @@ services:
       CUSTOS_REDIS_ADDR: ${CUSTOS_REDIS_ADDR:-}
       CUSTOS_REDIS_PASSWORD: ${CUSTOS_REDIS_PASSWORD:-}
       CUSTOS_REDIS_DB: ${CUSTOS_REDIS_DB:-0}
-      # --- IM 扫码登录（凭证在 setup 向导里配置） ---
+      # --- IM 扫码登录（凭证在登录后 管理后台 → 登录配置 里设置） ---
       CUSTOS_IM_PROVIDER: ${CUSTOS_IM_PROVIDER:-wecom}
       CUSTOS_IM_PUBLIC_URL: ${CUSTOS_IM_PUBLIC_URL:-}
       CUSTOS_IM_FRONTEND_URL: ${CUSTOS_IM_FRONTEND_URL:-http://localhost}

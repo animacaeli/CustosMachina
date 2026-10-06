@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.12.1 (2026-10-06)
+
+对 v0.12.0 三视角审核报告（安全 6 严重 + 中等 + 前端/UI/产品项）的全量修复。
+
+### 安全（严重）
+
+- **终端越权（hotfix）**：`/servers/:id/terminal` 不再走 casbin 通配裁决（keyMatch 前缀语义下 `/servers/*` 会放行 dev/ops/自定义角色）；改为「内置 admin 角色 + 登录名逐主机精确 ACL」双 gate（中间件 + handler 兜底），M6 细粒度终端授权从「能编辑不生效」变为真实生效
+- **cron 命令注入（hotfix）**：validateCarrier 的 shell/python × compose 分支提前 return 旁路了 svcRe 白名单——删除旁路；buildCommand 的 domain/service/composeFile/hostScriptPath 全量 shellQuote；ActiveDomainFor 兜底分支不再原样回吐用户输入
+- **configs 命令注入（hotfix）**：SIGHUP / restart 生效目标加字符白名单（`%q` 不是 shell 转义，`$(...)` 与反引号在双引号内照常展开）；两处命令拼装引号化（新增 `pkg/shellx.Quote` 共享实现）
+- **backup 命令注入（hotfix）**：RemotePath 绝对路径 + 安全字符白名单；tar 命令 parent/base 引号化；内层 tar 条目名 `..` 校验（不再依赖 filepath.Join 的清理语义）
+- **SSH 输出数据竞争**：outBuf/streamBuf 读写全量持锁（x/crypto/ssh 双 goroutine 并发 Write + 超时路径先读后写）；cron onChunk 串行化
+- **registry logout 时序**：prod 蓝绿发布的 docker login/logout 移入后台任务（此前 Execute 立即返回触发 defer logout，私有 registry 的 prod 发布每次 401）
+
+### 安全（中等）
+
+- slots 全组补项目范围守卫；observ 告警删除/列表校验项目归属（dev 不再看/删全部项目告警）
+- 超管禁用/降级即时生效（IsAdmin 每请求查库，不再有 30 分钟全权真空期）
+- gitee webhook 密码 sha256 哈希存储（迁移 0008 存量哈希化，旧明文兼容比对）；Redis 密码 AES 加密落库
+- AI 中转 endpoint url.Parse 结构校验 + 禁私网/回环（SSRF 防护，`CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT=1` 豁免内网自建 LLM）；http.DefaultClient 换带超时 client
+- IM 渠道判定按 URL Host（子串包含可被查询参数伪造）；O2 org/stream 标识符白名单；certs 证书/私钥路径白名单（此前零校验）
+- 服务器凭据密文加 GCM AAD 字段绑定（跨字段互换失效，旧密文回退兼容）；observ webhook token 常量时间比对；`/auth/refresh` 补限速；IM 扫码 JIT 注册可用 `CUSTOS_IM_JIT_REGISTER=0` 关闭
+- `ON CONFLICT` 原生 SQL 全部换 `identity.UpsertSetting`（gorm 方言适配，MySQL 下不再语法错误）
+
+### 前端
+
+- 运行历史抽屉打开即加载（watch 补 open/jobId/nonce 触发，nonce 死 prop 修复）
+- 权限矩阵删行 `splice(index, 1)`（单参删一片）；`footer-only-close` 假 prop → `:footer="null"`；SMTP 群测试按钮按渠道放开；AI contextWindow 清空生效；告警模板静默期可编辑；部署目标可清空（后端 SaveTargets 支持 0=清空）
+- 资源泄漏：右键菜单监听卸载 / 终端 ticket 竞态 / 回放 Blob URL / Monaco model / 孤儿日志面板
+- 确认层级：正式环境发布（回显蓝绿切色）/ 按文件重建容器 / compose 部署与导入覆盖 / 清空 O2 地址全部加确认；分组删除禁用态改 tooltip 说明
+- 卸载观测组件按台如实报告成败；5 处 load 补 catch；文件导入先判大小；下载先占窗再跳转（防弹窗拦截）；中文输入法回车不误发；渲染预览 400ms 防抖；Monaco 高亮跟随文件切换
+
+### 产品 / UI
+
+- **告警事件落库**：新增 `alert_events` 表与「告警历史」页（级别/状态过滤 + 手动标记处理 + 详情）——「告警→诊断→通知」主线的历史回溯断点补齐
+- **通知投递记录读取端**：`GET /notify/records` + 告警历史页 admin 页签（排障「为什么没收到通知」不再连库）
+- **项目总览页**：新增 `/projects` 入口（三环境状态横看：版本/状态/时间/活跃色）；环境页加「当前版本 / 状态 / 上次发布 / 活跃色」列（后端批量 enrich，无 N+1）
+- 首页重写（过期文案/swarm 清除，卡片可点直达）；登录页 IM 未配置自动降级账密表单；管理后台副标题与「配置拉取」tab 更名；cron 菜单 order 冲突修复
+- AI 对话独立路由**有意不做**：维持用户定调（功能全收悬浮抽屉）
+
+### 工程化
+
+- 游离后台 goroutine 收敛到 `jobs.GoSafe`（recover + 结构化日志：发布/备份/任务通知等 5 处高危）
+- 重复实现清理：`shellQuote` ×2 / `EventNotifier` ×6 / `min` ×2 收敛；`strx.Truncate` 升级 rune 安全并承接本地拷贝
+- **viper 移除**：config 换纯 os.Getenv + 默认值表（能力全部闲置却拖入 30+ 间接包）
+- notify 聚合清扫 goroutine 可停止（wire cleanup 链）；CI 新增 wire 生成物新鲜度门禁（wire_gen 完整可再生成）
+- panic 恢复走 zap（不再明文堆栈直写 stderr）；main.go 服务错误经 channel 回主流程（Fatalf 不再跳过 defer）；certs 续期串行化（os.Setenv 竞态）+ 到期告警按天去重；pullCache 惰性清扫
+
+## v0.12.0 (2026-10-06)
+
+P8 收官：k3s 转正（双轨载体 / 蓝绿=rollout / 灰度=canary annotation / 观测栈 DaemonSet）。
+
+## v0.11.1 (2026-10-06)
+
+P8-M1 安全硬化 + M2 体验尾巴（JWT fail-fast / MySQL+PG 双库冒烟 / 终端审计下载 / cron 列表轮询）。
+
+## v0.11.0 (2026-10-06)
+
+P7 收官：权限专项（perm 三表 + 动作目录 + handler gate）、业务告警 API、告警 AI 分析（五工具 Context Pack）、AI 助手三场景、上下文窗口管理。
+
 ## v0.10.0 (2026-10-05)
 
 P6 AI 主线 + 配置双形态 + 生态适配：AI 成为主线功能。
