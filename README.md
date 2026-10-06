@@ -1,6 +1,6 @@
 # CustosMachina
 
-轻量级 AI DevOps 运维平台：单镜像交付、无 Agent（SSH 直连纳管主机）、与既有生态集成而非重造（gitea / gitee / Jenkins / AgileConfig / OpenObserve）。AI 全程 advisory——只建议，绝不执行。
+轻量级 AI DevOps 运维平台：单镜像交付、无 Agent（SSH 直连纳管主机）、compose 与 k3s 双轨部署载体、与既有生态集成而非重造（gitea / gitee / Jenkins / AgileConfig / OpenObserve）。AI 全程 advisory——只建议，绝不执行。
 
 ## 功能总览
 
@@ -14,7 +14,7 @@
 - **统一通知路由**：企微 / 钉钉 / 飞书 webhook、Telegram、SMTP；静默时段与同类聚合
 - **备份与证书**：定时备份（本地 / 对象存储）；ACME 证书自动签发续期（lego，多 DNS provider）
 - **AI 能力**：SSE 流式对话（多模态、悬浮助手、页面上下文感知）、平台即 MCP Server、Skill + function calling、NL → 操作建议卡、告警 AI 诊断摘要
-- **权限**：三级角色 + casbin 策略矩阵（第七阶段升级为自定义角色 / 业务动作粒度 / 项目级授权）
+- **权限**：自定义角色（动作集 / 项目范围）、业务动作粒度（密钥查看 / 按环境发布 / 终端 / 手动执行独立权限）、环境隔离、项目级授权
 
 ## 部署
 
@@ -26,7 +26,7 @@ cp .env.example .env   # 必改：JWT 密钥；按需：主密钥、公网地址
 docker compose pull && docker compose up -d
 ```
 
-镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.11.1`）。
+镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.12.0`）。
 
 ### 方式二：单镜像（nginx 基座，前后端同容器，最小部署）
 
@@ -35,7 +35,7 @@ docker run -d -p 80:80 --name custos \
   -v custos-data:/data \
   -e CUSTOS_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
   -e CUSTOS_SECRETS_MASTER_KEY=$(openssl rand -hex 32) \
-  ghcr.io/animacaeli/custosmachina:v0.11.1
+  ghcr.io/animacaeli/custosmachina:v0.12.0
 ```
 
 环境变量与 compose 方式一致，完整清单见 `deploy/.env.example`。
@@ -117,11 +117,12 @@ custos-machina/
 
 ## 文档
 
-- [docs/roadmap.md](docs/roadmap.md) — 演进总纲（P1~P6 已交付，P7 进行中）
-- 各阶段计划：[P2 资源管理](docs/plan-phase2-resources.md) · [P3 环境管理](docs/plan-phase3-envs.md) · [P4 运行时](docs/plan-phase4-runtime.md) · [P5 服务化](docs/plan-phase5-services.md) · [P6 AI 主线](docs/plan-phase6-ai-mainline.md) · [P7 权限 + AI 深化](docs/plan-phase7-permissions-and-ai.md)
+- [docs/roadmap.md](docs/roadmap.md) — 演进总纲（P1~P8 全量交付，功能线收官）
+- 各阶段计划：[P2 资源管理](docs/plan-phase2-resources.md) · [P3 环境管理](docs/plan-phase3-envs.md) · [P4 运行时](docs/plan-phase4-runtime.md) · [P5 服务化](docs/plan-phase5-services.md) · [P6 AI 主线](docs/plan-phase6-ai-mainline.md) · [P7 权限 + AI 深化](docs/plan-phase7-permissions-and-ai.md) · [P8 硬化 + k3s](docs/plan-phase8-hardening-and-k3s.md)
+- [docs/research-k3s-spike.md](docs/research-k3s-spike.md) — k3s 载体排障与环境事实参考
 - [docs/deploy-conventions.md](docs/deploy-conventions.md) — 部署与运维约定
 - [docs/plan.md](docs/plan.md) — 第一阶段总纲（历史存档）
 
 ## 状态
 
-P1~P7 已交付（当前 v0.11.1）。第七阶段：权限体系（自定义角色 / 业务动作粒度 / 环境隔离 / 项目级授权）、告警 AI 分析（先析后发 / critical 先发再补）、编辑器 AI 助手、对话上下文管理（自动压缩 / compact）、轻量业务告警 API，见 [P7 计划](docs/plan-phase7-permissions-and-ai.md)。
+**P1~P8 全量交付（当前 v0.12.0）——功能开发至此收官，转入维护期。** 第七阶段：权限体系与 AI 深化（告警 AI 分析 / 编辑器 AI 助手 / 上下文管理 / 业务告警 API）；第八阶段：安全硬化（MySQL / PostgreSQL 双方言实测）、体验尾巴、k3s 基建演进（双轨部署载体 + 观测栈 DaemonSet），见 [P7](docs/plan-phase7-permissions-and-ai.md) / [P8 计划](docs/plan-phase8-hardening-and-k3s.md)。
