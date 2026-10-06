@@ -32,6 +32,9 @@ type EnvStatus struct {
 	ActiveColor   string     `json:"activeColor"` // prod 蓝绿活跃色；未启用为空
 }
 
+// 密文字段绑定（GCM AAD）
+const aadProjectCIToken = "projects.ci_token"
+
 func toOut(p Project) ProjectOut {
 	out := ProjectOut{Project: p, HasCIToken: p.CIToken != ""}
 	out.CIToken = ""
@@ -281,16 +284,38 @@ func (s *Service) SaveTargets(ctx context.Context, projectID uint, in SaveTarget
 			return fmt.Errorf("环境 %s 重复配置", t.EnvType)
 		}
 		seen[t.EnvType] = true
+	}
+	// 目标行校验（0/0 = 清空该环境，不落行；v0.12.1 复核 N1：校验循环跳过
+	// 而事务循环照落 server_id=0 零行，击穿下游 First/Count 守卫并误导排障）
+	for _, t := range in.Targets {
 		if t.ServerID == 0 && t.ClusterID == 0 {
-			continue // 清空该环境目标（整体替换下不落行）
+			continue
 		}
-		// 校验服务器存在（资源管理表）
-		var cnt int64
-		if err := s.db.Table("servers").Where("id = ?", t.ServerID).Count(&cnt).Error; err != nil {
-			return err
+		runtime := t.Runtime
+		if runtime == "" {
+			runtime = RuntimeCompose
 		}
-		if cnt == 0 {
-			return fmt.Errorf("服务器 %d 不存在", t.ServerID)
+		switch runtime {
+		case RuntimeK3s:
+			// k3s 目标：校验集群存在（server_id 恒 0，不能走 servers 校验）
+			var cnt int64
+			if err := s.db.Table("k3s_clusters").Where("id = ?", t.ClusterID).Count(&cnt).Error; err != nil {
+				return err
+			}
+			if cnt == 0 {
+				return fmt.Errorf("k3s 集群 %d 不存在", t.ClusterID)
+			}
+		default:
+			if t.ServerID == 0 {
+				return fmt.Errorf("环境 %s 缺少目标主机", t.EnvType)
+			}
+			var cnt int64
+			if err := s.db.Table("servers").Where("id = ?", t.ServerID).Count(&cnt).Error; err != nil {
+				return err
+			}
+			if cnt == 0 {
+				return fmt.Errorf("服务器 %d 不存在", t.ServerID)
+			}
 		}
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -298,6 +323,9 @@ func (s *Service) SaveTargets(ctx context.Context, projectID uint, in SaveTarget
 			return err
 		}
 		for _, t := range in.Targets {
+			if t.ServerID == 0 && t.ClusterID == 0 {
+				continue // 清空：与校验循环对称，绝不落零行
+			}
 			runtime := t.Runtime
 			if runtime == "" {
 				runtime = RuntimeCompose
@@ -324,14 +352,14 @@ func (s *Service) DecryptedCIToken(ctx context.Context, projectID uint) (string,
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置")
 	}
-	return s.cipher.Decrypt(p.CIToken)
+	return s.cipher.Decrypt(p.CIToken, aadProjectCIToken)
 }
 
 func (s *Service) encryptToken(token string) (string, error) {
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置，无法加密 CI token")
 	}
-	return s.cipher.Encrypt(token)
+	return s.cipher.Encrypt(token, aadProjectCIToken)
 }
 
 func defaultStr(s, def string) string {

@@ -25,16 +25,16 @@ func main() {
 		MaxBackups: cfg.Log.MaxBackups,
 		MaxAge:     cfg.Log.MaxAgeDays,
 	})
-	defer logger.Sync()
 
 	srv, cleanup, err := InitializeServer()
 	if err != nil {
 		logger.Fatalf("初始化失败: %v", err)
 	}
-	defer cleanup()
 
 	// 服务错误经 channel 交主流程处理：后台 goroutine 内 Fatalf 会 os.Exit(1)
-	// 跳过全部 defer（连接池关闭、日志 Sync），v0.12.0 审计中等项
+	// 跳过全部 defer（连接池关闭、日志 Sync），v0.12.0 审计中等项。
+	// v0.12.1 复核 N2：只打日志会让进程以 0 退出——systemd/compose 的
+	// restart=on-failure 不会拉起（静默死亡），必须非 0 退出码收尾
 	runErr := make(chan error, 1)
 	go func() {
 		if err := srv.Run(); err != nil {
@@ -44,13 +44,21 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	serveFailed := false
 	select {
 	case err := <-runErr:
-		logger.Errorf("HTTP 服务退出: %v", err)
+		serveFailed = true
+		logger.Errorf("HTTP 服务异常退出: %v", err)
 	case <-quit:
 	}
 
 	if err := srv.GracefulShutdown(); err != nil {
 		logger.Errorf("优雅关闭失败: %v", err)
+	}
+	// 显式执行关键收尾（os.Exit 不跑 defer）
+	cleanup()
+	logger.Sync()
+	if serveFailed {
+		os.Exit(1)
 	}
 }

@@ -131,3 +131,73 @@ func TestInputsBinding(t *testing.T) {
 		}
 	}
 }
+
+// k3s 集群表最小同构（k3s 模块的表，本模块只读计数）。
+type k3sClusterRow struct {
+	ID uint `gorm:"primarykey"`
+}
+
+func (k3sClusterRow) TableName() string { return "k3s_clusters" }
+
+// v0.12.1 复核 N1 回归：清空部署目标绝不落 server_id=0 零行（零行会击穿
+// release/configs/slots/canary 的 First/Count 存在性守卫，报出误导性错误）。
+func TestSaveTargetsClearWritesNoZeroRows(t *testing.T) {
+	db := testDB(t)
+	if err := db.AutoMigrate(&k3sClusterRow{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(db, nil)
+	ctx := t.Context()
+	p, err := svc.Create(ctx, SaveProjectInput{Name: "clr", RepoURL: "https://g.example/a/b.git", RepoPath: "a/b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&serverRow{ID: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveTargets(ctx, p.ID, SaveTargetsInput{Targets: []TargetInput{
+		{EnvType: "prod", ServerID: 1},
+	}}); err != nil {
+		t.Fatalf("配置目标失败: %v", err)
+	}
+	// 清空：三条环境全 0/0 → 目标行应被删除而不是落零行
+	if err := svc.SaveTargets(ctx, p.ID, SaveTargetsInput{Targets: []TargetInput{
+		{EnvType: "prod"}, {EnvType: "canary"}, {EnvType: "test"},
+	}}); err != nil {
+		t.Fatalf("清空目标失败: %v", err)
+	}
+	var n int64
+	db.Model(&EnvTarget{}).Where("project_id = ?", p.ID).Count(&n)
+	if n != 0 {
+		t.Errorf("清空后不应残留目标行，got %d", n)
+	}
+}
+
+// k3s 目标（server_id=0, cluster_id>0）：走集群存在性校验，不被
+// 「服务器 0 不存在」误杀；集群不存在要报明确错误。
+func TestSaveTargetsK3sValidation(t *testing.T) {
+	db := testDB(t)
+	if err := db.AutoMigrate(&k3sClusterRow{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(db, nil)
+	ctx := t.Context()
+	p, _ := svc.Create(ctx, SaveProjectInput{Name: "k3sp", RepoURL: "https://g.example/a/c.git", RepoPath: "a/c"})
+	if err := db.Create(&k3sClusterRow{ID: 7}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveTargets(ctx, p.ID, SaveTargetsInput{Targets: []TargetInput{
+		{EnvType: "prod", Runtime: "k3s", ClusterID: 7},
+	}}); err != nil {
+		t.Fatalf("合法 k3s 目标应保存成功: %v", err)
+	}
+	var et EnvTarget
+	if err := db.Where("project_id = ? AND env_type = ?", p.ID, "prod").First(&et).Error; err != nil || et.ClusterID != 7 || et.ServerID != 0 {
+		t.Fatalf("k3s 目标行不符: %+v err=%v", et, err)
+	}
+	if err := svc.SaveTargets(ctx, p.ID, SaveTargetsInput{Targets: []TargetInput{
+		{EnvType: "prod", Runtime: "k3s", ClusterID: 999},
+	}}); err == nil {
+		t.Error("不存在的集群应报错")
+	}
+}
