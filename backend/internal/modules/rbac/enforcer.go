@@ -194,8 +194,11 @@ var defaultPolicies = [][]string{
 	{"ops", "/slots/*", "GET|POST"},
 	{"dev", "/slots", "GET|POST"},
 	{"dev", "/slots/*", "GET|POST"},
-	{"guest", "/slots", "GET|POST"},
-	{"guest", "/slots/*", "GET|POST"},
+	// v26：guest 收掉 /slots 写权——IM 扫码 JIT 自注册即得 guest，保留 POST
+	// 等于「组织内任意扫码者可占用/重建任意项目测试环境」（v0.12.2 复核 N3）。
+	// 测试槽位仍对 dev/ops/admin 与授权自定义角色开放
+	{"guest", "/slots", "GET"},
+	{"guest", "/slots/*", "GET"},
 	{"dev", "/project-branches", "GET"},
 	{"dev", "/project-branches/*", "GET"},
 	{"ops", "/services/*", "GET|POST|PUT"},
@@ -259,7 +262,7 @@ var defaultPolicies = [][]string{
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "25" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "26" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -423,18 +426,26 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		if len(ps) > 0 && oldVersion == "23" {
 			entryLevelSeed[p[0]] = true
 		}
-		// v24→v25：dev 的 /observ/alerts/* 收掉 DELETE（先移除旧条目再补新；
-		// RemovePolicy 对不存在条目为无害 no-op，幂等）。数值比较——字典序
-		// 下 "9" > "25"，跨多版直升的部署会漏掉收权
-		if v, err := strconv.Atoi(oldVersion); err != nil || v < 25 {
-			if _, err := e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST"); err == nil {
-				if has, _ := e.HasPolicy("dev", "/observ/alerts/*", "GET|POST"); !has {
-					_, _ = e.AddPolicy("dev", "/observ/alerts/*", "GET|POST")
-				}
-				changed = true
-			}
-		}
 	}
+	// ---- 版本收权（数值比较防字典序漏版；仅当确实移除了旧条目才补新，
+	// 不复活管理员人为删掉的条目）----
+	replacePolicy := func(sub, obj, oldAct, newAct string) {
+		if v, err := strconv.Atoi(oldVersion); err == nil && v >= 26 {
+			return // 已收过权（版本可解析且不小于 26）；解析失败=极旧部署，照收
+		}
+		removed, _ := e.RemovePolicy(sub, obj, oldAct)
+		if !removed {
+			return // 旧条目不存在（人为删改或从未有过）——不动
+		}
+		if has, _ := e.HasPolicy(sub, obj, newAct); !has {
+			_, _ = e.AddPolicy(sub, obj, newAct)
+		}
+		changed = true
+	}
+	replacePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST", "GET|POST") // v25
+	replacePolicy("guest", "/slots", "GET|POST", "GET")                     // v26
+	replacePolicy("guest", "/slots/*", "GET|POST", "GET")                   // v26
+
 	for _, p := range defaultPolicies {
 		if !roleNeedsSeed[p[0]] && !entryLevelSeed[p[0]] {
 			continue // 该角色已有策略（含管理员调整过），不覆盖

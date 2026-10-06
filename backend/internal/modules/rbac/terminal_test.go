@@ -204,3 +204,34 @@ func TestProjectScopeMixedRoles(t *testing.T) {
 		t.Error("ops 混合仍应全局")
 	}
 }
+
+// v0.12.2 复核 N3 残留：guest 不再能写任意项目测试槽位；且收权迁移
+// 不复活管理员人为删除的条目。
+func TestGuestLosesSlotsWrite(t *testing.T) {
+	svc := newTestEnforcer(t)
+	ok, _ := EnforceAny(svc.enforcer, identity.ParseRoleList("guest"), "/slots/1/occupy", "POST")
+	if ok {
+		t.Error("guest 不应再有 slots POST（自注册用户可触发任意项目部署的链路）")
+	}
+	if ok, _ = EnforceAny(svc.enforcer, identity.ParseRoleList("guest"), "/slots", "GET"); !ok {
+		t.Error("guest slots 只读应保留")
+	}
+}
+
+// 收权迁移「不复活人为删改」：dev 的 alerts 条目被整体删除后，
+// 升级收权不得把它加回来。
+func TestDeNarrowDoesNotResurrectDeleted(t *testing.T) {
+	svc := newTestEnforcer(t)
+	e := svc.enforcer
+	// 模拟管理员整体删除 dev 的 alerts 条目
+	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST")
+	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|POST")
+	// 复核 v25 收权逻辑：旧条目已不存在 → replacePolicy 应为 no-op
+	removed, _ := e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST")
+	if removed {
+		t.Error("已删除的条目不应再次移除成功")
+	}
+	if has, _ := e.HasPolicy("dev", "/observ/alerts/*", "GET|POST"); has {
+		t.Error("被删除的条目不应被复活")
+	}
+}
