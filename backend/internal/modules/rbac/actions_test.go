@@ -97,10 +97,18 @@ func TestProjectScope(t *testing.T) {
 	if !all {
 		t.Error("未配项目的自定义角色应为全局")
 	}
-	// 混合：内置 + scoped → 全局
-	all, _ = svc.projectScopeOf([]string{"dev", "项目A运维"})
-	if !all {
-		t.Error("含任一内置角色应为全局")
+	// 混合：dev + scoped 自定义 → 收窄到显式项目行（v0.12.1 复核 N3：
+	// 旧语义「任一内置即全局」使受限自定义角色可被 dev 头衔完全绕过）。
+	// 管理型内置（admin/ops）仍恒全局。
+	all, ids = svc.projectScopeOf([]string{"dev", "项目A运维"})
+	if all {
+		t.Error("dev + 有项目行的自定义角色应收窄")
+	}
+	if len(ids) != 2 {
+		t.Errorf("应收窄到项目 A 的两行授权，got %v", ids)
+	}
+	if all, _ = svc.projectScopeOf([]string{"ops", "项目A运维"}); !all {
+		t.Error("ops 混合应保持全局")
 	}
 }
 

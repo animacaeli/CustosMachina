@@ -208,17 +208,20 @@ func (s *Service) canAction(isAdmin bool, roles []string, action string) bool {
 	return cnt > 0
 }
 
-// projectScopeOf 项目范围：任一内置可分配角色 = 全局；仅自定义角色 = 授权项目并集，
-// 且自定义角色未配任何项目行时视为全局。
+// projectScopeOf 项目范围。v0.12.1 复核 N3 收紧：
+//   - 管理型内置角色（superadmin/admin/ops）= 全局；
+//   - dev/guest 属平台级只读/访客角色，默认全局（slots/告警查看等既有行为
+//     依赖它，不能一刀切关）——但用户同时挂自定义角色且该角色配了项目行时，
+//     显式项目行优先（收窄）：否则「dev+受限自定义」的组合完全绕过范围；
+//   - 仅自定义角色：项目行并集；未配行视为全局（显式创建的全局自定义角色）。
 func (s *Service) projectScopeOf(roles []string) (all bool, ids []uint) {
-	builtin := builtinRoleSet()
-	for _, r := range roles {
-		if builtin[r] {
-			return true, nil
-		}
-	}
 	if len(roles) == 0 {
 		return true, nil
+	}
+	for _, r := range roles {
+		if r == "superadmin" || r == "admin" || r == "ops" {
+			return true, nil
+		}
 	}
 	var rows []RoleProject
 	s.db.Where("role_name IN ?", roles).Find(&rows)

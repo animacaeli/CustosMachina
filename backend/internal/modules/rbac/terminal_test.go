@@ -160,3 +160,47 @@ func TestMiddlewareAdminDisabledAndDemoted(t *testing.T) {
 		t.Error("降级后本请求 claims.IsAdmin 应被纠正为 false")
 	}
 }
+
+// v0.12.1 复核 N3：dev 收 DELETE + 混合角色范围收窄。
+func TestDevLosesAlertDelete(t *testing.T) {
+	svc := newTestEnforcer(t)
+	ok, err := EnforceAny(svc.enforcer, identity.ParseRoleList("dev"), "/observ/alerts/5", "DELETE")
+	if err != nil || ok {
+		t.Errorf("dev 不应再有告警 DELETE（got=%v err=%v）", ok, err)
+	}
+	ok, _ = EnforceAny(svc.enforcer, identity.ParseRoleList("dev"), "/observ/alerts/5", "GET")
+	if !ok {
+		t.Error("dev 告警查看应保留")
+	}
+}
+
+func TestProjectScopeMixedRoles(t *testing.T) {
+	svc := newTestEnforcer(t)
+	// 自定义角色配了项目行：纯自定义 → 限定
+	all, ids := svc.projectScopeOf([]string{"发布员"})
+	if all || len(ids) != 0 {
+		// 无行时仍全局（既有语义）
+		if !all {
+			t.Errorf("自定义角色无项目行应为全局: all=%v ids=%v", all, ids)
+		}
+	}
+	if err := svc.db.Create(&RoleProject{RoleName: "发布员", ProjectID: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// dev + 带行自定义 → 收窄到显式项目（不再被 dev 的全局性绕过）
+	all, ids = svc.projectScopeOf([]string{"dev", "发布员"})
+	if all {
+		t.Error("混合角色且自定义角色有项目行时应收窄（dev 不再使其全局）")
+	}
+	if len(ids) != 1 || ids[0] != 3 {
+		t.Errorf("范围应为 [3]，got %v", ids)
+	}
+	// 纯 dev 仍全局（slots/告警查看等既有行为不破坏）
+	if all, _ = svc.projectScopeOf([]string{"dev"}); !all {
+		t.Error("纯 dev 应保持全局")
+	}
+	// 管理角色恒全局
+	if all, _ = svc.projectScopeOf([]string{"ops", "发布员"}); !all {
+		t.Error("ops 混合仍应全局")
+	}
+}
