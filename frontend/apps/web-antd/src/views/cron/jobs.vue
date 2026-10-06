@@ -19,6 +19,7 @@ import {
   updateJobApi,
 } from '#/api/cron';
 import { getServerListApi } from '#/api/resources/server';
+import AiAssist from '#/components/ai-assist.vue';
 import CodeEditor from '#/components/yaml-editor.vue';
 
 import RunsDrawer from './runs-drawer.vue';
@@ -218,6 +219,12 @@ function openCreate() {
 // 预览结果顺带暴露表达式是否合规
 const previewTimes = ref<string[]>([]);
 const previewError = ref('');
+
+/** AI 生成的 cron 结果取首段表达式（模型可能带 "  # 说明" 尾注） */
+function extractCron(result: string): string {
+  const first = result.trim().split('\n')[0] ?? '';
+  return first.split('#')[0]!.trim();
+}
 const previewLoading = ref(false);
 async function loadPreview() {
   if (!form.schedule) {
@@ -495,6 +502,16 @@ async function onTrigger(item: CronJobItem) {
               </template>
               <a-button title="查看未来 5 次执行时间">⏱</a-button>
             </a-popover>
+            <!-- P7-M3：自然语言 → cron 表达式（advisory，填入前可审阅） -->
+            <AiAssist
+              :extract="extractCron"
+              scene="cron"
+              @apply="(v) => (form.schedule = v)"
+            >
+              <template #default="{ open }">
+                <a-button title="AI 生成表达式" @click="open">✨</a-button>
+              </template>
+            </AiAssist>
           </div>
         </a-form-item>
         <template v-if="form.carrier === 'run'">

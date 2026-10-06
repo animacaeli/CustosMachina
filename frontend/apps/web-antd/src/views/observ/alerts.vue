@@ -14,6 +14,7 @@ import {
   syncO2AlertsApi,
   updateO2AlertApi,
 } from '#/api/observ/alerts';
+import AiAssist from '#/components/ai-assist.vue';
 
 defineOptions({ name: 'ObservAlerts' });
 
@@ -31,6 +32,12 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+/** AI 生成的查询取首行（模型可能带 "  # 说明" 尾注） */
+function extractAlertQuery(result: string): string {
+  const first = result.trim().split('\n')[0] ?? '';
+  return first.split('#')[0]!.trim();
 }
 
 onMounted(load);
@@ -291,11 +298,29 @@ const levelColor: Record<string, string> = {
             />
           </div>
         </a-form-item>
-        <a-form-item
-          extra="SQL 查日志流 / PromQL 查指标流（promql 型数据流填指标名）"
-          label="查询体"
-          required
-        >
+        <a-form-item required>
+          <template #label>
+            <span class="flex items-center gap-1">
+              查询体
+              <!-- P7-M3：监控诉求 → PromQL（advisory，填入前审阅） -->
+              <AiAssist
+                :extract="extractAlertQuery"
+                scene="alert_rule"
+                @apply="(v) => (form.sql = v)"
+              >
+                <template #default="{ open }">
+                  <a-button
+                    size="small"
+                    title="AI 生成查询"
+                    type="link"
+                    @click="open"
+                  >
+                    ✨
+                  </a-button>
+                </template>
+              </AiAssist>
+            </span>
+          </template>
           <a-textarea
             v-model:value="form.sql"
             :rows="4"

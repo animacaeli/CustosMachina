@@ -111,6 +111,7 @@ func ProvideModules(
 	certsSched *certs.Scheduler, // 拉起 certs:sched 到期扫描（哨兵依赖）
 	aiH *ai.Handler,
 	aiAlert *ai.AlertAnalysisService,
+	aiRelay *ai.Service,
 	aiChatSvc *ai.ChatService,
 	aiChatH *ai.ChatHandler,
 	aiSkillSvc *ai.SkillService,
@@ -156,12 +157,17 @@ func ProvideModules(
 	// critical 先发后补），工具与对话 function calling 同一投影
 	aiAlert.SetToolSource(tools)
 	notifySvc.SetAlertAnalyzer(aiAlert)
+	// 桥接（P7-M3）：编辑器 AI 助手（/ai/assist 无会话一次性；三场景 advisory，
+	// 工具与对话/告警分析同一投影）
+	assistSvc := ai.NewAssistService(aiRelay)
+	assistSvc.SetToolSource(tools)
+	// 桥接（P7-M3）：编辑器 AI 助手（/ai/assist 无会话一次性；三场景 advisory）
 	aiChatSvc.ToolSource = tools
 	mcpSvc.SetSources(tools, aiChatSvc.MountSource)
 	// 桥接（P6 M4，建议卡定调）：NL→操作建议——白名单三件套只生成建议卡
 	// （校验对象真实存在 + 跳转路由），AI 不执行任何变更
 	aiChatSvc.ActionSource = &chatActionBridge{db: db, res: resSvc}
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH, ai.NewAssistHandler(assistSvc)}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。

@@ -23,6 +23,7 @@ import {
 } from '#/api/configs';
 import { getProjectApi, getProjectsApi } from '#/api/projects';
 import { getServerListApi } from '#/api/resources/server';
+import AiAssist from '#/components/ai-assist.vue';
 import DiffEditor from '#/components/diff-editor.vue';
 import YamlEditor from '#/components/yaml-editor.vue';
 import { CONFIG_FORMATS, convertView } from '#/utils/config-format';
@@ -802,6 +803,28 @@ function openMerged() {
               </a-radio-group>
             </div>
             <div class="flex items-center gap-2">
+              <!-- P7-M3 编辑器 AI（advisory）：生成 compose 骨架/排查配置问题；
+                   插入=替换编辑器内容（Monaco ctrl+z 可撤销），AI 不直接改文件 -->
+              <AiAssist
+                :context="{
+                  content: editorText,
+                  fileName: selected?.name,
+                  fileType: selected?.format,
+                }"
+                scene="editor"
+                @apply="(v) => (editorText = v)"
+              >
+                <template #default="{ open }">
+                  <a-button
+                    :disabled="contentMasked"
+                    size="small"
+                    title="AI 生成/排错（建议需审阅后插入）"
+                    @click="open"
+                  >
+                    ✨ AI
+                  </a-button>
+                </template>
+              </AiAssist>
               <a-button
                 :loading="deploying === selected.id"
                 size="small"

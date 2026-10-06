@@ -202,3 +202,15 @@ export async function chatStreamApi(
   }
   return () => controller.abort();
 }
+
+/** P7-M3 编辑器 AI 助手：无会话一次性（三场景 advisory，结果由用户确认插入） */
+export async function assistApi(data: {
+  content?: string;
+  fileName?: string;
+  fileType?: string;
+  question: string;
+  scene: 'alert_rule' | 'cron' | 'editor';
+}) {
+  const out = await requestClient.post<{ result: string }>('/ai/assist', data);
+  return out.result;
+}
