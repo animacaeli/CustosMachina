@@ -537,6 +537,13 @@ func (s *Service) PollPending(ctx context.Context) error {
 				start = b.CreatedAt
 			}
 			updates["duration_secs"] = int(time.Since(start).Seconds())
+			// P7-M2：终态顺手拉 consoleText 尾部存库（log_tail）——AI 分析
+			// 优先读它（快、CI 不可达时可用）；拉取失败不阻塞终态落库
+			if logTxt, lerr := cip.Log(ctx, BuildRef{RepoPath: pv.RepoPath, SHA: b.SHA, Tag: b.Tag, Job: pv.CIJob}); lerr == nil {
+				updates["log_tail"] = tailLines(logTxt, 200)
+			} else {
+				logger.Warnf("[ci] 构建 %d log_tail 拉取失败（AI 分析将回退实时拉取）: %v", b.ID, lerr)
+			}
 		}
 		if err := s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).Updates(updates).Error; err != nil {
 			continue
@@ -680,4 +687,82 @@ func (s *Service) encrypt(v string) (string, error) {
 		return "", errors.New("平台主密钥未配置，无法加密")
 	}
 	return s.cipher.Encrypt(v)
+}
+
+// tailLines 取文本最后 n 行（log_tail 截尾存储用）。
+func tailLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// RecentBuildLogsText P7-M2（AI 工具 get_build_logs 数据源）：最近构建的日志
+// 摘要行 + 失败构建的日志正文。log_tail 优先（终态留存、CI 不可达时可用）；
+// 失败且无 log_tail 时实时调 provider 拉取（回退路径），仍失败则降级提示。
+func (s *Service) RecentBuildLogsText(ctx context.Context, projectID uint, limit int) (string, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	q := s.db.WithContext(ctx).Model(&Build{}).
+		Order("id DESC").Limit(limit)
+	if projectID > 0 {
+		q = q.Where("project_id = ?", projectID)
+	}
+	var builds []Build
+	if err := q.Find(&builds).Error; err != nil {
+		return "", err
+	}
+	if len(builds) == 0 {
+		return "（暂无构建记录）", nil
+	}
+	var sb strings.Builder
+	for _, b := range builds {
+		fmt.Fprintf(&sb, "== #%d %s %s %s %s dur=%ds\n", b.ID, b.Tag, b.EnvType, b.Status, b.Provider, b.DurationSecs)
+		if b.Status != BuildFailed {
+			continue
+		}
+		if b.LogTail != "" {
+			sb.WriteString(tailLines(b.LogTail, 40))
+			sb.WriteString("\n")
+			continue
+		}
+		// 回退：实时拉 consoleText（test 环境走部署输出）
+		if logTxt, err := s.BuildLog(ctx, b.ID); err == nil {
+			sb.WriteString(tailLines(logTxt, 40))
+			sb.WriteString("\n")
+		} else {
+			fmt.Fprintf(&sb, "（日志暂不可用：%v）\n", err)
+		}
+	}
+	return truncateLines(sb.String(), 8000), nil
+}
+
+// GitCommitsText P7-M2（AI 工具 get_git_commits 数据源）：按 repo_path 定位
+// 项目 provider（找不到项目时默认 gitea）后查提交列表。
+func (s *Service) GitCommitsText(ctx context.Context, repoPath string, sinceHours int, limit int) (string, error) {
+	if sinceHours <= 0 {
+		sinceHours = 24
+	}
+	provider := ""
+	var proj struct{ Provider string }
+	if err := s.db.WithContext(ctx).Table("projects").
+		Select("provider").Where("repo_path = ?", repoPath).First(&proj).Error; err == nil {
+		provider = proj.Provider
+	}
+	gp, err := s.gitFor(ctx, provider, repoPath)
+	if err != nil {
+		return "", err
+	}
+	since := time.Now().Add(-time.Duration(sinceHours) * time.Hour)
+	return gp.Commits(ctx, repoPath, "", since, limit)
+}
+
+// truncateLines 按行截断（工具输出统一 8000 字符纪律）。
+func truncateLines(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "\n…（结果过长截断）"
 }

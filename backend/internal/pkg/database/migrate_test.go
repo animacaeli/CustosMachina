@@ -48,12 +48,18 @@ func TestMigrateExistingDBSkipsAutoMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 模拟存量库：有 servers 表但没有新模型表
+	// 模拟存量库：有 servers/builds 表但没有新模型表（0004 起 ALTER builds 依赖基表）
 	if err := db.Exec(`CREATE TABLE servers (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE builds (id INTEGER PRIMARY KEY, status TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(db, []any{&migTestModel{}}); err != nil {
 		t.Fatalf("存量库迁移失败: %v", err)
+	}
+	if !db.Migrator().HasColumn("builds", "log_tail") {
+		t.Fatal("0004 应为存量 builds 表加 log_tail 列")
 	}
 	// 存量库不走 AutoMigrate：新模型表不应被建
 	if db.Migrator().HasTable(&migTestModel{}) {

@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // giteaClient gitea 适配器（GitProvider + gitea Actions CIProvider）。
@@ -180,6 +183,35 @@ func (g *giteaClient) RawFile(ctx context.Context, repoPath, path, ref string) (
 // actionsURL gitea Web UI 的 Actions 页（日志外链兜底）。
 func (g *giteaClient) ActionsURL(repoPath string) string {
 	return g.base + "/" + repoPath + "/actions"
+}
+
+// Commits P7-M2：GET /repos/{repo}/commits（归一化文本输出）。
+func (g *giteaClient) Commits(ctx context.Context, repoPath, ref string, since time.Time, limit int) (string, error) {
+	return listCommitsText(ctx, func(pageLim int) ([]commitRow, error) {
+		q := "/repos/" + repoPath + "/commits?limit=" + strconv.Itoa(pageLim)
+		if ref != "" {
+			q += "&sha=" + url.QueryEscape(ref)
+		}
+		var rows []struct {
+			SHA    string `json:"sha"`
+			Commit struct {
+				Message string `json:"message"`
+				Author  struct {
+					Name string `json:"name"`
+					Date string `json:"date"`
+				} `json:"author"`
+			} `json:"commit"`
+		}
+		if err := g.do(ctx, http.MethodGet, q, &rows); err != nil {
+			return nil, err
+		}
+		out := make([]commitRow, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, commitRow{SHA: r.SHA, Author: r.Commit.Author.Name,
+				Date: r.Commit.Author.Date, Message: r.Commit.Message})
+		}
+		return out, nil
+	}, since, limit)
 }
 
 // ---- CIProvider（gitea Actions）----

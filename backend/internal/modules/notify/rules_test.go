@@ -102,6 +102,15 @@ func newRuleTestEnv(t *testing.T) *ruleTestEnv {
 	return &ruleTestEnv{svc: svc, db: db, group: g}
 }
 
+// lastDelivery 最新一条留痕的投递正文（两阶段断言分析段用）。
+func (e *ruleTestEnv) lastDelivery() string {
+	var r SendRecord
+	if err := e.db.Order("id DESC").First(&r).Error; err != nil {
+		return ""
+	}
+	return r.Content
+}
+
 // deliveries 读发送留痕（真实 Send 会因假 webhook 网络失败落 failed 行，
 // 仍可证明"走没走到投递"这一层；聚合内容断言用标题行数近似）。
 func (e *ruleTestEnv) deliveryCount() int {

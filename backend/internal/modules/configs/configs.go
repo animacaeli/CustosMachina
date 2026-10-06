@@ -506,3 +506,53 @@ func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (crea
 	}
 	return created, updated, nil
 }
+
+// RecentChanges P7-M2：最近的配置版本记录（告警 AI 分析工具 get_config_changes
+// 数据源）——文件名/环境(路径首段)/操作人/时间/来源，不含内容（DLP 默认收敛）。
+func (s *Service) RecentChanges(ctx context.Context, limit int) (string, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 15
+	}
+	var rows []Version
+	if err := s.db.WithContext(ctx).
+		Order("id DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "（暂无配置变更记录）", nil
+	}
+	fileIDs := make([]uint, 0, len(rows))
+	for _, v := range rows {
+		fileIDs = append(fileIDs, v.FileID)
+	}
+	var files []File
+	if err := s.db.WithContext(ctx).Where("id IN ?", fileIDs).Find(&files).Error; err != nil {
+		return "", err
+	}
+	fmap := map[uint]File{}
+	for _, f := range files {
+		fmap[f.ID] = f
+	}
+	var sb strings.Builder
+	for _, v := range rows {
+		f := fmap[v.FileID]
+		fmt.Fprintf(&sb, "%s %s[%s] by %s（%s）\n",
+			v.CreatedAt.Format("01-02 15:04"), f.Name, envOfPath(f.Path), orDash(v.CreatedBy), v.Source)
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
+func envOfPath(path string) string {
+	seg := strings.Split(strings.Trim(path, "/"), "/")
+	if len(seg) > 1 {
+		return seg[0]
+	}
+	return "-"
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}

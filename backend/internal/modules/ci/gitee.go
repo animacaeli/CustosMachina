@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // giteeClient gitee 适配器（GitProvider）。CI 引擎配套 Jenkins（见 jenkins.go）。
@@ -153,6 +156,35 @@ func (g *giteeClient) RawFile(ctx context.Context, repoPath, path, ref string) (
 }
 
 // ActionsURL gitee 无平台内流水线页（CI 在 Jenkins），外链指向仓库提交历史。
+// Commits P7-M2：GET /api/v5 /repos/{repo}/commits（归一化文本输出）。
+func (g *giteeClient) Commits(ctx context.Context, repoPath, ref string, since time.Time, limit int) (string, error) {
+	return listCommitsText(ctx, func(pageLim int) ([]commitRow, error) {
+		q := "/repos/" + repoPath + "/commits?limit=" + strconv.Itoa(pageLim)
+		if ref != "" {
+			q += "&sha=" + url.QueryEscape(ref)
+		}
+		var rows []struct {
+			SHA    string `json:"sha"`
+			Commit struct {
+				Author struct {
+					Name string `json:"name"`
+					Date string `json:"date"`
+				} `json:"author"`
+				Message string `json:"message"`
+			} `json:"commit"`
+		}
+		if err := g.do(ctx, http.MethodGet, q, &rows); err != nil {
+			return nil, err
+		}
+		out := make([]commitRow, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, commitRow{SHA: r.SHA, Author: r.Commit.Author.Name,
+				Date: r.Commit.Author.Date, Message: r.Commit.Message})
+		}
+		return out, nil
+	}, since, limit)
+}
+
 func (g *giteeClient) ActionsURL(repoPath string) string {
 	return g.base + "/" + repoPath + "/commits"
 }

@@ -37,6 +37,7 @@ type Build struct {
 	DurationSecs int            `json:"durationSecs"`                    // 终态时计算；running 期由前端用 started_at 差值显示
 	FailCount    int            `gorm:"not null;default:0" json:"-"`     // 防抖：连续 N 次非 success 才标 failed（commit status 在 job 切换间隙可能短暂回落）
 	LogURL       string         `gorm:"size:512" json:"logUrl"`          // CI Web UI 页面（外链兜底）
+	LogTail      string         `gorm:"type:text" json:"-"`              // P7-M2：终态时存的 consoleText 尾部 200 行（AI 分析兜底，Jenkins 不可达时可用）
 	Notified     bool           `gorm:"not null;default:false" json:"-"` // 终态是否已通知
 	StartedAt    time.Time      `json:"startedAt"`
 	CreatedAt    time.Time      `json:"createdAt"`

@@ -30,10 +30,11 @@ func toOut(g Group) GroupOut {
 
 // Service 通知中心：群 CRUD + 路由规则 + 事件投递（聚合/静默）+ 发送留痕。
 type Service struct {
-	db     *gorm.DB
-	cipher *crypto.Cipher
-	sender *sender
-	agg    *aggregator
+	db       *gorm.DB
+	cipher   *crypto.Cipher
+	sender   *sender
+	agg      *aggregator
+	analyzer AlertAnalyzer // P7-M2 告警 AI 分析（nil = 关闭）
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {

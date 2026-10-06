@@ -116,7 +116,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	}
 	aiService := ai.NewService(db, cipher)
 	aiHandler := ai.NewHandler(aiService)
-	digestService := ai.NewDigestService(aiService, db)
+	alertAnalysisService := ai.NewAlertAnalysisService(aiService)
 	chatService := ai.NewChatService(db, aiService)
 	chatHandler := ai.NewChatHandler(chatService)
 	skillService := ai.NewSkillService(db)
@@ -152,7 +152,7 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, resourcesService, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, configsService, certsHandler, certsService, certsScheduler, aiHandler, digestService, chatService, chatHandler, skillService, mcpService, mcpHandler, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService, syncedEnforcer)
+	modules := app.ProvideModules(configConfig, handler, authHandler, setupHandler, identityHandler, rbacHandler, resourcesHandler, resourcesService, notifyHandler, projectsHandler, ciHandler, releaseHandler, canaryHandler, observHandler, slotsHandler, cronHandler, cronService, scheduler, backupHandler, configsHandler, configsService, certsHandler, certsService, certsScheduler, aiHandler, alertAnalysisService, chatService, chatHandler, skillService, mcpService, mcpHandler, db, backupService, backupScheduler, slotsService, ciService, poller, sweeper, notifyService, releaseService, canaryService, observService, syncedEnforcer)
 	authMiddleware := auth.ProvideAuthMiddleware(authService)
 	middlewareDeps := rbac.MiddlewareDeps{
 		Enforcer: syncedEnforcer,

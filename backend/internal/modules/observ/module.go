@@ -291,7 +291,6 @@ type Service struct {
 	db        *gorm.DB
 	res       *resources.Service
 	notifier  EventNotifier // 可空
-	digestor  Digestor      // 可空：AI 诊断摘要（P5 M6）
 	cipher    *crypto.Cipher
 	publicURL string // 平台对外地址（CUSTOS_IM_PUBLIC_URL，webhook 回流用）
 }
@@ -301,8 +300,7 @@ func NewService(db *gorm.DB, res *resources.Service, cipher *crypto.Cipher) *Ser
 }
 
 // SetPublicURL 注入平台对外地址（app 层装配，与 IM 回调同一配置）。
-func (s *Service) SetDigestor(d Digestor) { s.digestor = d }
-func (s *Service) SetPublicURL(u string)  { s.publicURL = u }
+func (s *Service) SetPublicURL(u string) { s.publicURL = u }
 
 // SetNotifier 注入运维群推送出口。
 func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }

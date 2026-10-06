@@ -110,7 +110,7 @@ func ProvideModules(
 	certsSvc *certs.Service,
 	certsSched *certs.Scheduler, // 拉起 certs:sched 到期扫描（哨兵依赖）
 	aiH *ai.Handler,
-	aiDigest *ai.DigestService,
+	aiAlert *ai.AlertAnalysisService,
 	aiChatSvc *ai.ChatService,
 	aiChatH *ai.ChatHandler,
 	aiSkillSvc *ai.SkillService,
@@ -144,10 +144,6 @@ func ProvideModules(
 	backupSvc.SetNotifier(notifySvc)
 	observSvc.SetPublicURL(cfg.IM.PublicURL)
 	certsSvc.SetNotifier(notifySvc)
-	// 桥接（P5 M6）：O2 告警 → AI 诊断摘要；ai 的上下文供给由 app 层桥实现
-	aiDigest.SetNotifier(notifySvc)
-	aiDigest.SetContextSource(&alertContextBridge{db: db})
-	observSvc.SetDigestor(aiDigest)
 	// 桥接（P6 M1）：对话挂载上下文供给（项目/发布/构建/主机/事件只读查询）
 	aiChatSvc.MountSource = &chatContextBridge{db: db}
 	// 桥接（P6 M3）：/命令技能注入
@@ -155,6 +151,11 @@ func ProvideModules(
 	seedSkills(db)
 	// 桥接（P6 M2/M3）：MCP tools 与对话内 function calling 同一套数据投影
 	tools := &toolsBridge{db: db, res: resSvc}
+	tools.SetSources(observSvc, ciSvc, cfgSvc) // P7-M2：告警分析五工具数据源
+	// 桥接（P7-M2）：告警 AI 分析——notify 统一入口两阶段（warn/info 先析后发、
+	// critical 先发后补），工具与对话 function calling 同一投影
+	aiAlert.SetToolSource(tools)
+	notifySvc.SetAlertAnalyzer(aiAlert)
 	aiChatSvc.ToolSource = tools
 	mcpSvc.SetSources(tools, aiChatSvc.MountSource)
 	// 桥接（P6 M4，建议卡定调）：NL→操作建议——白名单三件套只生成建议卡
@@ -474,8 +475,16 @@ func (b *chatContextBridge) MountContext(ctx context.Context, m ai.Mount, _ []st
 // toolsBridge mcp.ToolsSource 的 app 层实现：六类只读投影。
 // 容器查询经 resources.Service（docker over SSH）；其余直查同库业务表。
 type toolsBridge struct {
-	db  *gorm.DB
-	res *resources.Service
+	db   *gorm.DB
+	res  *resources.Service
+	obs  *observ.Service  // P7-M2：O2 日志/指标查询（search_o2_logs / query_o2_metrics）
+	ci   *ci.Service      // P7-M2：构建日志（get_build_logs）
+	cfgs *configs.Service // P7-M2：配置变更（get_config_changes）
+}
+
+// SetSources P7-M2：告警分析工具的数据源注入（wire 时序在 ProvideModules 里直接构造）。
+func (b *toolsBridge) SetSources(obs *observ.Service, ciSvc *ci.Service, cfgs *configs.Service) {
+	b.obs, b.ci, b.cfgs = obs, ciSvc, cfgs
 }
 
 func (b *toolsBridge) ListServers(ctx context.Context) []map[string]any {
@@ -712,7 +721,83 @@ func (b *toolsBridge) ChatTools(ctx context.Context, viewerRoles []string) []ai.
 				return out, nil
 			},
 		},
+		// ---- P7-M2 告警 AI 分析五工具（只读；对话与告警分析共用一套投影） ----
+		{
+			Name:        "search_o2_logs",
+			Description: "查 O2 日志（按 SQL 条件过滤最近时间窗，排障首选）",
+			Parameters: schema(map[string]any{
+				"query":   map[string]any{"type": "string", "description": "可选，SQL WHERE 片段（如 message ILIKE '%error%'）；空=最近日志"},
+				"stream":  map[string]any{"type": "string", "description": "可选，日志流名（默认全流）"},
+				"minutes": intProp("可选，时间窗分钟数，默认 60，最大 1440"),
+				"limit":   intProp("可选，返回条数上限，默认 30，最大 100"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return b.obs.O2SearchLogs(ctx,
+					actionArgStr(args, "query"), actionArgStr(args, "stream"),
+					int(limNum(args["minutes"], 60)), int(limNum(args["limit"], 30)))
+			},
+		},
+		{
+			Name:        "query_o2_metrics",
+			Description: "查 O2 指标（PromQL 范围查询，判断 CPU/内存/网络是否同时异常）",
+			Parameters: schema(map[string]any{
+				"promql":  map[string]any{"type": "string", "description": "必填，PromQL 表达式"},
+				"minutes": intProp("可选，范围窗口分钟数，默认 30"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				q := actionArgStr(args, "promql")
+				if q == "" {
+					return "", errors.New("promql 必填")
+				}
+				return b.obs.O2QueryMetrics(ctx, q, int(limNum(args["minutes"], 30)))
+			},
+		},
+		{
+			Name:        "get_build_logs",
+			Description: "取构建日志（优先平台留存的尾部日志；构建失败排错用）",
+			Parameters:  listSchema(),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return b.ci.RecentBuildLogsText(ctx, argUint(args, "project_id"), int(lim(args["limit"])))
+			},
+		},
+		{
+			Name:        "get_git_commits",
+			Description: "查仓库最近提交（谁在什么时候改了什么——定位引入问题的 commit）",
+			Parameters: schema(map[string]any{
+				"repo_path":   map[string]any{"type": "string", "description": "必填，owner/repo（list_projects 可查）"},
+				"since_hours": intProp("可选，只取最近 N 小时，默认 24"),
+				"limit":       intProp("可选，条数上限，默认 20，最大 50"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				rp := actionArgStr(args, "repo_path")
+				if rp == "" {
+					return "", errors.New("repo_path 必填")
+				}
+				hours := limNum(args["since_hours"], 24)
+				return b.ci.GitCommitsText(ctx, rp, int(hours), int(limNum(args["limit"], 20)))
+			},
+		},
+		{
+			Name:        "get_config_changes",
+			Description: "查最近配置变更记录（文件/环境/操作人/时间——配置改动引发告警时对时间线）",
+			Parameters: schema(map[string]any{
+				"limit": intProp("可选，条数上限，默认 15，最大 50"),
+			}),
+			Fn: func(ctx context.Context, args map[string]any) (string, error) {
+				return b.cfgs.RecentChanges(ctx, int(limNum(args["limit"], 15)))
+			},
+		},
 	}
+}
+
+// limNum 数值参数取值（缺省/越界回落 def；P7-M2 工具参数用）。
+func limNum(v any, def int) int64 {
+	f, _ := v.(float64)
+	n := int64(f)
+	if n <= 0 {
+		return int64(def)
+	}
+	return n
 }
 
 // seedSkills 内置技能种子（P6 M3）：首次启动种入；管理员可在后台改删。

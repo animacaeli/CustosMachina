@@ -120,14 +120,51 @@ func (s *Service) ListRules(ctx context.Context) ([]Rule, error) {
 
 // ---- 事件路由 ----
 
+// AlertAnalyzer 告警 AI 分析（P7-M2，ai.AlertAnalysisService 实现，app 层注入）。
+// AnalyzeAlert 同步返回分析文本（调用方控制超时）；Followup 异步补发第二条。
+type AlertAnalyzer interface {
+	AnalyzeAlert(ctx context.Context, source, title, detail string) (string, bool)
+	NotifyFollowup(ctx context.Context, n EventNotifier, source, title, detail string)
+}
+
+// EventNotifier 统一通知出口（ai 补发用；notify.Service 自身实现）。
+type EventNotifier interface {
+	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
+}
+
+// analyzedSources 进 AI 分析的告警源集合（P7-M2 D3）。
+// 排除：ai_digest（补发事件再分析=自激环）、business（业务服务自判）、
+// platform_ops 之外的测试投递走同一点位但 rule-test 不经 NotifyEvent。
+var analyzedSources = map[string]bool{
+	SourceCronFailed: true, SourceObservFailed: true, SourcePlatformOps: true,
+	SourceO2Alert: true, SourceCertExpiring: true, SourceBackupFailed: true,
+}
+
+// SetAlertAnalyzer 注入分析器（nil = 关闭两阶段，恢复直推语义）。
+func (s *Service) SetAlertAnalyzer(a AlertAnalyzer) { s.analyzer = a }
+
+// alertAnalyzeBudget warn/info 先析后发的硬超时（设计文档 D2：慢与失败同样不阻塞）。
+// var 形态仅为单测可缩短（生产语义恒 60s）。
+var alertAnalyzeBudget = 60 * time.Second
+
 // NotifyEvent 统一事件入口：匹配规则 → 静默判断 → 聚合/投递。
 // 无任何匹配规则时回退运维群（等价 M1 前的直推语义，保底知情权）。
+// P7-M2 两阶段：分析源告警 warn/info 先过 AI（60s 超时降级原样投递）、
+// critical 先投递再异步补发 ai_digest。
 func (s *Service) NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string) {
 	rank, ok := levelRank[level]
 	if !ok {
 		rank = levelRank[LevelWarn]
 		level = LevelWarn
 	}
+	if s.preAnalyze(&ctx, source, level, rank, &title, &detail) {
+		return // critical 补发路径已接管原始投递
+	}
+	s.dispatch(ctx, source, level, rank, dedupKey, title, detail)
+}
+
+// dispatch 规则匹配 → 静默 → 聚合/投递 → 兜底运维群（NotifyEvent 的投递主体）。
+func (s *Service) dispatch(ctx context.Context, source, level string, rank int, dedupKey, title, detail string) {
 	s.flushDue()
 
 	var rules []Rule
@@ -281,4 +318,25 @@ func (s *Service) getRule(ctx context.Context, id uint) (*Rule, error) {
 		return nil, ErrNotFound
 	}
 	return &r, nil
+}
+
+// preAnalyze 两阶段接入点：返回 true = 调用方无需再投递（critical 补发路径接管）。
+// - warn/info 分析源：同步分析（≤60s）成功则分析段并入 detail，失败/超时原样；
+// - critical 分析源：立即投递原始告警（走完整 dispatch 语义），再异步补发。
+func (s *Service) preAnalyze(pctx *context.Context, source, level string, rank int, title, detail *string) bool {
+	if s.analyzer == nil || !analyzedSources[source] {
+		return false
+	}
+	ctx := *pctx
+	if rank >= levelRank[LevelCritical] {
+		s.dispatch(ctx, source, level, rank, "critical-"+*title, *title, *detail)
+		s.analyzer.NotifyFollowup(ctx, s, source, *title, *detail)
+		return true
+	}
+	cctx, cancel := context.WithTimeout(ctx, alertAnalyzeBudget)
+	defer cancel()
+	if analysis, ok := s.analyzer.AnalyzeAlert(cctx, source, *title, *detail); ok {
+		*detail = *detail + "\n\n【AI 分析（参考，非结论）】\n" + analysis
+	}
+	return false
 }

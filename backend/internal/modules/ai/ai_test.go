@@ -3,12 +3,12 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -134,18 +134,28 @@ func TestRelayComplete(t *testing.T) {
 	}
 }
 
-func TestDigestDegradedWhenNotConfigured(t *testing.T) {
+func TestAlertAnalysisDegradedWhenNotConfigured(t *testing.T) {
 	db := testDB(t)
 	relay := NewService(db, nil)
-	d := NewDigestService(relay, db)
-	called := false
-	d.SetNotifier(&fakeN{onCall: func() { called = true }})
-	// 未配置中转层 → MaybeDigest 直接返回（不 panic、不调用通知）
-	d.MaybeDigest(context.Background(), "a", "b")
-	time.Sleep(200 * time.Millisecond)
-	if called {
-		t.Error("未配置 AI 时不应产生摘要通知")
+	a := NewAlertAnalysisService(relay)
+	// 未配置中转层 → AnalyzeAlert 直接降级（不 panic、不产生分析段）
+	if _, ok := a.AnalyzeAlert(context.Background(), "cron_failed", "t", "d"); ok {
+		t.Error("未配置 AI 时分析应降级返回 false")
 	}
+}
+
+// fakeAnalyzer notify.AlertAnalyzer 测试桩。
+type fakeAnalyzer struct {
+	fn func()
+}
+
+func (f fakeAnalyzer) AnalyzeAlert(ctx context.Context, source, title, detail string) (string, bool) {
+	f.fn()
+	return "", false
+}
+
+func (f fakeAnalyzer) NotifyFollowup(ctx context.Context, n notify.EventNotifier, source, title, detail string) {
+	f.fn()
 }
 
 type fakeN struct {
