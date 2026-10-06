@@ -55,3 +55,35 @@ func TestDecrypt_WrongKey(t *testing.T) {
 		t.Error("密钥不一致应解密失败")
 	}
 }
+
+// AAD 字段绑定：不同 aad 的密文不可互换；旧无 AAD 密文回退兼容。
+func TestCipherAADBinding(t *testing.T) {
+	c, err := NewCipher("3d1e9a4b6f8c2d5e7a0b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encA, err := c.Encrypt("secret", "fieldA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encPlain, err := c.Encrypt("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 同 aad 解密正常
+	if v, err := c.Decrypt(encA, "fieldA"); err != nil || v != "secret" {
+		t.Errorf("同 aad 应解密成功: %v %q", err, v)
+	}
+	// 换 aad 解密：回退无 AAD 也失败（AAD 密文无 AAD 解不开）→ 报错
+	if _, err := c.Decrypt(encA, "fieldB"); err == nil {
+		t.Error("不同 aad 应解密失败")
+	}
+	// 旧无 AAD 密文 + 指定 aad：回退路径成功
+	if v, err := c.Decrypt(encPlain, "fieldA"); err != nil || v != "secret" {
+		t.Errorf("旧无 AAD 密文应回退兼容: %v", err)
+	}
+	// AAD 密文不传 aad 解不开（防跨字段互换）
+	if _, err := c.Decrypt(encA); err == nil {
+		t.Error("AAD 密文不带 aad 应解密失败")
+	}
+}

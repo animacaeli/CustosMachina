@@ -19,7 +19,7 @@ func (h *Handler) registerQRLoginRoutes(r server.Router) {
 	r.Public.GET("/auth/qrlogin/url", qrm, h.qrLoginURL)
 	r.Public.GET("/auth/qrlogin/callback", qrm, h.qrCallback)
 	r.Public.POST("/auth/qrlogin/exchange", qrm, h.qrExchange)
-	r.Public.POST("/auth/refresh", h.refresh)
+	r.Public.POST("/auth/refresh", qrm, h.refresh) // 公开认证端点同窗限速（防爆破 refresh）
 	r.Authed.POST("/auth/logout", h.logout)
 
 	im := r.Authed.Group("/im-configs")

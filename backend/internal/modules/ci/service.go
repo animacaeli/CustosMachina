@@ -142,7 +142,7 @@ func (s *Service) SaveGlobal(ctx context.Context, in SaveGlobalInput) (*GlobalCo
 		g.WebhookSecret = in.WebhookSecret
 	}
 	if in.GiteeWebhookPass != "" {
-		g.GiteeWebhook = in.GiteeWebhookPass
+		g.GiteeWebhook = HashWebhookPass(in.GiteeWebhookPass) // 哈希存储：比对不需要原文
 	}
 	if err := s.db.WithContext(ctx).Save(&g).Error; err != nil {
 		return nil, err

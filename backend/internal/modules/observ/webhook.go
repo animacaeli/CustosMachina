@@ -1,6 +1,7 @@
 package observ
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -52,7 +53,7 @@ func (h *Handler) o2AlertWebhook(c *gin.Context) {
 		httpx.Fail(c, http.StatusServiceUnavailable, 503, "O2 集成未配置")
 		return
 	}
-	if c.GetHeader("X-Custos-Token") != cfg.Token {
+	if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Custos-Token")), []byte(cfg.Token)) != 1 {
 		httpx.FailUnauthorized(c, "token 无效")
 		return
 	}

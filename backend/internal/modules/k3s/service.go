@@ -202,13 +202,21 @@ func revisionOf(rs appsv1.ReplicaSet) int64 {
 }
 
 // waitReady rollout 完成三条件（spike 验证口径）。
+// Spec.Replicas 为 *int32：API 返回 replicas: null 时解引用会 panic
+// （v0.12.0 审计中等项）——nil 时按默认 1 处理。
 func waitReady(ctx context.Context, cs *kubernetes.Clientset, namespace, name string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		d, err := cs.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err == nil && d.Generation == d.Status.ObservedGeneration &&
-			d.Status.UpdatedReplicas == *d.Spec.Replicas && d.Status.AvailableReplicas == *d.Spec.Replicas {
-			return nil
+		if err == nil {
+			want := int32(1)
+			if d.Spec.Replicas != nil {
+				want = *d.Spec.Replicas
+			}
+			if d.Generation == d.Status.ObservedGeneration &&
+				d.Status.UpdatedReplicas == want && d.Status.AvailableReplicas == want {
+				return nil
+			}
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("rollout 超时（%s）: %s/%s", timeout, namespace, name)

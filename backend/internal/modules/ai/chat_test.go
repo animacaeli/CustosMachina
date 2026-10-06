@@ -63,6 +63,7 @@ func relayFor(t *testing.T, db *gorm.DB, endpoint string) *Service {
 		t.Fatalf("构造 cipher 失败: %v", err)
 	}
 	s := NewService(db, cipher)
+	t.Setenv("CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT", "1") // httptest 本地服务
 	if err := s.SaveSettings(context.Background(), endpoint, "test-model", "sk-x"); err != nil {
 		t.Fatalf("配置中转层失败: %v", err)
 	}

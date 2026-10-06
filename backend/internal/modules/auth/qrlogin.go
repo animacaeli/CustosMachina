@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -221,7 +222,12 @@ func (s *AuthService) HandleQRCallback(ctx context.Context, code, state string) 
 			}
 		}
 	} else {
-		// JIT 注册（FR2.2）：首次扫码自动建用户，默认 guest
+		// JIT 注册（FR2.2）：首次扫码自动建用户，默认 guest。
+		// 可用 CUSTOS_IM_JIT_REGISTER=0 关闭（组织内任意 IM 用户扫码即得账号，
+		// 默认开但支持收紧，v0.12.0 审计中等项）
+		if os.Getenv("CUSTOS_IM_JIT_REGISTER") == "0" {
+			return nil, errors.New("账号未绑定（本部署已关闭扫码自动注册，请联系管理员创建账号）")
+		}
 		display := imUser.IMName
 		if display == "" {
 			display = imUser.IMUserID

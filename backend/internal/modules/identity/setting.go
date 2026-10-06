@@ -36,7 +36,14 @@ func (r *settingsRepository) Get(ctx context.Context, key string) (string, bool,
 }
 
 func (r *settingsRepository) Set(ctx context.Context, key, value string) error {
-	return r.repo.WithContext(ctx).Clauses(clause.OnConflict{
+	return UpsertSetting(r.repo, ctx, key, value)
+}
+
+// UpsertSetting platform_settings 的方言安全 upsert。各模块直接持有 *gorm.DB
+// 写设置时用它——不要手写 `ON CONFLICT ... DO UPDATE`：那是 SQLite/PG 方言，
+// MySQL（ON DUPLICATE KEY UPDATE）下语法错误（v0.12.0 审计中等项，波及 7 处）。
+func UpsertSetting(db *gorm.DB, ctx context.Context, key, value string) error {
+	return db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "skey"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
 	}).Create(&PlatformSetting{Key: key, Value: value}).Error

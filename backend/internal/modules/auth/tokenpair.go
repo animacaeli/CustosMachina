@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/custos-machina/backend/internal/modules/identity"
@@ -55,6 +56,7 @@ func (s *AuthService) refreshStore(ctx context.Context) (RefreshStore, error) {
 	if raw, ok, _ := s.settings.Get(ctx, settingKeyRedis); ok && raw != "" {
 		c := &RedisConfig{}
 		if err := unmarshalJSON(raw, c); err == nil && c.Addr != "" {
+			s.decryptRedisConfigPassword(c)
 			cfg = c
 		}
 	}
@@ -137,11 +139,31 @@ func (s *AuthService) SetTokenTTLs(ctx context.Context, access, refresh time.Dur
 }
 
 // SaveRedisConfig 保存并验证 Redis 配置（setup 向导 / 系统设置）。
+// 密码字段 AES 加密后入库（v0.12.0 审计中等项：Redis 存全部 refresh token，
+// 库内明文密码等于会话接管的钥匙）；主密钥未配置时退回明文并在读取侧兼容。
 func (s *AuthService) SaveRedisConfig(ctx context.Context, cfg RedisConfig) error {
 	if _, err := s.refreshHolder.Get(ctx, &cfg); err != nil {
 		return err // 连接失败直接报错
 	}
+	if cfg.Password != "" && s.cipher != nil {
+		enc, err := s.cipher.Encrypt(cfg.Password)
+		if err != nil {
+			return fmt.Errorf("Redis 密码加密失败: %w", err)
+		}
+		cfg.Password = enc
+	}
 	return s.settings.Set(ctx, settingKeyRedis, marshalJSON(cfg))
+}
+
+// decryptRedisConfigPassword 读取侧解密：解不开视为旧版明文（GCM 认证标签
+// 保证随机串不会被误判为密文），原样使用保证升级兼容。
+func (s *AuthService) decryptRedisConfigPassword(c *RedisConfig) {
+	if c.Password == "" || s.cipher == nil {
+		return
+	}
+	if dec, err := s.cipher.Decrypt(c.Password); err == nil {
+		c.Password = dec
+	}
 }
 
 // RedisConfigCurrent 当前生效的 Redis 配置（未配置返回空 addr）。
@@ -149,6 +171,7 @@ func (s *AuthService) RedisConfigCurrent() RedisConfig {
 	if raw, ok, _ := s.settings.Get(context.Background(), settingKeyRedis); ok {
 		c := RedisConfig{}
 		if unmarshalJSON(raw, &c) == nil {
+			s.decryptRedisConfigPassword(&c)
 			return c
 		}
 	}

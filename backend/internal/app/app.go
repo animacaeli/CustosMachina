@@ -58,6 +58,21 @@ func init() {
 		}
 		return nil
 	})
+	// 0008：gitee webhook 密码存量明文哈希化（sha256 纯计算无密钥依赖；
+	// 幂等：已是 64-hex 哈希形态则跳过）
+	database.RegisterGoHook("0008", func(db *gorm.DB) error {
+		var row struct {
+			ID           uint
+			GiteeWebhook string
+		}
+		if err := db.Table("ci_global_config").Where("id = ?", 1).Scan(&row).Error; err != nil || row.ID == 0 {
+			return err
+		}
+		if row.GiteeWebhook == "" || ci.IsHashedWebhookPass(row.GiteeWebhook) {
+			return nil
+		}
+		return db.Exec("UPDATE ci_global_config SET gitee_webhook = ? WHERE id = 1", ci.HashWebhookPass(row.GiteeWebhook)).Error
+	})
 }
 
 // ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。

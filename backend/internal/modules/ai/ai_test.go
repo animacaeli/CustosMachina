@@ -109,6 +109,7 @@ func TestRelayComplete(t *testing.T) {
 	cipher, _ := cryptopkg.NewCipher(key)
 	svc := NewService(db, cipher)
 	ctx := context.Background()
+	t.Setenv("CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT", "1") // httptest 本地服务
 	if err := svc.SaveSettings(ctx, srv.URL+"/v1", "test-model", "sk-test"); err != nil {
 		t.Fatal(err)
 	}

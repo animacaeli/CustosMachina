@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 )
 
@@ -46,9 +47,7 @@ type KVSettingsOut struct {
 
 func (s *Service) SaveKVSettings(ctx context.Context, endpoint, user, pass string) error {
 	set := func(k, v string) error {
-		return s.db.WithContext(ctx).Exec(
-			`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-			 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, k, v).Error
+		return identity.UpsertSetting(s.db, ctx, k, v)
 	}
 	if endpoint != "" {
 		if !strings.HasPrefix(endpoint, "http") {

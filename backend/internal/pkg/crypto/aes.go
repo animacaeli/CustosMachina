@@ -42,17 +42,24 @@ func NewCipher(masterKeyHex string) (*Cipher, error) {
 }
 
 // Encrypt 返回 nonce+ciphertext 的 hex 字符串。
-func (c *Cipher) Encrypt(plaintext string) (string, error) {
+// 可选 aad：绑定字段上下文（GCM additionalData）——不同字段的密文不可互换
+// （v0.12.0 审计中等项：此前 AAD 为 nil，A 表密文贴到 B 字段即生效）。
+func (c *Cipher) Encrypt(plaintext string, aad ...string) (string, error) {
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	sealed := c.aead.Seal(nonce, nonce, []byte(plaintext), nil)
+	var ad []byte
+	if len(aad) > 0 {
+		ad = []byte(aad[0])
+	}
+	sealed := c.aead.Seal(nonce, nonce, []byte(plaintext), ad)
 	return hex.EncodeToString(sealed), nil
 }
 
 // Decrypt 解密 Encrypt 的产物。
-func (c *Cipher) Decrypt(encoded string) (string, error) {
+// 传入 aad 时先按绑定字段解；失败回退无 AAD 旧格式（存量数据兼容升级）。
+func (c *Cipher) Decrypt(encoded string, aad ...string) (string, error) {
 	data, err := hex.DecodeString(encoded)
 	if err != nil {
 		return "", fmt.Errorf("密文不是合法 hex: %w", err)
@@ -60,6 +67,13 @@ func (c *Cipher) Decrypt(encoded string) (string, error) {
 	ns := c.aead.NonceSize()
 	if len(data) < ns {
 		return "", errors.New("密文长度不合法")
+	}
+	var ad []byte
+	if len(aad) > 0 {
+		ad = []byte(aad[0])
+		if plain, err := c.aead.Open(nil, data[:ns], data[ns:], ad); err == nil {
+			return string(plain), nil
+		}
 	}
 	plain, err := c.aead.Open(nil, data[:ns], data[ns:], nil)
 	if err != nil {

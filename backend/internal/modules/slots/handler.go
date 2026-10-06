@@ -1,10 +1,12 @@
 package slots
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -111,10 +113,17 @@ func actor(c *gin.Context) (uint, string) {
 	return 0, "unknown"
 }
 
+// projectParam 全部端点的公共入口：解析 projectId 并执行项目范围守卫
+// （与 canary 同款 P7-M1 守卫——slots 此前缺失，限定项目的自定义角色可操作
+// 任意项目槽位，v0.12.0 审计中等项）。
 func projectParam(c *gin.Context) (uint, bool) {
 	id64, err := strconv.ParseUint(c.Param("projectId"), 10, 64)
 	if err != nil || id64 == 0 {
 		httpx.FailBadRequest(c, "无效的 projectId")
+		return 0, false
+	}
+	if !rbac.InProjectScope(c, uint(id64)) {
+		httpx.Fail(c, http.StatusForbidden, 403, "该项目不在你的授权范围内")
 		return 0, false
 	}
 	return uint(id64), true

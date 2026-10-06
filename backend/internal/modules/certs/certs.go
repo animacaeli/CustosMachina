@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-acme/lego/v4/certcrypto"
@@ -76,10 +78,8 @@ func (Cert) TableName() string { return "certs" }
 
 func Models() []any { return []any{&Cert{}} }
 
-// EventNotifier 统一通知路由出口。
-type EventNotifier interface {
-	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
-}
+// EventNotifier 统一别名（notify 是唯一生产实现；历史上 6 份逐字相同的声明收敛于此）。
+type EventNotifier = notify.EventNotifier
 
 // SSHExecutor resources.Service 投影。
 type SSHExecutor interface {
@@ -93,10 +93,15 @@ type Service struct {
 	cipher   *cryptopkg.Cipher
 	ssh      SSHExecutor
 	notifier EventNotifier
+
+	// 到期告警按天去重（certID → 已告警日期）；调度是 hourly，没有它每小时
+	// 重复推一次（v0.12.0 审计中等项：注释自称"每天最多一条"）
+	warnMu   sync.Mutex
+	warnSeen map[string]string
 }
 
 func NewService(db *gorm.DB, cipher *cryptopkg.Cipher, ssh SSHExecutor) *Service {
-	return &Service{db: db, cipher: cipher, ssh: ssh}
+	return &Service{db: db, cipher: cipher, ssh: ssh, warnSeen: map[string]string{}}
 }
 
 func (s *Service) SetNotifier(n EventNotifier) { s.notifier = n }
@@ -122,6 +127,10 @@ type SaveInput struct {
 	Enabled     bool              `json:"enabled"`
 }
 
+// certRemotePathRe 证书/私钥远端路径白名单：这两个值经 SFTP 写到目标机任意
+// 位置（v0.12.0 审计中等项：此前连绝对路径都没校验，比指控的还松）。
+var certRemotePathRe = regexp.MustCompile(`^/[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
+
 func (s *Service) validate(in SaveInput) error {
 	if !strings.Contains(in.Email, "@") || len(in.Email) < 5 {
 		return fmt.Errorf("ACME 账号邮箱不合法")
@@ -131,6 +140,11 @@ func (s *Service) validate(in SaveInput) error {
 	}
 	if in.CADirURL != "" && !strings.HasPrefix(in.CADirURL, "https://") {
 		return fmt.Errorf("CA 目录 URL 须为 https://")
+	}
+	for _, p := range []struct{ label, v string }{{"证书路径", in.CertPath}, {"私钥路径", in.KeyPath}} {
+		if !certRemotePathRe.MatchString(p.v) {
+			return fmt.Errorf("%s须为绝对路径且仅含字母数字与 . _ - /（不支持空格与特殊符号）", p.label)
+		}
 	}
 	for d := range strings.SplitSeq(in.Domains, ",") {
 		d = strings.TrimSpace(d)
@@ -379,12 +393,14 @@ func (s *Service) scanDue(ctx context.Context) error {
 		Limit(10).Find(&due).Error; err != nil {
 		return err
 	}
+	// 串行签发：lego 的 DNS 凭据经进程级 os.Setenv 注入（providers.go），
+	// 并发签发会互相覆盖环境变量（v0.12.0 审计中等项）。每轮最多 10 张，
+	// hourly 扫描下串行耗时可接受
 	for i := range due {
-		go func(c Cert) {
-			if err := s.issue(context.WithoutCancel(ctx), &c); err != nil {
-				logger.Warnf("[certs] 续期失败 %q: %v", c.Name, err)
-			}
-		}(due[i])
+		c := due[i]
+		if err := s.issue(context.WithoutCancel(ctx), &c); err != nil {
+			logger.Warnf("[certs] 续期失败 %q: %v", c.Name, err)
+		}
 	}
 	s.warnExpiring(ctx, now)
 	return nil
@@ -398,7 +414,17 @@ func (s *Service) warnExpiring(ctx context.Context, now time.Time) {
 	var expiring []Cert
 	s.db.WithContext(ctx).Where("status = ? AND expires_at IS NOT NULL AND expires_at < ?",
 		StatusIssued, now.Add(warnBefore)).Find(&expiring)
+	today := now.Format(time.DateOnly)
 	for _, c := range expiring {
+		s.warnMu.Lock()
+		seen := s.warnSeen[fmt.Sprintf("%d", c.ID)] == today
+		if !seen {
+			s.warnSeen[fmt.Sprintf("%d", c.ID)] = today
+		}
+		s.warnMu.Unlock()
+		if seen {
+			continue // 今天已提醒过
+		}
 		level := notify.LevelWarn
 		days := int(c.ExpiresAt.Sub(now).Hours() / 24)
 		if days <= 7 {

@@ -2,7 +2,9 @@ package ci
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,11 +85,38 @@ type giteePushPayload struct {
 	} `json:"sender"`
 }
 
-// VerifyWebhook gitee webhook 的"密码"以 X-Gitee-Token 头原样回传（非 HMAC），
-// 常量时间比较防时序侧信道。
+// hashWebhookPass webhook 密码的哈希存储形态（hex sha256）。回传式比对不需要
+// 原文（v0.12.0 审计中等项：此前明文落库，拿到 DB 备份即可伪造 CI 事件）。
+func HashWebhookPass(pass string) string {
+	sum := sha256.Sum256([]byte(pass))
+	return hex.EncodeToString(sum[:])
+}
+
+// isHashedWebhookPass 是否已是哈希形态（64 位 hex）。与旧明文的边界：用户自选
+// 密码恰为 64 位 hex 的概率可忽略；此类存量值需重存一次。
+func IsHashedWebhookPass(v string) bool {
+	if len(v) != 64 {
+		return false
+	}
+	for _, r := range v {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// VerifyWebhook gitee webhook 的"密码"以 X-Gitee-Token 头原样回传（非 HMAC）。
+// 库中为 sha256 哈希时比对哈希；旧明文存量直接常量时间比对（兼容升级）。
 func (g *giteeClient) VerifyWebhook(_ []byte, token string) error {
 	if g.secret == "" {
 		return errors.New("gitee webhook 密码未配置，拒绝回调")
+	}
+	if IsHashedWebhookPass(g.secret) {
+		if subtle.ConstantTimeCompare([]byte(g.secret), []byte(HashWebhookPass(token))) != 1 {
+			return errors.New("webhook token 校验失败")
+		}
+		return nil
 	}
 	if subtle.ConstantTimeCompare([]byte(g.secret), []byte(token)) != 1 {
 		return errors.New("webhook token 校验失败")

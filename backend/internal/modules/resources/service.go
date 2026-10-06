@@ -89,6 +89,10 @@ type UpdateServerInput struct {
 	Passphrase string `json:"passphrase" binding:"omitempty,max=128"`
 }
 
+// credentialAAD 服务器凭据密文的字段绑定（GCM AAD）：同密钥下其他字段
+// 的密文贴到本字段解不开，杜绝跨字段互换（v0.12.0 审计中等项）。
+const credentialAAD = "servers.credential"
+
 func (s *Service) encryptCredential(authType string, c credential) (string, error) {
 	if s.cipher == nil {
 		return "", errors.New("未配置主密钥 CUSTOS_SECRETS_MASTER_KEY，无法保存凭据")
@@ -106,14 +110,14 @@ func (s *Service) encryptCredential(authType string, c credential) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return s.cipher.Encrypt(string(blob))
+	return s.cipher.Encrypt(string(blob), credentialAAD)
 }
 
 func (s *Service) decryptCredential(enc string) (*credential, error) {
 	if s.cipher == nil {
 		return nil, errors.New("未配置主密钥 CUSTOS_SECRETS_MASTER_KEY，凭据不可用")
 	}
-	plain, err := s.cipher.Decrypt(enc)
+	plain, err := s.cipher.Decrypt(enc, credentialAAD) // 旧无 AAD 密文自动回退兼容
 	if err != nil {
 		return nil, fmt.Errorf("凭据解密失败: %w", err)
 	}

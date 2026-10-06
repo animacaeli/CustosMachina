@@ -71,3 +71,27 @@ func TestGiteeRawFileAndBranches(t *testing.T) {
 		t.Fatalf("未配置应报 notReady: %v", err)
 	}
 }
+
+// webhook 密码哈希存储（v0.12.0 审计中等项）：新存哈希、旧明文兼容双模式。
+func TestGiteeWebhookHashStorage(t *testing.T) {
+	g := &giteeClient{secret: HashWebhookPass("s3cret-pass")}
+	if err := g.VerifyWebhook(nil, "s3cret-pass"); err != nil {
+		t.Errorf("哈希模式下正确密码应通过: %v", err)
+	}
+	if err := g.VerifyWebhook(nil, "wrong"); err == nil {
+		t.Error("哈希模式下错误密码应拒绝")
+	}
+	legacy := &giteeClient{secret: "legacy-plain-pass"}
+	if err := legacy.VerifyWebhook(nil, "legacy-plain-pass"); err != nil {
+		t.Errorf("旧明文兼容模式应通过: %v", err)
+	}
+	if err := legacy.VerifyWebhook(nil, "wrong"); err == nil {
+		t.Error("旧明文兼容模式错误密码应拒绝")
+	}
+	if !IsHashedWebhookPass(HashWebhookPass("x")) {
+		t.Error("哈希产物应被识别")
+	}
+	if IsHashedWebhookPass("legacy-plain-pass") || IsHashedWebhookPass("") {
+		t.Error("明文不应被误判为哈希")
+	}
+}

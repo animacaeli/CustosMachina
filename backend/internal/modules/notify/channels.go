@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/custos-machina/backend/internal/modules/identity"
 	"mime"
 	"net/smtp"
 	"regexp"
@@ -39,9 +40,7 @@ type ChannelSettingsOut struct {
 }
 
 func (s *Service) setSetting(ctx context.Context, key, value string) error {
-	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, key, value).Error
+	return identity.UpsertSetting(s.db, ctx, key, value) // 方言安全 upsert
 }
 
 // SaveChannelSettings 保存渠道凭据（留空保留；token/pass AES）。

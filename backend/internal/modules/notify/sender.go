@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -17,10 +17,6 @@ const (
 	maxSendWait     = 30 * time.Second
 )
 
-// provider 按 webhook 地址识别企业 IM 厂商——各家群机器人的消息格式不同：
-//   - 企微 qyapi.weixin.qq.com：markdown
-//   - 钉钉 oapi.dingtalk.com：markdown（若机器人开了加签需在 URL 里带 sign，由用户自行拼好）
-//   - 飞书 open.feishu.cn：text（自定义机器人 markdown 需走卡片，text 覆盖通用场景）
 type provider string
 
 const (
@@ -30,13 +26,24 @@ const (
 	provUnknown  provider = "unknown"
 )
 
+// detectProvider 按 webhook 主机名识别企业 IM 厂商——各家群机器人的消息格式不同：
+//   - 企微 qyapi.weixin.qq.com：markdown
+//   - 钉钉 oapi.dingtalk.com：markdown（若机器人开了加签需在 URL 里带 sign，由用户自行拼好）
+//   - 飞书 open.feishu.cn：text（自定义机器人 markdown 需走卡片，text 覆盖通用场景）
+//
+// 用 url.Parse 比对 Host，而非子串包含——Contains 会被查询参数伪造
+// （https://evil.com/?x=qyapi.weixin.qq.com 会被误判，v0.12.0 审计中等项）。
 func detectProvider(webhook string) provider {
-	switch {
-	case strings.Contains(webhook, "qyapi.weixin.qq.com"):
+	u, err := url.Parse(webhook)
+	if err != nil {
+		return provUnknown
+	}
+	switch u.Hostname() {
+	case "qyapi.weixin.qq.com":
 		return provWecom
-	case strings.Contains(webhook, "oapi.dingtalk.com"):
+	case "oapi.dingtalk.com":
 		return provDingtalk
-	case strings.Contains(webhook, "open.feishu.cn"):
+	case "open.feishu.cn":
 		return provFeishu
 	default:
 		return provUnknown

@@ -8,12 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/custos-machina/backend/internal/modules/identity"
 
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -83,15 +88,56 @@ func (s *Service) config(ctx context.Context) (*relayConfig, bool) {
 	return cfg, true
 }
 
-// SaveSettings 保存中转层配置（key 留空保留）。
-func (s *Service) SaveSettings(ctx context.Context, endpoint, model, apiKey string) error {
-	if endpoint != "" && !strings.HasPrefix(endpoint, "http") {
+// validateEndpoint 中转层端点校验：url.Parse 结构校验（拒绝 httpfoo:// 这类
+// 前缀绕过）+ 禁私网/回环/链路本地地址（防 SSRF：请求会把解密后的 LLM API Key
+// 作为鉴权头发往该地址，v0.12.0 审计中等项）。自建内网 LLM 场景可用
+// CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT=1 显式豁免。
+func validateEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint 不是合法 URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("endpoint 须为 http(s):// 地址")
 	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("endpoint 缺少主机名")
+	}
+	if os.Getenv("CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT") == "1" {
+		return nil
+	}
+	block := func(ips []net.IP) error {
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				return fmt.Errorf("endpoint 指向内网/回环地址 %s（自建内网 LLM 可设 CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT=1 豁免）", ip)
+			}
+		}
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return block([]net.IP{ip})
+	}
+	if host == "localhost" {
+		return fmt.Errorf("endpoint 指向 localhost（自建内网 LLM 可设 CUSTOS_AI_ALLOW_PRIVATE_ENDPOINT=1 豁免）")
+	}
+	// 域名场景：解析后逐个检查（防域名指向内网的绕过）
+	if ips, err := net.LookupIP(host); err == nil {
+		return block(ips)
+	}
+	// 解析失败留给请求时报错（校验层不因临时 DNS 故障拒绝保存）
+	return nil
+}
+
+// SaveSettings 保存中转层配置（key 留空保留）。
+func (s *Service) SaveSettings(ctx context.Context, endpoint, model, apiKey string) error {
+	if endpoint != "" {
+		if err := validateEndpoint(endpoint); err != nil {
+			return err
+		}
+	}
 	set := func(k, v string) error {
-		return s.db.WithContext(ctx).Exec(
-			`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-			 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, k, v).Error
+		return identity.UpsertSetting(s.db, ctx, k, v)
 	}
 	if endpoint != "" {
 		if err := set(settingEndpoint, strings.TrimRight(endpoint, "/")); err != nil {
@@ -155,9 +201,7 @@ func (s *Service) SaveContextWindow(ctx context.Context, window int) error {
 	if window > 0 {
 		v = fmt.Sprintf("%d", window)
 	}
-	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, settingWindow, v).Error
+	return identity.UpsertSetting(s.db, ctx, settingWindow, v)
 }
 
 // Message OpenAI 兼容消息。Content 为 any：普通对话传 string；
@@ -234,7 +278,7 @@ func (s *Service) doComplete(ctx context.Context, cfg *relayConfig, messages []M
 	if cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := relayHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -344,7 +388,7 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 			}
 		}
 	}()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := relayHTTPClient.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
@@ -495,4 +539,15 @@ func truncStr(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// relayHTTPClient 中转层专用 client：连接/TLS/响应头超时齐备但不设整体
+// Timeout（SSE 流式对话长连接会超过任何整体上限；空闲断流由调用侧看门狗处理）。
+// 替换 http.DefaultClient（无任何超时，挂起即 goroutine 泄漏，v0.12.0 审计中等项）。
+var relayHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	},
 }
