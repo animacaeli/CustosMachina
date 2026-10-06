@@ -21,6 +21,8 @@ async function load() {
   loading.value = true;
   try {
     list.value = await getGroupListApi();
+  } catch {
+    // 拦截器已提示
   } finally {
     loading.value = false;
   }
@@ -100,23 +102,19 @@ async function onDelete(g: ServerGroup) {
             <a-button size="small" type="link" @click="openEdit(record)">
               编辑
             </a-button>
+            <!-- 禁用按钮不派发 click，popconfirm 永不弹：改用 tooltip 说明原因 -->
+            <a-tooltip
+              v-if="record.serverCount > 0"
+              :title="`分组下有 ${record.serverCount} 台服务器，先移出再删除`"
+            >
+              <a-button size="small" type="link" danger disabled> 删除 </a-button>
+            </a-tooltip>
             <a-popconfirm
-              :title="
-                record.serverCount > 0
-                  ? `分组下有 ${record.serverCount} 台服务器，无法删除`
-                  : `确认删除 ${record.name}？`
-              "
-              :ok-button-props="{ disabled: record.serverCount > 0 }"
+              v-else
+              :title="`确认删除 ${record.name}？`"
               @confirm="onDelete(record)"
             >
-              <a-button
-                size="small"
-                type="link"
-                danger
-                :disabled="record.serverCount > 0"
-              >
-                删除
-              </a-button>
+              <a-button size="small" type="link" danger> 删除 </a-button>
             </a-popconfirm>
           </template>
         </a-table-column>

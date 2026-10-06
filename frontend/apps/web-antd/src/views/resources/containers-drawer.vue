@@ -107,6 +107,7 @@ async function loadStats() {
 }
 
 watch(open, (v) => {
+  if (!v) logsOpen.value = false; // 父抽屉关闭收起日志子抽屉，避免孤儿面板
   statsMap.value = {};
   if (v) {
     load();
@@ -127,6 +128,8 @@ async function confirmStop(cid: string, name: string) {
   Modal.confirm({
     title: `停止容器 ${name}？`,
     content: '停止后该服务将不可用，需要时可再启动。',
+    okButtonProps: { danger: true },
+    okText: '停止',
     onOk: () => act(cid, 'stop', name),
   });
 }
@@ -191,6 +194,18 @@ async function saveFile() {
   } finally {
     fileSaving.value = false;
   }
+}
+
+// 重建 = down + up（影响线上流量），与停止同级确认
+function confirmRecreate() {
+  Modal.confirm({
+    title: '按文件重建该项目全部容器？',
+    content:
+      '将先 docker compose down 再 up（同名覆盖更新），期间服务中断数秒到数分钟。',
+    okButtonProps: { danger: true },
+    okText: '重建',
+    onOk: () => recreate(),
+  });
 }
 
 async function recreate() {
@@ -451,7 +466,7 @@ function stopFollowOnClose() {
             type="primary"
             :loading="recreating"
             :disabled="fileEditing"
-            @click="recreate"
+            @click="confirmRecreate"
           >
             重建容器
           </a-button>

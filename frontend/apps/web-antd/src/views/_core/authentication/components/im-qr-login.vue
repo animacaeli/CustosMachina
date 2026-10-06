@@ -18,6 +18,7 @@ defineOptions({ name: 'ImQrLogin' });
 
 const emit = defineEmits<{
   success: [{ accessToken: string; refreshToken: string }];
+  unavailable: [];
 }>();
 
 const qrText = ref('');
@@ -73,6 +74,8 @@ async function load() {
     }
   } catch {
     err.value = '二维码获取失败，请稍后重试';
+    // 未配置 IM / 服务不可达：交给父级降级（如切到账密表单），首屏不再卡报错
+    emit('unavailable');
   } finally {
     loading.value = false;
   }

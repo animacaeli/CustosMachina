@@ -14,26 +14,31 @@ const isAdmin = computed(() => {
   return roles.includes('superadmin') || roles.includes('admin');
 });
 
+// 功能卡（可点击直达；能力均已在 v0.12.0 交付）
 const FEATURES = [
   {
-    desc: 'Gitea / OpenObserve / AgileConfig 等高频操作统一入口',
+    desc: '纳管主机、容器、compose 与 k3s 集群，终端与文件管理',
     icon: '🖥️',
-    title: '统一控制台',
+    path: '/resources/servers',
+    title: '资源管理',
   },
   {
-    desc: '告警自动汇聚五源上下文，LLM 输出诊断与建议',
-    icon: '🧠',
-    title: '告警 AI 诊断',
-  },
-  {
-    desc: '占用制测试环境，推送分支自动部署',
-    icon: '🧪',
-    title: '测试环境槽位',
-  },
-  {
-    desc: 'compose / swarm / k3s 多形态运行时适配',
+    desc: '项目三环境发布：蓝绿切流 / 灰度策略 / 测试槽位',
     icon: '🚀',
-    title: '运行时纳管',
+    path: '/envs/prod',
+    title: '环境与发布',
+  },
+  {
+    desc: 'O2 告警闭环 + 五源上下文 AI 诊断 + 统一通知路由',
+    icon: '🧠',
+    path: '/resources/observ-alerts',
+    title: '观测与告警',
+  },
+  {
+    desc: '配置文件版本化下发 / 拉取 API / 定时任务沙箱执行',
+    icon: '⚙️',
+    path: '/configs/files',
+    title: '配置与任务',
   },
 ];
 
@@ -81,6 +86,10 @@ function goAdmin() {
   showOnboard.value = false;
   router.push({ path: '/admin' });
 }
+
+function goFeature(path: string) {
+  router.push(path);
+}
 </script>
 
 <template>
@@ -100,7 +109,13 @@ function goAdmin() {
     </a-card>
 
     <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <a-card v-for="f in FEATURES" :key="f.title">
+      <!-- hoverable + 点击直达：功能已全部交付，卡片不再是纯展示 -->
+      <a-card
+        v-for="f in FEATURES"
+        :key="f.title"
+        hoverable
+        @click="goFeature(f.path)"
+      >
         <div class="text-2xl">{{ f.icon }}</div>
         <div class="mt-2 font-medium">{{ f.title }}</div>
         <p class="text-muted-foreground mt-1 text-xs">{{ f.desc }}</p>
@@ -111,6 +126,8 @@ function goAdmin() {
     <div class="mt-6">
       <a-card title="快捷入口">
         <a-space wrap>
+          <a-button @click="router.push('/cron/jobs')">定时任务</a-button>
+          <a-button @click="router.push('/resources/observ-alerts')">告警中心</a-button>
           <template v-if="isAdmin">
             <a-button
               v-for="t in TODO"
@@ -123,12 +140,15 @@ function goAdmin() {
               管理后台
             </a-button>
           </template>
-          <span v-else class="text-muted-foreground text-sm">
-            联系管理员开通更多权限
-          </span>
         </a-space>
+        <p
+          v-if="!isAdmin"
+          class="text-muted-foreground mt-3 text-xs"
+        >
+          联系管理员开通更多权限
+        </p>
         <p class="text-muted-foreground mt-3 text-xs">
-          服务管理 / CI / 日志 / 配置 / 告警中心等功能随第二阶段开发逐步开放。
+          右下角悬浮助手可对话查询平台数据（只读），AI 建议绝不自动执行。
         </p>
       </a-card>
     </div>

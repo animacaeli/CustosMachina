@@ -5,7 +5,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { useUserStore } from '@vben/stores';
 
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
 import {
   deployObservApi,
@@ -115,14 +115,25 @@ onMounted(async () => {
 
 watch(serverIds, loadStatus);
 
-async function saveO2Url() {
-  // 空串=清空（P8-M2：后端已允许）；确认弹窗防误触
-  try {
-    await setO2UrlApi(o2Url.value.trim());
-    message.success('O2 地址已保存');
-  } catch {
-    // URL 校验等业务错误由拦截器提示
-  }
+// 空串=清空（P8-M2：后端已允许）；确认弹窗防误触（清空会断掉全量采集器输出）
+function saveO2Url() {
+  const url = o2Url.value.trim();
+  Modal.confirm({
+    title: url ? '保存 O2 地址？' : '清空 O2 地址？',
+    content: url
+      ? `采集器输出将指向 ${url}`
+      : '清空后所有主机的 vector/fluent-bit 输出将失去目标（可重新保存恢复）。',
+    okButtonProps: url ? {} : { danger: true },
+    okText: url ? '保存' : '清空',
+    onOk: async () => {
+      try {
+        await setO2UrlApi(url);
+        message.success('O2 地址已保存');
+      } catch {
+        // URL 校验等业务错误由拦截器提示
+      }
+    },
+  });
 }
 
 // ---- 部署弹窗（模板可编辑：compose + 伴随配置） ----
@@ -188,10 +199,27 @@ async function onUninstall(comp: ObservComponent) {
   if (serverIds.value.length === 0) return;
   acting.value = comp.name;
   try {
+    let failed = 0;
+    const reasons: string[] = [];
     for (const sid of serverIds.value) {
-      await uninstallObservApi(sid, comp.name).catch(() => null);
+      try {
+        await uninstallObservApi(sid, comp.name);
+      } catch (error: any) {
+        failed++;
+        reasons.push(
+          `#${sid}: ${error?.response?.data?.message ?? error?.message ?? '失败'}`,
+        );
+      }
     }
-    message.success(`${comp.name} 已在选中主机卸载`);
+    if (failed === 0) {
+      message.success(`${comp.name} 已在 ${serverIds.value.length} 台主机卸载`);
+    } else if (failed === serverIds.value.length) {
+      message.error(`${comp.name} 卸载全部失败：\n${reasons.join('\n')}`);
+    } else {
+      message.warning(
+        `${comp.name} 部分卸载失败（${failed}/${serverIds.value.length}）：\n${reasons.join('\n')}`,
+      );
+    }
     await loadStatus();
   } finally {
     acting.value = '';

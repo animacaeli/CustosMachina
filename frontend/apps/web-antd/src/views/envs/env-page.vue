@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { Project } from '#/api/projects';
+import type { EnvStatus, Project } from '#/api/projects';
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
@@ -57,6 +57,11 @@ const actionLabel: Record<string, string> = {
 const loading = ref(false);
 const projects = ref<Project[]>([]);
 const keyword = ref('');
+
+// 当前环境（prod/canary/test）在该项目的运行概览；无记录返回空对象（模板安全取值）
+function envStat(record: Project): Partial<EnvStatus> {
+  return record.envs?.find((e) => e.envType === props.env) ?? {};
+}
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
@@ -210,6 +215,9 @@ async function onDelete(p: Project) {
       <a-table
         :columns="[
           { title: '项目', key: 'name' },
+          { title: '当前版本', key: 'lastTag', width: 150 },
+          { title: '状态', key: 'lastStatus', width: 100 },
+          { title: '上次发布', key: 'lastAt', width: 160 },
           { title: '环境操作', key: 'envActions', width: 230 },
           { title: '管理', key: 'manage', width: 170 },
         ]"
@@ -225,6 +233,49 @@ async function onDelete(p: Project) {
             <div class="text-muted-foreground text-xs">
               {{ record.repoPath }}
             </div>
+          </template>
+          <template v-else-if="column.key === 'lastTag'">
+            <span v-if="envStat(record).lastTag">
+              {{ envStat(record).lastTag }}
+              <a-tag
+                v-if="envStat(record).activeColor"
+                :color="envStat(record).activeColor === 'blue' ? 'blue' : 'green'"
+                class="ml-1"
+              >
+                {{ envStat(record).activeColor }}
+              </a-tag>
+            </span>
+            <span v-else class="text-muted-foreground text-xs">未发布</span>
+          </template>
+          <template v-else-if="column.key === 'lastStatus'">
+            <a-badge
+              :status="
+                ({
+                  failed: 'error',
+                  running: 'processing',
+                  success: 'success',
+                  timeout: 'warning',
+                } as Record<string, any>)[envStat(record).lastStatus ?? ''] ?? 'default'
+              "
+              :text="
+                ({
+                  failed: '失败',
+                  running: '进行中',
+                  success: '正常',
+                  timeout: '超时',
+                } as Record<string, any>)[envStat(record).lastStatus ?? ''] ??
+                (envStat(record).lastStatus || '—')
+              "
+            />
+          </template>
+          <template v-else-if="column.key === 'lastAt'">
+            <span class="text-xs">
+              {{
+                envStat(record).lastReleaseAt
+                  ? new Date(envStat(record).lastReleaseAt!).toLocaleString()
+                  : '—'
+              }}
+            </span>
           </template>
           <template v-else-if="column.key === 'envActions'">
             <div class="flex gap-2">

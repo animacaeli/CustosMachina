@@ -24,7 +24,7 @@ const activeTab = ref('im');
       <template #title>
         <span class="text-base">管理后台</span>
         <span class="text-muted-foreground ml-2 text-xs font-normal">
-          平台级配置中心（组件纳管 / AI 配置等随后续版本加入）
+          平台级配置（登录 / 通知 / AI / CI / 集群与各类接入凭证）
         </span>
       </template>
       <a-tabs v-model:active-key="activeTab">
@@ -49,7 +49,7 @@ const activeTab = ref('im');
         <a-tab-pane key="mcp" tab="MCP 接入">
           <McpTokens />
         </a-tab-pane>
-        <a-tab-pane key="pull-tokens" tab="配置中心">
+        <a-tab-pane key="pull-tokens" tab="配置拉取">
           <PullTokens />
         </a-tab-pane>
         <a-tab-pane key="skills" tab="AI 技能">

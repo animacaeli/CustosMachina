@@ -103,8 +103,20 @@ export async function testNotifyRuleApi(id: number) {
 }
 
 /** 项目（CI token 已剔除，仅 hasCiToken） */
+/** 单环境运行概览（后端 List 下发） */
+export interface EnvStatus {
+  activeColor: string;
+  envType: string;
+  lastReleaseAt: null | string;
+  lastStatus: string;
+  lastTag: string;
+}
+
 export interface Project {
   composePath: string;
+  /** 每环境最近发布与蓝绿活跃色（环境页状态列 / 项目列表页） */
+  envs?: EnvStatus[];
+
   defaultBranch: string;
   /** <norm>-<env> 项目段（后端统一下发，容器视图过滤用） */
   deployPrefix: string;

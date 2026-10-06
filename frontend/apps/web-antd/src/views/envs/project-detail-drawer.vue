@@ -129,19 +129,16 @@ async function saveConfig() {
       testSlotCount: config.testSlotCount,
       trafficCap: config.trafficCap,
     });
-    const targetServer = deployServerId.value;
-    const targetCluster = deployClusterId.value;
-    if (targetServer || (deployRuntime.value === 'k3s' && targetCluster)) {
-      await saveProjectTargetsApi(props.projectId, {
-        targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
-          envType,
-          runtime: deployRuntime.value,
-          serverId:
-            deployRuntime.value === 'compose' ? (targetServer as number) : 0,
-          clusterId: deployRuntime.value === 'k3s' ? targetCluster : 0,
-        })),
-      });
-    }
+    // 无条件整体替换：下拉清空（serverId/clusterId 均空）= 清空部署目标
+    // （旧实现清空后不写回，旧目标残留——v0.12.0 审计中等项）
+    await saveProjectTargetsApi(props.projectId, {
+      targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
+        envType,
+        runtime: deployRuntime.value,
+        serverId: deployRuntime.value === 'compose' ? deployServerId.value ?? 0 : 0,
+        clusterId: deployRuntime.value === 'k3s' ? deployClusterId.value ?? 0 : 0,
+      })),
+    });
     message.success('配置已保存');
     emit('changed');
   } finally {

@@ -3,7 +3,7 @@ import type { EnvProbe } from '#/api/resources/containers';
 
 import { ref, watch } from 'vue';
 
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 import { parse } from 'yaml';
 
 import {
@@ -42,6 +42,8 @@ async function runProbe() {
       const g = await installGuideApi(probe.value.distro || 'unknown');
       guide.value = g.guide;
     }
+  } catch {
+    // 拦截器已提示
   } finally {
     probing.value = false;
   }
@@ -84,26 +86,47 @@ function onImportFile(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0];
   if (!file) return;
   file.text().then((t) => {
-    yamlText.value = t;
-    message.success(`已导入：${file.name}`);
-    validateYaml();
+    // 编辑器已有内容时导入=覆盖，先确认（防手滑丢稿）
+    if (yamlText.value.trim() === '') {
+      applyImport(file.name, t);
+      return;
+    }
+    Modal.confirm({
+      title: `导入 ${file.name} 将覆盖编辑器当前内容？`,
+      okText: '覆盖导入',
+      onOk: () => applyImport(file.name, t),
+    });
   });
 }
 
+function applyImport(name: string, t: string) {
+  yamlText.value = t;
+  message.success(`已导入：${name}`);
+  validateYaml();
+}
+
 async function deploy() {
-  if (!props.serverId || !validateYaml()) return;
+  const sid = props.serverId;
+  if (!sid || !validateYaml()) return;
   if (!projectName.value.trim()) {
     message.warning('请填写项目名（用于目标机部署目录）');
     return;
   }
+  // 部署=同名覆盖更新（容器重建），文案已声明但操作无确认
+  const name = projectName.value.trim();
+  Modal.confirm({
+    title: `部署项目 ${name}？`,
+    content: '同名项目将被覆盖更新（容器按新描述重建，期间短暂中断）。',
+    okText: '部署',
+    onOk: () => doDeploy(sid, name),
+  });
+}
+
+async function doDeploy(sid: number, name: string) {
   deploying.value = true;
   deployOutput.value = '';
   try {
-    const res = await deployComposeApi(
-      props.serverId,
-      yamlText.value,
-      projectName.value.trim(),
-    );
+    const res = await deployComposeApi(sid, yamlText.value, name);
     deployOutput.value = res.output;
     deployDir.value = res.dir ?? '';
     step.value = 2;

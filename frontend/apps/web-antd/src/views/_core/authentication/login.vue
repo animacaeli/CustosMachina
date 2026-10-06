@@ -41,6 +41,11 @@ async function afterLogin() {
 
 // --- 超管登录（账密） ---
 const showAdmin = ref(false);
+
+// IM 未配置/不可达时自动降级到账密表单（全新部署首屏不该是一个报错）
+function onQrUnavailable() {
+  showAdmin.value = true;
+}
 const adminLoading = ref(false);
 const form = reactive({ password: '', username: '' });
 
@@ -87,7 +92,7 @@ onMounted(async () => {
     <!-- 扫码视图（说明文案在 ImQrLogin 内按提供商显示） -->
     <template v-if="!showAdmin">
       <h2 class="mb-6 text-2xl font-semibold">欢迎回来 👋🏻</h2>
-      <ImQrLogin @success="onQrSuccess" />
+      <ImQrLogin @success="onQrSuccess" @unavailable="onQrUnavailable" />
       <a-button class="mt-4" @click="showAdmin = true">超管登录</a-button>
     </template>
 

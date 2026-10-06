@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -17,6 +18,18 @@ var ErrNotFound = errors.New("项目不存在")
 type ProjectOut struct {
 	Project
 	HasCIToken bool `json:"hasCiToken"`
+	// Envs 每环境运行概览（环境页/项目列表的"一眼判断"列）：
+	// 最近一次发布（tag/状态/时间）+ prod 蓝绿活跃色。两条批量查询，无 N+1。
+	Envs []EnvStatus `json:"envs"`
+}
+
+// EnvStatus 单环境概览。
+type EnvStatus struct {
+	EnvType       string     `json:"envType"`
+	LastTag       string     `json:"lastTag"`
+	LastStatus    string     `json:"lastStatus"`
+	LastReleaseAt *time.Time `json:"lastReleaseAt"`
+	ActiveColor   string     `json:"activeColor"` // prod 蓝绿活跃色；未启用为空
 }
 
 func toOut(p Project) ProjectOut {
@@ -183,11 +196,51 @@ func (s *Service) List(ctx context.Context) ([]ProjectOut, error) {
 	if err := s.db.WithContext(ctx).Order("id").Find(&ps).Error; err != nil {
 		return nil, err
 	}
+	envs := s.envStatusMap(ctx)
 	out := make([]ProjectOut, len(ps))
 	for i, p := range ps {
 		out[i] = toOut(p)
+		out[i].Envs = envs[p.ID]
 	}
 	return out, nil
+}
+
+// envStatusMap 项目 ID → 每环境概览。跨模块读模型（releases/blue_green_states），
+// 与 release.ActiveDomainFor 读 projects 表同款约定：模块间只读投影、不引依赖。
+func (s *Service) envStatusMap(ctx context.Context) map[uint][]EnvStatus {
+	var rels []struct {
+		ProjectID uint
+		EnvType   string
+		Tag       string
+		Status    string
+		CreatedAt time.Time
+	}
+	_ = s.db.WithContext(ctx).Table("releases").
+		Select("releases.project_id, releases.env_type, releases.tag, releases.status, releases.created_at").
+		Joins("JOIN (SELECT project_id, env_type, MAX(id) AS max_id FROM releases GROUP BY project_id, env_type) m ON releases.id = m.max_id").
+		Scan(&rels).Error
+	var bgs []struct {
+		ProjectID   uint
+		ActiveColor string
+	}
+	_ = s.db.WithContext(ctx).Table("blue_green_states").
+		Select("project_id, active_color").Scan(&bgs).Error
+	colorOf := map[uint]string{}
+	for _, b := range bgs {
+		colorOf[b.ProjectID] = b.ActiveColor
+	}
+	out := map[uint][]EnvStatus{}
+	for _, r := range rels {
+		es := EnvStatus{
+			EnvType: r.EnvType, LastTag: r.Tag, LastStatus: r.Status,
+			LastReleaseAt: &r.CreatedAt,
+		}
+		if r.EnvType == "prod" {
+			es.ActiveColor = colorOf[r.ProjectID]
+		}
+		out[r.ProjectID] = append(out[r.ProjectID], es)
+	}
+	return out
 }
 
 func (s *Service) Get(ctx context.Context, id uint) (*ProjectOut, []EnvTarget, error) {
@@ -211,7 +264,7 @@ type SaveTargetsInput struct {
 
 type TargetInput struct {
 	EnvType   string `json:"envType" binding:"required,oneof=prod canary test"`
-	ServerID  uint   `json:"serverId" binding:"required,min=1"`
+	ServerID  uint   `json:"serverId"` // 0 且 ClusterID=0 = 清空该环境目标（保存整体替换语义）
 	Runtime   string `json:"runtime" binding:"omitempty,oneof=compose k3s"`
 	ClusterID uint   `json:"clusterId"` // runtime=k3s 时必填（服务层校验）
 }
@@ -228,6 +281,9 @@ func (s *Service) SaveTargets(ctx context.Context, projectID uint, in SaveTarget
 			return fmt.Errorf("环境 %s 重复配置", t.EnvType)
 		}
 		seen[t.EnvType] = true
+		if t.ServerID == 0 && t.ClusterID == 0 {
+			continue // 清空该环境目标（整体替换下不落行）
+		}
 		// 校验服务器存在（资源管理表）
 		var cnt int64
 		if err := s.db.Table("servers").Where("id = ?", t.ServerID).Count(&cnt).Error; err != nil {

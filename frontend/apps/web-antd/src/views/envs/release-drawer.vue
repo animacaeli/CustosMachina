@@ -4,7 +4,7 @@ import type { ReleaseItem } from '#/api/release';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import { LoadingOutlined } from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
 import {
   createReleaseApi,
@@ -244,18 +244,40 @@ watch(
   },
 );
 
+// 正式环境发布是不可逆高危操作（影响线上流量）：确认层级必须高于行级部署
+// （v0.12.0 审计 UI 严重项——此前"手滑即生产"）。回显当前活跃色与将切到的色。
 async function doRelease() {
   if (!props.projectId || !selectedTag.value) {
     message.warning('请选择要发布的标签');
     return;
   }
+  if (props.env === 'prod') {
+    const from = activeColor.value || '无（首次发布）';
+    const to = activeColor.value === 'blue' ? 'green' : 'blue';
+    Modal.confirm({
+      title: `正式环境发布 ${selectedTag.value}？`,
+      content:
+        `蓝绿切换：${from} → ${to}，切换后线上流量进入新颜色域。\n` +
+        '健康门禁通过后自动切流，异常时新域销毁、线上零影响。',
+      okButtonProps: { danger: true },
+      okText: '发布',
+      onOk: () => executeRelease(),
+    });
+    return;
+  }
+  await executeRelease();
+}
+
+async function executeRelease() {
+  const tag = selectedTag.value;
+  if (!props.projectId || !tag) return;
   releasing.value = true;
   try {
     const rel = await createReleaseApi({
       drainSecs: drainSecs.value || undefined,
       envType: props.env,
       projectId: props.projectId,
-      tag: selectedTag.value,
+      tag,
     });
     selectedTag.value = undefined;
     page.value = 1;
