@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 	"io"
 	"net/http"
 	"net/url"
@@ -270,10 +271,7 @@ func (g *giteaClient) Log(ctx context.Context, ref BuildRef) (string, error) {
 }
 
 func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
+	return strx.Truncate(s, n) // rune 安全（v0.12.1 复核）
 }
 
 // mapStatus commit status → 平台构建状态。

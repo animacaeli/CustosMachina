@@ -40,7 +40,7 @@ func buildStorage(j Job, cipher *crypto.Cipher) (storage, error) {
 		if j.S3Endpoint == "" || j.S3Bucket == "" || j.S3AccessKey == "" || j.S3SecretEnc == "" {
 			return nil, fmt.Errorf("S3 存储配置不完整（endpoint/bucket/accessKey/secretKey）")
 		}
-		secret, err := cipher.Decrypt(j.S3SecretEnc)
+		secret, err := cipher.Decrypt(j.S3SecretEnc, aadS3Secret)
 		if err != nil {
 			return nil, fmt.Errorf("S3 secretKey 解密失败: %w", err)
 		}

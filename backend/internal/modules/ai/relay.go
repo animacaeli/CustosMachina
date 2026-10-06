@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -47,6 +48,9 @@ type Usage struct {
 	Error     string    `gorm:"size:512" json:"error"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// 密文字段绑定（GCM AAD）
+const aadAIKey = "ai.api_key"
 
 func (Usage) TableName() string { return "ai_usages" }
 
@@ -81,7 +85,7 @@ func (s *Service) config(ctx context.Context) (*relayConfig, bool) {
 	}
 	cfg := &relayConfig{Endpoint: ep, Model: model}
 	if enc, _ := s.setting(ctx, settingAPIKey); enc != "" && s.cipher != nil {
-		if k, err := s.cipher.Decrypt(enc); err == nil {
+		if k, err := s.cipher.Decrypt(enc, aadAIKey); err == nil {
 			cfg.APIKey = k
 		}
 	}
@@ -153,7 +157,7 @@ func (s *Service) SaveSettings(ctx context.Context, endpoint, model, apiKey stri
 		if s.cipher == nil {
 			return cryptopkg.ErrNoMasterKey
 		}
-		enc, err := s.cipher.Encrypt(apiKey)
+		enc, err := s.cipher.Encrypt(apiKey, aadAIKey)
 		if err != nil {
 			return err
 		}
@@ -535,10 +539,7 @@ func promptChars(ms []Message) int {
 }
 
 func truncStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	return strx.Truncate(s, n) + "..." // rune 安全（v0.12.1 复核）
 }
 
 // relayHTTPClient 中转层专用 client：连接/TLS/响应头超时齐备但不设整体

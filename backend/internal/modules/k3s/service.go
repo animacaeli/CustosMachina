@@ -26,6 +26,9 @@ type Service struct {
 	observURL ObservURLFunc // P8-M3.3：观测栈 O2 地址供给（app 注入）
 }
 
+// 密文字段绑定（GCM AAD）
+const aadKubeconfig = "k3s_clusters.kubeconfig"
+
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 	return &Service{db: db, cipher: cipher, kube: newKubeCache()}
 }
@@ -65,7 +68,7 @@ func (s *Service) Save(ctx context.Context, id uint, in SaveClusterInput) (*Clus
 		c.Name, c.Domain, c.Remark = in.Name, in.Domain, in.Remark
 	}
 	if in.Kubeconfig != "" {
-		enc, err := s.cipher.Encrypt(in.Kubeconfig)
+		enc, err := s.cipher.Encrypt(in.Kubeconfig, aadKubeconfig)
 		if err != nil {
 			return nil, fmt.Errorf("kubeconfig 加密失败: %w", err)
 		}

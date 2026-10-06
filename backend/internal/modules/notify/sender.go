@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 	"net/http"
 	"net/url"
 	"sync"
@@ -71,7 +72,7 @@ func (s *sender) Send(ctx context.Context, groupID uint, webhook, title, content
 	}
 	text := "**" + title + "**\n" + content
 	if len(text) > 4000 {
-		text = text[:4000]
+		text = strx.Truncate(text, 4000) // rune 安全（v0.12.1 复核）
 	}
 	var payload []byte
 	switch detectProvider(webhook) {

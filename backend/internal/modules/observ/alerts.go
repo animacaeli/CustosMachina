@@ -79,6 +79,12 @@ type Alert struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
+// 密文字段绑定（GCM AAD）
+const (
+	aadO2Password = "observ.o2_password"
+	aadO2Token    = "observ.o2_token"
+)
+
 func (Alert) TableName() string { return "observ_alerts" }
 
 func queryTypeOrDefault(q string) string {
@@ -117,12 +123,12 @@ func (s *Service) o2Config(ctx context.Context) (*O2Config, bool) {
 		return cfg, false
 	}
 	if s.cipher != nil {
-		if p, err := s.cipher.Decrypt(encPass); err == nil {
+		if p, err := s.cipher.Decrypt(encPass, aadO2Password); err == nil {
 			cfg.Password = p
 		}
 	}
 	if t, _ := s.setting(ctx, settingO2Token); t != "" && s.cipher != nil {
-		if p, err := s.cipher.Decrypt(t); err == nil {
+		if p, err := s.cipher.Decrypt(t, aadO2Token); err == nil {
 			cfg.Token = p
 		}
 	}
@@ -151,7 +157,7 @@ func (s *Service) SaveO2Settings(ctx context.Context, in O2SettingsInput) error 
 		}
 	}
 	if in.Password != "" {
-		enc, err := s.cipher.Encrypt(in.Password)
+		enc, err := s.cipher.Encrypt(in.Password, aadO2Password)
 		if err != nil {
 			return err
 		}
@@ -165,7 +171,7 @@ func (s *Service) SaveO2Settings(ctx context.Context, in O2SettingsInput) error 
 		if err != nil {
 			return err
 		}
-		enc, err := s.cipher.Encrypt(tok)
+		enc, err := s.cipher.Encrypt(tok, aadO2Token)
 		if err != nil {
 			return err
 		}

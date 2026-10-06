@@ -44,7 +44,7 @@ func (s *Service) Clientset(ctx context.Context, clusterID uint) (*kubernetes.Cl
 	if c.Kubeenc == "" || s.cipher == nil {
 		return nil, fmt.Errorf("集群 %q 未配置 kubeconfig（或平台主密钥未设置）", c.Name)
 	}
-	kubeconfig, err := s.cipher.Decrypt(c.Kubeenc)
+	kubeconfig, err := s.cipher.Decrypt(c.Kubeenc, aadKubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig 解密失败: %w", err)
 	}

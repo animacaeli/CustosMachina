@@ -33,6 +33,9 @@ type LoginResult struct {
 	User         identity.User `json:"user"`
 }
 
+// 密文字段绑定（GCM AAD）
+const aadRedisPassword = "redis.config.password"
+
 func (s *AuthService) accessTTL() time.Duration {
 	if v, ok, _ := s.settings.Get(context.Background(), settingKeyAccessTTL); ok {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -146,7 +149,7 @@ func (s *AuthService) SaveRedisConfig(ctx context.Context, cfg RedisConfig) erro
 		return err // 连接失败直接报错
 	}
 	if cfg.Password != "" && s.cipher != nil {
-		enc, err := s.cipher.Encrypt(cfg.Password)
+		enc, err := s.cipher.Encrypt(cfg.Password, aadRedisPassword)
 		if err != nil {
 			return fmt.Errorf("Redis 密码加密失败: %w", err)
 		}
@@ -161,7 +164,7 @@ func (s *AuthService) decryptRedisConfigPassword(c *RedisConfig) {
 	if c.Password == "" || s.cipher == nil {
 		return
 	}
-	if dec, err := s.cipher.Decrypt(c.Password); err == nil {
+	if dec, err := s.cipher.Decrypt(c.Password, aadRedisPassword); err == nil {
 		c.Password = dec
 	}
 }

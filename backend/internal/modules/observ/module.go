@@ -20,6 +20,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrBadComponent = errors.New("未知组件")
@@ -318,10 +319,8 @@ func (s *Service) notifyFailure(ctx context.Context, serverID uint, action strin
 }
 
 func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "...（截断）"
+	// rune 安全（v0.12.1 复核：告警正文曾按字节切碎中文出非法 UTF-8）
+	return strx.Truncate(s, n) + "...（截断）"
 }
 
 func (s *Service) setting(ctx context.Context, key string) (string, error) {

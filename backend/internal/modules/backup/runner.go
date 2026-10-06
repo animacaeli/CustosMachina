@@ -92,7 +92,7 @@ func (r *runner) writePlatformSelf(ctx context.Context, tw *tar.Writer, mf *mani
 		return fmt.Errorf("平台主密钥不可用（配置缺失）")
 	}
 	// 密钥份额：口令加密 master key（restore 时 openssl 解开）
-	passEnc, err := r.cipher.Decrypt(r.job.PassphraseEnc)
+	passEnc, err := r.cipher.Decrypt(r.job.PassphraseEnc, aadPassphrase)
 	if err != nil || passEnc == "" {
 		return fmt.Errorf("备份口令未配置或解密失败（platform_self 必须配置口令）")
 	}
@@ -176,8 +176,11 @@ func (r *runner) writeRemoteDir(ctx context.Context, tw *tar.Writer, mf *manifes
 		_, _ = r.sshRun(context.WithoutCancel(ctx), r.job.ServerID, "rm -f "+tmpRemote, 30*time.Second)
 	}()
 
-	// 拉回流式写入产物
+	// 拉回流式写入产物。读端任何失败路径都要 CloseWithError 解锁写端——
+	// io.Pipe 无 finalizer，读端被 GC 不会唤醒阻塞在 Write 的写端，
+	// goroutine 与 SFTP 连接永久泄漏（v0.12.1 复核 N5）
 	pr, pw := io.Pipe()
+	defer func() { _ = pr.CloseWithError(io.EOF) }()
 	go func() {
 		_, pullErr := r.sftpPull(ctx, r.job.ServerID, tmpRemote, pw)
 		_ = pw.CloseWithError(pullErr)

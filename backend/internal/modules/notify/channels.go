@@ -39,6 +39,12 @@ type ChannelSettingsOut struct {
 	SMTPConfigured bool   `json:"smtpConfigured"`
 }
 
+// 密文字段绑定（GCM AAD）：跨字段粘贴密文解不开（v0.12.1 复核 N4）
+const (
+	aadGroupWebhook   = "notify_groups.webhook"
+	aadNotifySMTPPass = "platform_settings.notify_smtp_pass"
+)
+
 func (s *Service) setSetting(ctx context.Context, key, value string) error {
 	return identity.UpsertSetting(s.db, ctx, key, value) // 方言安全 upsert
 }
@@ -69,7 +75,7 @@ func (s *Service) SaveChannelSettings(ctx context.Context, smtpHost, smtpPort, s
 		if s.cipher == nil {
 			return fmt.Errorf("平台主密钥未配置，无法加密凭据")
 		}
-		enc, err := s.cipher.Encrypt(smtpPass)
+		enc, err := s.cipher.Encrypt(smtpPass, aadNotifySMTPPass)
 		if err != nil {
 			return err
 		}
@@ -208,7 +214,7 @@ func (s *Service) sendByChannel(ctx context.Context, group *Group, title, conten
 		cfg.User, _, _ = s.setting(ctx, settingSMTPUser)
 		cfg.From, _, _ = s.setting(ctx, settingSMTPFrom)
 		if enc, ok, _ := s.setting(ctx, settingSMTPPass); ok {
-			if dec, err := s.cipher.Decrypt(enc); err == nil {
+			if dec, err := s.cipher.Decrypt(enc, aadNotifySMTPPass); err == nil {
 				cfg.Pass = dec
 			}
 		}
@@ -216,7 +222,7 @@ func (s *Service) sendByChannel(ctx context.Context, group *Group, title, conten
 	default: // webhook（既有链路）
 		webhook := group.Webhook
 		if webhook != "" && s.cipher != nil {
-			if dec, err := s.cipher.Decrypt(webhook); err == nil {
+			if dec, err := s.cipher.Decrypt(webhook, aadGroupWebhook); err == nil {
 				webhook = dec
 			}
 		}

@@ -115,11 +115,11 @@ func (s *Service) SaveGlobal(ctx context.Context, in SaveGlobalInput) (*GlobalCo
 		g.JenkinsURL = strings.TrimRight(in.JenkinsURL, "/")
 	}
 	g.JenkinsUser = in.JenkinsUser
-	encIfSet := func(v string, dst *string) error {
+	encIfSet := func(v, aad string, dst *string) error {
 		if v == "" {
 			return nil
 		}
-		enc, err := s.encrypt(v)
+		enc, err := s.encrypt(v, aad)
 		if err != nil {
 			return err
 		}
@@ -128,13 +128,14 @@ func (s *Service) SaveGlobal(ctx context.Context, in SaveGlobalInput) (*GlobalCo
 	}
 	for _, e := range []struct {
 		v   string
+		aad string
 		dst *string
 	}{
-		{in.GiteaToken, &g.GiteaToken},
-		{in.GiteeToken, &g.GiteeToken},
-		{in.JenkinsToken, &g.JenkinsToken},
+		{in.GiteaToken, aadGiteaToken, &g.GiteaToken},
+		{in.GiteeToken, aadGiteeToken, &g.GiteeToken},
+		{in.JenkinsToken, aadJenkinsToken, &g.JenkinsToken},
 	} {
-		if err := encIfSet(e.v, e.dst); err != nil {
+		if err := encIfSet(e.v, e.aad, e.dst); err != nil {
 			return nil, err
 		}
 	}
@@ -165,7 +166,7 @@ func (s *Service) projectToken(repoPath string) (string, error) {
 		return "", nil
 	}
 	row := struct{ CIToken string }{CIToken: enc}
-	dec, err := s.cipher.Decrypt(row.CIToken)
+	dec, err := s.cipher.Decrypt(row.CIToken, aadProjectToken)
 	if err != nil {
 		// 项目级 token 解密失败不能静默回落全局 token（权限语义漂移），显式告警
 		logger.Warnf("[ci] 项目 %s 的 token 解密失败，回落全局 token: %v", repoPath, err)
@@ -183,7 +184,7 @@ func (s *Service) giteaFor(ctx context.Context, repoPath string) (*giteaClient, 
 	}
 	token := ""
 	if g.GiteaToken != "" && s.cipher != nil {
-		if dec, err := s.cipher.Decrypt(g.GiteaToken); err == nil {
+		if dec, err := s.cipher.Decrypt(g.GiteaToken, aadGiteaToken); err == nil {
 			token = dec
 		}
 	}
@@ -202,7 +203,7 @@ func (s *Service) gitFor(ctx context.Context, provider, repoPath string) (GitPro
 		}
 		token := ""
 		if g.GiteeToken != "" && s.cipher != nil {
-			if dec, err := s.cipher.Decrypt(g.GiteeToken); err == nil {
+			if dec, err := s.cipher.Decrypt(g.GiteeToken, aadGiteeToken); err == nil {
 				token = dec
 			}
 		}
@@ -223,7 +224,7 @@ func (s *Service) ciFor(ctx context.Context, provider, repoPath string) (CIProvi
 		}
 		token := ""
 		if g.JenkinsToken != "" && s.cipher != nil {
-			if dec, err := s.cipher.Decrypt(g.JenkinsToken); err == nil {
+			if dec, err := s.cipher.Decrypt(g.JenkinsToken, aadJenkinsToken); err == nil {
 				token = dec
 			}
 		}
@@ -264,7 +265,7 @@ func (s *Service) SaveRegistry(ctx context.Context, id uint, in SaveRegistryInpu
 	}
 	r.Name, r.Type, r.Address, r.Remark = in.Name, in.Type, in.Address, in.Remark
 	if in.Credential != "" {
-		enc, err := s.encrypt(in.Credential)
+		enc, err := s.encrypt(in.Credential, "registries.credential")
 		if err != nil {
 			return nil, err
 		}
@@ -682,12 +683,20 @@ func (s *Service) Branches(ctx context.Context, projectID uint) ([]string, error
 	return gp.Branches(ctx, pv.RepoPath)
 }
 
-func (s *Service) encrypt(v string) (string, error) {
+func (s *Service) encrypt(v, aad string) (string, error) {
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置，无法加密")
 	}
-	return s.cipher.Encrypt(v)
+	return s.cipher.Encrypt(v, aad)
 }
+
+// 密文字段绑定（GCM AAD）
+const (
+	aadGiteaToken   = "ci.gitea_token"
+	aadGiteeToken   = "ci.gitee_token"
+	aadJenkinsToken = "ci.jenkins_token"
+	aadProjectToken = "projects.ci_token"
+)
 
 // tailLines 取文本最后 n 行（log_tail 截尾存储用）。
 func tailLines(s string, n int) string {

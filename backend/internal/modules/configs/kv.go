@@ -30,6 +30,12 @@ type AgileApp struct {
 	Secret string `gorm:"size:256" json:"-"` // AES
 }
 
+// 密文字段绑定（GCM AAD）
+const (
+	aadKVPass   = "config_kv.agile_pass"
+	aadKVSecret = "config_kv.app_secret"
+)
+
 func (AgileApp) TableName() string { return "config_agile_apps" }
 
 // ---- provider 设置（platform_settings，AES 凭据） ----
@@ -66,7 +72,7 @@ func (s *Service) SaveKVSettings(ctx context.Context, endpoint, user, pass strin
 		if s.cipher == nil {
 			return cryptopkg.ErrNoMasterKey
 		}
-		enc, err := s.cipher.Encrypt(pass)
+		enc, err := s.cipher.Encrypt(pass, aadKVPass)
 		if err != nil {
 			return err
 		}
@@ -159,7 +165,7 @@ func (s *Service) agileClient(ctx context.Context) (*agileClient, error) {
 	if user == "" {
 		user = "admin"
 	}
-	pass, err := s.cipher.Decrypt(encPass)
+	pass, err := s.cipher.Decrypt(encPass, aadKVPass)
 	if err != nil {
 		return nil, fmt.Errorf("AgileConfig 凭据解密失败: %v", err)
 	}
@@ -263,7 +269,7 @@ func (s *Service) ensureAgileApp(ctx context.Context, c *agileClient, app string
 	if found.Secret == "" {
 		return nil, fmt.Errorf("AgileConfig 应用 %q 无 secret（请在控制台设置后重试同步）", app)
 	}
-	encSec, err := s.cipher.Encrypt(found.Secret)
+	encSec, err := s.cipher.Encrypt(found.Secret, aadKVSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +332,7 @@ func (s *Service) SyncAgile(ctx context.Context, projectID uint, env, by string)
 	if err != nil {
 		return 0, err
 	}
-	secret, _ := s.cipher.Decrypt(m.Secret)
+	secret, _ := s.cipher.Decrypt(m.Secret, aadKVSecret)
 	remote, err := c.appConfigs(ctx, m.AppID, secret)
 	if err != nil {
 		return 0, err
@@ -389,7 +395,7 @@ func (s *Service) ReconcileAgile(ctx context.Context, projectID uint, env, by st
 	if err := s.db.WithContext(ctx).Where("app = ?", appName).First(&m).Error; err != nil {
 		return nil, fmt.Errorf("该应用尚未同步过 AgileConfig（无映射，先下发或手动同步）")
 	}
-	secret, _ := s.cipher.Decrypt(m.Secret)
+	secret, _ := s.cipher.Decrypt(m.Secret, aadKVSecret)
 	remote, err := c.appConfigs(ctx, m.AppID, secret)
 	if err != nil {
 		return nil, err

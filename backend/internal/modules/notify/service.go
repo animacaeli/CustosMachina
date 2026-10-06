@@ -216,7 +216,7 @@ func (s *Service) Send(ctx context.Context, group *Group, title, content string)
 	}
 	webhook := group.Webhook
 	if webhook != "" && s.cipher != nil {
-		if dec, err := s.cipher.Decrypt(webhook); err == nil {
+		if dec, err := s.cipher.Decrypt(webhook, aadGroupWebhook); err == nil {
 			webhook = dec
 		} else {
 			s.record(ctx, group.ID, title, content, "failed", "webhook 解密失败")
@@ -294,7 +294,7 @@ func (s *Service) encryptWebhook(webhook string) (string, error) {
 	default:
 		return "", errors.New("webhook 须为企微 / 钉钉 / 飞书群机器人地址")
 	}
-	return s.cipher.Encrypt(webhook)
+	return s.cipher.Encrypt(webhook, aadGroupWebhook)
 }
 
 func (s *Service) record(ctx context.Context, groupID uint, title, content, status, errMsg string) {

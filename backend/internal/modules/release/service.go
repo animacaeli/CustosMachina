@@ -40,6 +40,10 @@ type registryCred struct {
 }
 
 // registryFor 取项目绑定的 registry 凭据（解密；未绑定或无凭据返回 HasCred=false）。
+
+// 密文字段绑定（GCM AAD）
+const aadRegistryCredential = "registries.credential"
+
 func (s *Service) registryFor(ctx context.Context, projectID uint) (*registryCred, error) {
 	var row struct {
 		RAddress    string
@@ -68,7 +72,7 @@ func (s *Service) decryptRegistryCred(enc string) ([]string, error) {
 	if c == nil {
 		return nil, fmt.Errorf("平台主密钥未配置")
 	}
-	dec, err := c.Decrypt(enc)
+	dec, err := c.Decrypt(enc, aadRegistryCredential)
 	if err != nil {
 		return nil, err
 	}

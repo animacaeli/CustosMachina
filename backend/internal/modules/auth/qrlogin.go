@@ -21,6 +21,9 @@ const qrStateTTL = 5 * time.Minute
 // activeProvider 返回当前激活的 IM 插件实例（凭证已注入）。
 // 选择规则：env 指定 mock（本地联调）→ 否则取 im_provider_configs 中唯一启用行；
 // 多行启用时按 provider 名字母序取第一（配置页应保证只启用一家，FR1.4）。
+// 密文字段绑定（GCM AAD）
+const aadIMCredentials = "im_configs.credentials"
+
 func (s *AuthService) activeProvider(ctx context.Context) (IdentityProvider, error) {
 	if s.cfg.IM.Provider == "mock" {
 		return NewProvider("mock")
@@ -48,7 +51,7 @@ func (s *AuthService) buildProvider(stored *identity.IMProviderConfig) (Identity
 	if err != nil {
 		return nil, err
 	}
-	plain, err := s.cipher.Decrypt(stored.CredentialsEncrypted)
+	plain, err := s.cipher.Decrypt(stored.CredentialsEncrypted, aadIMCredentials)
 	if err != nil {
 		return nil, fmt.Errorf("解密 %s 凭证失败: %w", stored.Provider, err)
 	}
@@ -84,7 +87,7 @@ func (s *AuthService) SaveIMProviderConfig(ctx context.Context, provider, cfgJSO
 	if s.cipher == nil {
 		return cryptopkg.ErrNoMasterKey
 	}
-	enc, err := s.cipher.Encrypt(cfgJSON)
+	enc, err := s.cipher.Encrypt(cfgJSON, aadIMCredentials)
 	if err != nil {
 		return err
 	}

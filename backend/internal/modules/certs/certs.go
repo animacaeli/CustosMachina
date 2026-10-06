@@ -28,6 +28,7 @@ import (
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("证书不存在")
@@ -73,6 +74,12 @@ type Cert struct {
 	CreatedAt time.Time  `json:"createdAt"`
 	UpdatedAt time.Time  `json:"updatedAt"`
 }
+
+// 密文字段绑定（GCM AAD）
+const (
+	aadCertCreds      = "certs.credentials"
+	aadCertAccountKey = "certs.account_key"
+)
 
 func (Cert) TableName() string { return "certs" }
 
@@ -163,7 +170,7 @@ func (s *Service) encryptJSON(m map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.cipher.Encrypt(string(b))
+	return s.cipher.Encrypt(string(b), aadCertCreds)
 }
 
 // Create 建立定义（立即排一次签发）。
@@ -251,12 +258,19 @@ func (s *Service) List(ctx context.Context) ([]CertOut, error) {
 	return out, nil
 }
 
+// issueMu 签发互斥：lego 的 DNS 凭据经 os.Setenv 注入进程环境，任何两个
+// 签发并发都会互相覆盖凭据——扫描已串行，这里挡住 RenewNow 与扫描的并发
+// （v0.12.1 复核：此前只改了扫描串行，手动签发仍可与之并发）。
+var issueMu sync.Mutex
+
 // RenewNow 手动触发签发/续期（立即，忽略 NextTryAt）。
 func (s *Service) RenewNow(ctx context.Context, id uint) error {
 	var c Cert
 	if err := s.db.WithContext(ctx).First(&c, id).Error; err != nil {
 		return ErrNotFound
 	}
+	issueMu.Lock()
+	defer issueMu.Unlock()
 	return s.issue(ctx, &c)
 }
 
@@ -398,7 +412,10 @@ func (s *Service) scanDue(ctx context.Context) error {
 	// hourly 扫描下串行耗时可接受
 	for i := range due {
 		c := due[i]
-		if err := s.issue(context.WithoutCancel(ctx), &c); err != nil {
+		issueMu.Lock()
+		err := s.issue(context.WithoutCancel(ctx), &c)
+		issueMu.Unlock()
+		if err != nil {
 			logger.Warnf("[certs] 续期失败 %q: %v", c.Name, err)
 		}
 	}
@@ -456,7 +473,7 @@ func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 // accountKey ACME 账号私钥（首签生成并 AES 存行，复用避免重复注册）。
 func (s *Service) accountKey(c *Cert) (crypto.PrivateKey, error) {
 	if c.AccountKeyEnc != "" && s.cipher != nil {
-		if pemStr, err := s.cipher.Decrypt(c.AccountKeyEnc); err == nil {
+		if pemStr, err := s.cipher.Decrypt(c.AccountKeyEnc, aadCertAccountKey); err == nil {
 			if key, err := certcrypto.ParsePEMPrivateKey([]byte(pemStr)); err == nil {
 				return key, nil
 			}
@@ -474,7 +491,7 @@ func (s *Service) saveAccountKey(c *Cert, key crypto.PrivateKey) error {
 		return nil
 	}
 	pemBytes := certcrypto.PEMEncode(key)
-	enc, err := s.cipher.Encrypt(string(pemBytes))
+	enc, err := s.cipher.Encrypt(string(pemBytes), aadCertAccountKey)
 	if err != nil {
 		return err
 	}
@@ -485,7 +502,7 @@ func (s *Service) dnsCredentials(c *Cert) (map[string]string, error) {
 	if c.CredsEnc == "" {
 		return nil, fmt.Errorf("DNS 凭证未配置")
 	}
-	plain, err := s.cipher.Decrypt(c.CredsEnc)
+	plain, err := s.cipher.Decrypt(c.CredsEnc, aadCertCreds)
 	if err != nil {
 		return nil, fmt.Errorf("DNS 凭证解密失败: %w", err)
 	}
@@ -525,8 +542,5 @@ func splitDomains(s string) []string {
 }
 
 func truncStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
+	return strx.Truncate(s, n) + "..." // rune 安全（v0.12.1 复核）
 }

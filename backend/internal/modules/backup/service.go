@@ -41,6 +41,12 @@ type Service struct {
 	notifier EventNotifier
 }
 
+// 密文字段绑定（GCM AAD）
+const (
+	aadS3Secret   = "backup_jobs.s3_secret"
+	aadPassphrase = "backup_jobs.passphrase"
+)
+
 func NewService(db *gorm.DB, cipher *crypto.Cipher, cfg *config.Config, ssh SSHExecutor) *Service {
 	return &Service{db: db, cipher: cipher, cfg: cfg, ssh: ssh}
 }
@@ -167,14 +173,14 @@ func (s *Service) validateJob(in SaveJobInput) error {
 	return nil
 }
 
-func (s *Service) encryptField(plain string) (string, error) {
+func (s *Service) encryptField(plain, aad string) (string, error) {
 	if plain == "" {
 		return "", nil
 	}
 	if s.cipher == nil {
 		return "", crypto.ErrNoMasterKey
 	}
-	return s.cipher.Encrypt(plain)
+	return s.cipher.Encrypt(plain, aad)
 }
 
 func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) {
@@ -195,10 +201,10 @@ func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) 
 		j.RetentionCount = 7
 	}
 	var err error
-	if j.S3SecretEnc, err = s.encryptField(in.S3SecretKey); err != nil {
+	if j.S3SecretEnc, err = s.encryptField(in.S3SecretKey, aadS3Secret); err != nil {
 		return nil, err
 	}
-	if j.PassphraseEnc, err = s.encryptField(in.Passphrase); err != nil {
+	if j.PassphraseEnc, err = s.encryptField(in.Passphrase, aadPassphrase); err != nil {
 		return nil, err
 	}
 	if j.S3Prefix == "" {
@@ -235,14 +241,14 @@ func (s *Service) UpdateJob(ctx context.Context, id uint, in SaveJobInput) (*Job
 	}
 	// 密文类字段留空保留
 	if in.S3SecretKey != "" {
-		enc, err := s.encryptField(in.S3SecretKey)
+		enc, err := s.encryptField(in.S3SecretKey, aadS3Secret)
 		if err != nil {
 			return nil, err
 		}
 		j.S3SecretEnc = enc
 	}
 	if in.Passphrase != "" {
-		enc, err := s.encryptField(in.Passphrase)
+		enc, err := s.encryptField(in.Passphrase, aadPassphrase)
 		if err != nil {
 			return nil, err
 		}
