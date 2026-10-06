@@ -28,6 +28,9 @@ type schemaMigration struct {
 
 func (schemaMigration) TableName() string { return "schema_migrations" }
 
+// SchemaMigrationModel 返回版本表模型（供 app 层测试造存量库形态）。
+func SchemaMigrationModel() schemaMigration { return schemaMigration{} }
+
 // goHooks Go 迁移钩子（按版本注册，app 层在启动早期调用 RegisterGoHook）：
 // 用于 CREATE TABLE 自增主键这类 SQLite/MySQL 双方言写不了的 DDL——钩子里
 // 用 gorm AutoMigrate 单表建表（仅允许"加新表"语义，存量列变更仍写 SQL）。

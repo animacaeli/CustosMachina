@@ -58,6 +58,14 @@ func init() {
 		}
 		return nil
 	})
+	// 0009/0010：v0.12.1~v0.12.2 新表补存量库迁移（复核 N7——新库走
+	// AutoMigrate 无感，存量库增量路径不跑 AutoMigrate，只认 SQL+钩子）
+	database.RegisterGoHook("0009", func(db *gorm.DB) error {
+		return db.AutoMigrate(&observ.AlertEvent{})
+	})
+	database.RegisterGoHook("0010", func(db *gorm.DB) error {
+		return db.AutoMigrate(&k3smod.Cluster{})
+	})
 	// 0008：gitee webhook 密码存量明文哈希化（sha256 纯计算无密钥依赖；
 	// 幂等：已是 64-hex 哈希形态则跳过）
 	database.RegisterGoHook("0008", func(db *gorm.DB) error {
