@@ -170,22 +170,26 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	}
 
 	// 私有 registry：部署前在目标机 docker login（namespace 隔离由镜像路径
-	// 中的 namespace 段保证——平台只按项目绑定的 registry 地址认证）
+	// 中的 namespace 段保证——平台只按项目绑定的 registry 地址认证）。
+	// prod 走蓝绿后台执行，登录/登出必须由后台任务自己管理——本函数立即返回，
+	// 这里的 defer logout 会在后台 pull 之前清掉目标机凭据（v0.12.0 审计严重项 6：
+	// 私有 registry 的 prod 发布必 401）。
 	reg, err := s.registryFor(ctx, in.ProjectID)
 	if err != nil {
 		return nil, err
-	}
-	if reg != nil && reg.HasCred {
-		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
-			return nil, fmt.Errorf("目标机 registry 登录失败: %w", err)
-		}
-		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)
 	}
 
 	// 正式环境走蓝绿链路（第四阶段 M2，任务化）：双隔离域 + 健康门禁 + 整份 conf
 	// 切换；立即返回 running 记录，后台执行、阶段日志轮询可见
 	if in.EnvType == "prod" {
-		return s.startBlueGreen(ctx, p, target, in, operator, yamlContent)
+		return s.startBlueGreen(ctx, p, target, in, operator, yamlContent, reg)
+	}
+
+	if reg != nil && reg.HasCred {
+		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
+			return nil, fmt.Errorf("目标机 registry 登录失败: %w", err)
+		}
+		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)
 	}
 
 	rel := Release{
@@ -326,7 +330,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n]
+	return strx.Truncate(s, n) // rune 安全（防切碎中文，v0.12.0 审计）
 }
 
 // rollbackOfRef 变参 → 可空指针（无参 = nil，普通发布）。

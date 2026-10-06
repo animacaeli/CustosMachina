@@ -67,7 +67,7 @@ func runBG(t *testing.T, svc *Service, p *projectRow, in ReleaseInput) (*Release
 	t.Helper()
 	ctx := context.Background()
 	target := &EnvTargetRow{ServerID: 1, Runtime: "compose"}
-	rel, err := svc.startBlueGreen(ctx, p, target, in, "tester", "yaml: demo")
+	rel, err := svc.startBlueGreen(ctx, p, target, in, "tester", "yaml: demo", nil)
 	if err != nil {
 		return nil, err
 	}

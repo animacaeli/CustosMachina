@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 	"github.com/custos-machina/backend/internal/pkg/projlock"
 	"github.com/custos-machina/backend/internal/pkg/strx"
@@ -96,7 +97,8 @@ func (s *Service) activeColorChecked(ctx context.Context, projectID uint) (strin
 
 // ActiveDomainFor 实现 cron.DomainResolver：项目基础名 → 当前活跃的隔离域名。
 // 启用蓝绿的项目返回 <norm>-prod-<活跃色>（任务与业务同版本同网络）；未启用/
-// 项目不存在/查询错误一律原样返回（调用方拿原名执行，失败信息明确可排查）。
+// 项目不存在/查询错误返回规范化后的名称（兜底分支不得原样回吐用户输入——
+// 该值会拼进目标机 shell 命令，v0.12.0 审计严重项 2 的注入面之一）。
 // 事后注入而非构造参数（app 层 SetDomainResolver），避免 cron↔release 构造环。
 func (s *Service) ActiveDomainFor(ctx context.Context, baseName string) string {
 	norm := strx.NormalizeName(baseName)
@@ -104,15 +106,15 @@ func (s *Service) ActiveDomainFor(ctx context.Context, baseName string) string {
 	if err := s.db.WithContext(ctx).Table("projects").
 		Select("id").Where("name IN ?", []string{baseName, norm}).
 		Scan(&pid).Error; err != nil || pid == 0 {
-		return baseName
+		return norm
 	}
 	var st BGState
 	if err := s.db.WithContext(ctx).
 		First(&st, "project_id = ?", pid).Error; err != nil {
-		return baseName
+		return norm
 	}
 	if st.ActiveColor != ColorBlue && st.ActiveColor != ColorGreen {
-		return baseName
+		return norm
 	}
 	logger.Infof("[release] 定时任务域名解析：%s → %s-prod-%s（跟随蓝绿活跃色）", baseName, norm, st.ActiveColor)
 	return fmt.Sprintf("%s-prod-%s", norm, st.ActiveColor)
@@ -132,7 +134,7 @@ func (s *Service) colorDomain(projName, color string) string {
 // startBlueGreen 蓝绿发布入口（任务化）：同步建一条 running 记录后立即返回，
 // 主链路后台执行、阶段日志增量刷库——前端轮询 GET /releases/:id 看进度，
 // 管理员关浏览器不影响执行（ctx 已 WithoutCancel）。
-func (s *Service) startBlueGreen(ctx context.Context, p *projectRow, target *EnvTargetRow, in ReleaseInput, operator, yamlContent string) (*Release, error) {
+func (s *Service) startBlueGreen(ctx context.Context, p *projectRow, target *EnvTargetRow, in ReleaseInput, operator, yamlContent string, reg *registryCred) (*Release, error) {
 	if s.canary == nil {
 		return nil, errors.New("蓝绿发布依赖的配置渲染器未装配")
 	}
@@ -149,7 +151,9 @@ func (s *Service) startBlueGreen(ctx context.Context, p *projectRow, target *Env
 	if err := s.db.WithContext(ctx).Create(&rel).Error; err != nil {
 		return nil, err
 	}
-	go s.executeBlueGreen(context.WithoutCancel(ctx), p, target, in, &rel, yamlContent)
+	jobs.GoSafe("release:bluegreen", func() {
+		s.executeBlueGreen(context.WithoutCancel(ctx), p, target, in, &rel, yamlContent, reg)
+	})
 	return &rel, nil
 }
 
@@ -160,9 +164,23 @@ func (s *Service) startBlueGreen(ctx context.Context, p *projectRow, target *Env
 //
 // 全程项目级互斥（与 canary.Publish 共锁）：conf 的写入时序必须串行化，
 // 否则双发布/发布与灰度交错会互相销毁对方刚切好的域或写坏 conf。
-func (s *Service) executeBlueGreen(ctx context.Context, p *projectRow, target *EnvTargetRow, in ReleaseInput, rel *Release, yamlContent string) {
+func (s *Service) executeBlueGreen(ctx context.Context, p *projectRow, target *EnvTargetRow, in ReleaseInput, rel *Release, yamlContent string, reg *registryCred) {
 	unlock := projlock.Lock(in.ProjectID)
 	defer unlock()
+
+	// registry 凭据在后台任务内登录/登出：后台生命周期覆盖全部 pull/up 阶段
+	//（login 放在锁后，避免与并发发布/灰度的 logout 交错）。
+	if reg != nil && reg.HasCred {
+		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
+			rel.Status = ReleaseFailed
+			rel.Output = time.Now().Format("15:04:05") + " 目标机 registry 登录失败: " + err.Error()
+			_ = s.db.Model(&Release{}).Where("id = ?", rel.ID).
+				Updates(map[string]any{"status": ReleaseFailed, "output": rel.Output})
+			s.notifyRelease(ctx, p, rel)
+			return
+		}
+		defer s.res.RegistryLogout(context.WithoutCancel(ctx), target.ServerID, reg.Address)
+	}
 
 	norm := strx.NormalizeName(p.Name)
 	oldColor := s.ActiveColor(ctx, in.ProjectID)

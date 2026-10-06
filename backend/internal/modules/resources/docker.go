@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	dc "github.com/moby/moby/client"
@@ -157,9 +158,17 @@ func (o *streamBuf) Write(p []byte) (int, error) {
 	return o.outBuf.Write(p)
 }
 
-type outBuf struct{ b []byte }
+// outBuf 并发安全说明：x/crypto/ssh 的 session 用两个独立 goroutine 分别
+// 拷贝 stdout 与 stderr，Write 必然并发；且超时路径 SIGKILL 后不等 copy
+// goroutine 收尾就读 String()。因此读写全量持锁（v0.12.0 审计严重项 5）。
+type outBuf struct {
+	mu sync.Mutex
+	b  []byte
+}
 
 func (o *outBuf) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	// 超限后丢弃中段（保留首尾各 1MB），写入方仍收到"全部已读"不阻塞远端
 	if len(o.b)+len(p) > outBufMax {
 		keep := outBufMax / 2
@@ -178,4 +187,8 @@ func (o *outBuf) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (o *outBuf) String() string { return string(o.b) }
+func (o *outBuf) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return string(o.b)
+}
