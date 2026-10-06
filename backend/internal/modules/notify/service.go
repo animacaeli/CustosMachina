@@ -9,8 +9,10 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 // ErrNotFound 统一的未找到错误。
@@ -35,12 +37,57 @@ type Service struct {
 	sender   *sender
 	agg      *aggregator
 	analyzer AlertAnalyzer // P7-M2 告警 AI 分析（nil = 关闭）
+
+	stopSweeper func()
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 	s := &Service{db: db, cipher: cipher, sender: newSender(), agg: newAggregator()}
-	s.startAggSweeper()
+	s.stopSweeper = s.startAggSweeper()
 	return s
+}
+
+// NewServiceWithCleanup wire 装配专用：返回清扫停止函数，让 wire_gen
+// 完整可再生成（hand-maintained 的手工 cleanup 行是 wire 门禁的障碍）。
+func NewServiceWithCleanup(db *gorm.DB, cipher *crypto.Cipher) (*Service, func(), error) {
+	s := NewService(db, cipher)
+	return s, s.Stop, nil
+}
+
+// Stop 停止聚合清扫 goroutine（进程关停时由 cleanup 链调用）。
+func (s *Service) Stop() {
+	if s.stopSweeper != nil {
+		s.stopSweeper()
+	}
+}
+
+// SendRecordPage 投递记录分页（排障用：为什么企微没收到通知）。
+type SendRecordPage struct {
+	Items []SendRecord `json:"items"`
+	Total int64        `json:"total"`
+}
+
+// ListSendRecords 通知投递记录（时间倒序；groupId 过滤；分页钳制 100）。
+func (s *Service) ListSendRecords(ctx context.Context, groupID uint, page, size int) (*SendRecordPage, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+	q := s.db.WithContext(ctx).Model(&SendRecord{})
+	if groupID > 0 {
+		q = q.Where("group_id = ?", groupID)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, err
+	}
+	var items []SendRecord
+	if err := q.Order("id DESC").Offset((page - 1) * size).Limit(size).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return &SendRecordPage{Items: items, Total: total}, nil
 }
 
 // ---- 群管理 ----
@@ -222,10 +269,7 @@ func (s *Service) OpsGroupID(ctx context.Context) (uint, bool) {
 }
 
 func (s *Service) SetOpsGroup(ctx context.Context, id uint) error {
-	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`,
-		SettingOpsGroup, strconv.FormatUint(uint64(id), 10)).Error
+	return identity.UpsertSetting(s.db, ctx, SettingOpsGroup, strconv.FormatUint(uint64(id), 10))
 }
 
 func (s *Service) setting(ctx context.Context, key string) (string, bool, error) {
@@ -267,7 +311,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n]
+	return strx.Truncate(s, n) // rune 安全（防切碎中文，v0.12.0 审计）
 }
 
 func okOr(err error) string {

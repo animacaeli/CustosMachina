@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/pkg/ratelimit"
@@ -72,6 +73,9 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.DELETE("/alert-templates/:id", h.deleteTemplate)
 		g.POST("/alert-templates/render", h.renderTemplate)
 		g.POST("/alerts/from-template", h.upsertAlertFromTemplate)
+		// 告警事件留痕（v0.12.0 审计产品项：历史回溯 + 手动标记已处理）
+		g.GET("/alert-events", h.listAlertEvents)
+		g.POST("/alert-events/:id/handle", h.handleAlertEvent)
 	}
 	// O2 告警回流（公开；X-Custos-Token 校验 + 限速）
 	r.Public.POST("/observ/alerts/webhook", h.alertWebhookLimiter.Middleware(), h.o2AlertWebhook)
@@ -178,8 +182,15 @@ func (h *Handler) putO2Settings(c *gin.Context) {
 }
 
 func (h *Handler) listAlerts(c *gin.Context) {
-	if !h.canManagePlatform(c) { // dev：仅项目侧策略
-		out, err := h.svc.listProjectAlerts(c.Request.Context())
+	if !h.canManagePlatform(c) { // dev：仅项目侧策略，且限定授权项目
+		all, ids := rbac.ProjectScope(c)
+		var out []Alert
+		var err error
+		if all {
+			out, err = h.svc.listProjectAlerts(c.Request.Context(), nil)
+		} else {
+			out, err = h.svc.listProjectAlerts(c.Request.Context(), ids)
+		}
 		if err != nil {
 			httpx.FailServer(c, err)
 			return
@@ -234,14 +245,56 @@ func (h *Handler) updateAlert(c *gin.Context) {
 	httpx.OK(c, gin.H{"ok": true})
 }
 
+// listAlertEvents 告警历史（admin/ops 全量；dev 只读——与 alerts 列表同可见面）。
+func (h *Handler) listAlertEvents(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	out, err := h.svc.ListAlertEvents(c.Request.Context(),
+		c.Query("level"), c.Query("status"), page, size)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, out)
+}
+
+// handleAlertEvent 标记已处理（admin/ops；dev 不可）。
+func (h *Handler) handleAlertEvent(c *gin.Context) {
+	if !h.canManagePlatform(c) {
+		httpx.Fail(c, 403, 403, "仅管理员/运维可处理告警事件")
+		return
+	}
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	claims := jwt.ClaimsFromContext(c)
+	by := ""
+	if claims != nil {
+		by = claims.DisplayName
+	}
+	if err := h.svc.HandleAlertEvent(c.Request.Context(), id, by); err != nil {
+		httpx.FailNotFound(c, "事件不存在或已处理")
+		return
+	}
+	httpx.OK(c, gin.H{"ok": true})
+}
+
 func (h *Handler) deleteAlert(c *gin.Context) {
 	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
 	if !h.canManagePlatform(c) {
-		if a, err := h.svc.getAlert(c.Request.Context(), id); err != nil || a.ProjectID == 0 {
+		a, err := h.svc.getAlert(c.Request.Context(), id)
+		if err != nil || a.ProjectID == 0 {
 			httpx.Fail(c, 403, 403, "平台级告警仅管理员/运维可删")
+			return
+		}
+		// 项目侧告警还须在本人授权项目范围内（v0.12.0 审计中等项：
+		// dev 曾可删任意项目的告警）
+		if !rbac.InProjectScope(c, a.ProjectID) {
+			httpx.Fail(c, 403, 403, "该项目不在你的授权范围内")
 			return
 		}
 	}

@@ -15,6 +15,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -217,9 +218,14 @@ func (s *Service) ListAlerts(ctx context.Context) ([]Alert, error) {
 }
 
 // listProjectAlerts dev 视角：仅项目侧策略（平台级手写 SQL 告警不可见）。
-func (s *Service) listProjectAlerts(ctx context.Context) ([]Alert, error) {
+// projectIDs 非空时按授权项目过滤（v0.12.0 审计中等项：dev 曾能看到全部项目告警）。
+func (s *Service) listProjectAlerts(ctx context.Context, projectIDs []uint) ([]Alert, error) {
 	var as []Alert
-	if err := s.db.WithContext(ctx).Where("project_id > 0").Order("id").Find(&as).Error; err != nil {
+	q := s.db.WithContext(ctx).Where("project_id > 0")
+	if projectIDs != nil {
+		q = q.Where("project_id IN ?", projectIDs)
+	}
+	if err := q.Order("id").Find(&as).Error; err != nil {
 		return nil, err
 	}
 	return as, nil
@@ -530,9 +536,7 @@ func o2Request(ctx context.Context, cfg *O2Config, method, path string, body any
 
 // setSetting 通用平台设置写入（upsert）。
 func (s *Service) setSetting(ctx context.Context, key, value string) error {
-	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, key, value).Error
+	return identity.UpsertSetting(s.db, ctx, key, value) // 方言安全 upsert
 }
 
 // randomToken 生成 webhook 共享密钥（16 字节 hex）。
@@ -580,8 +584,11 @@ func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) 
 
 // P7-M2：AI 分析已上收到 notify 统一入口（两阶段），本模块不再单独触发摘要。
 
-// notifyAlert O2 告警事件投统一通知路由（先发主通知保及时性；AI 摘要异步补发）。
+// notifyAlert O2 告警：先落事件（alert_events，告警历史的地基），再投统一
+// 通知路由（先发主通知保及时性；AI 摘要异步补发）。
 func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail string) {
+	s.recordAlertEvent(ctx, string(notify.SourceO2Alert), level,
+		"O2 告警："+alertName, detail, "o2-"+alertName)
 	if s.notifier == nil {
 		return
 	}
@@ -593,4 +600,4 @@ func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail stri
 }
 
 // Models 本模块自动迁移清单。
-func Models() []any { return []any{&Alert{}, &AlertTemplate{}} }
+func Models() []any { return []any{&Alert{}, &AlertTemplate{}, &AlertEvent{}} }

@@ -55,6 +55,16 @@ const routes: RouteRecordRaw[] = [
           title: '观测告警',
         },
       },
+      {
+        name: 'ObservEvents',
+        path: 'observ-events',
+        component: () => import('#/views/observ/events.vue'),
+        meta: {
+          icon: 'lucide:history',
+          authority: ['superadmin', 'admin', 'ops', 'dev'],
+          title: '告警历史',
+        },
+      },
     ],
   },
 ];

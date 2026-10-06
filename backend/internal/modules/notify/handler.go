@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,19 @@ func NewHandler(svc *Service) *Handler {
 
 func (h *Handler) Name() string { return "notify" }
 
+// listRecords GET /notify/records?groupId=&page=&size=（admin，种子 v24）。
+func (h *Handler) listRecords(c *gin.Context) {
+	groupID, _ := strconv.ParseUint(c.Query("groupId"), 10, 64)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	out, err := h.svc.ListSendRecords(c.Request.Context(), uint(groupID), page, size)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, out)
+}
+
 func (h *Handler) RegisterRoutes(r server.Router) {
 	g := r.Authed.Group("/notify-groups")
 	{
@@ -34,6 +48,8 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.DELETE("/:id", h.remove)
 		g.POST("/:id/test", h.test) // 发一条测试消息验证 webhook
 	}
+	// 通知投递记录（v0.12.0 审计：notify_records 此前只写不读，排障只能连库）
+	r.Authed.GET("/notify/records", h.listRecords)
 	s := r.Authed.Group("/notify-settings")
 	{
 		s.GET("/ops-group", h.getOpsGroup)

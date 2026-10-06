@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
@@ -283,9 +284,8 @@ func deployName(component string) string { return "custos-observ-" + component }
 
 // EventNotifier 统一通知路由出口（notify.Service 实现，app 层注入）：
 // 观测组件部署/卸载失败不能静默。
-type EventNotifier interface {
-	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
-}
+// EventNotifier 统一别名（notify 是唯一生产实现；历史上 6 份逐字相同的声明收敛于此）。
+type EventNotifier = notify.EventNotifier
 
 type Service struct {
 	db        *gorm.DB
@@ -338,10 +338,7 @@ func (s *Service) SetO2URL(ctx context.Context, url string) error {
 	if url != "" && !urlRe.MatchString(url) {
 		return errors.New("O2 地址须为 http(s)://...（含流路径，如 http://10.0.0.1:5080/api/default/custos/_json）")
 	}
-	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
-		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`,
-		settingO2URL, url).Error
+	return identity.UpsertSetting(s.db, ctx, settingO2URL, url)
 }
 
 func (s *Service) O2URL(ctx context.Context) string {

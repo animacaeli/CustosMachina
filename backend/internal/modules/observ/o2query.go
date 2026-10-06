@@ -9,9 +9,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"time"
 )
+
+// o2IdentRe O2 标识符（org/stream）白名单：这两个值直接拼进 SQL 的
+// FROM 子句，且 stream 来自 AI 工具调用参数（模型生成、无人审阅）——
+// 注入面必须在校验层封死（v0.12.0 审计中等项）。
+var o2IdentRe = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,127}$`)
+
+func validO2Ident(v string) bool { return v != "" && o2IdentRe.MatchString(v) }
 
 // O2SearchLogs 全文/SQL 日志查询（AI 工具 search_o2_logs 数据源）。
 // query 为 SELECT ... WHERE 片段（空 = 全量扫描最近窗口）；返回紧凑文本。
@@ -19,6 +27,12 @@ func (s *Service) O2SearchLogs(ctx context.Context, query, stream string, minute
 	cfg, ok := s.o2Config(ctx)
 	if !ok || cfg.BaseURL == "" {
 		return "", fmt.Errorf("O2 未配置（管理后台 → 观测组件）")
+	}
+	if !validO2Ident(cfg.Org) {
+		return "", fmt.Errorf("O2 org 配置含非法字符（仅允许字母数字与 _ -）")
+	}
+	if stream != "" && !validO2Ident(stream) {
+		return "", fmt.Errorf("日志流名含非法字符（仅允许字母数字与 _ -）")
 	}
 	if minutes <= 0 || minutes > 24*60 {
 		minutes = 60
@@ -180,11 +194,4 @@ func truncStr(s string, n int) string {
 		return s[:n]
 	}
 	return s
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

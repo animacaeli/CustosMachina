@@ -77,7 +77,13 @@ func InitializeServer() (*server.Server, func(), error) {
 		return nil, nil, err
 	}
 	resourcesHandler := resources.NewHandler(resourcesService, collector)
-	notifyService := notify.NewService(db, cipher)
+	notifyService, cleanup4, err := notify.NewServiceWithCleanup(db, cipher)
+	if err != nil {
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
 	notifyHandler := notify.NewHandler(notifyService)
 	projectsService := projects.NewService(db, cipher)
 	projectsHandler := projects.NewHandler(projectsService)
@@ -93,8 +99,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	slotsHandler := slots.NewHandler(slotsService)
 	cronService := cron.NewService(db, resourcesService)
 	cronHandler := cron.NewHandler(cronService)
-	scheduler, cleanup4, err := cron.NewScheduler(cronService)
+	scheduler, cleanup5, err := cron.NewScheduler(cronService)
 	if err != nil {
+		cleanup4()
 		cleanup3()
 		cleanup2()
 		cleanup()
@@ -106,8 +113,9 @@ func InitializeServer() (*server.Server, func(), error) {
 	configsHandler := configs.NewHandler(configsService)
 	certsService := certs.NewService(db, cipher, resourcesService)
 	certsHandler := certs.NewHandler(certsService)
-	certsScheduler, cleanup5, err := certs.NewScheduler(certsService)
+	certsScheduler, cleanup6, err := certs.NewScheduler(certsService)
 	if err != nil {
+		cleanup5()
 		cleanup4()
 		cleanup3()
 		cleanup2()
@@ -122,16 +130,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	skillService := ai.NewSkillService(db)
 	mcpService := mcp.NewService(db)
 	mcpHandler := mcp.NewHandler(mcpService)
-	backupScheduler, cleanup6, err := backup.NewScheduler(backupService)
-	if err != nil {
-		cleanup5()
-		cleanup4()
-		cleanup3()
-		cleanup2()
-		cleanup()
-		return nil, nil, err
-	}
-	poller, cleanup7, err := ci.NewPoller(ciService)
+	backupScheduler, cleanup7, err := backup.NewScheduler(backupService)
 	if err != nil {
 		cleanup6()
 		cleanup5()
@@ -141,8 +140,20 @@ func InitializeServer() (*server.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	sweeper, cleanup8, err := slots.NewSweeper(slotsService)
+	poller, cleanup8, err := ci.NewPoller(ciService)
 	if err != nil {
+		cleanup7()
+		cleanup6()
+		cleanup5()
+		cleanup4()
+		cleanup3()
+		cleanup2()
+		cleanup()
+		return nil, nil, err
+	}
+	sweeper, cleanup9, err := slots.NewSweeper(slotsService)
+	if err != nil {
+		cleanup8()
 		cleanup7()
 		cleanup6()
 		cleanup5()
@@ -162,6 +173,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	engine := server.NewEngine(configConfig, modules, authMiddleware, handlerFunc)
 	serverServer := server.New(configConfig, engine)
 	return serverServer, func() {
+		cleanup9()
 		cleanup8()
 		cleanup7()
 		cleanup6()

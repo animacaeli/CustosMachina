@@ -51,7 +51,7 @@ var defaultPolicies = [][]string{
 	{"admin", "/server-metrics", "GET"},
 	{"admin", "/server-metrics/*", "GET"},
 	{"admin", "/server-events/*", "GET"},
-	{"admin", "/servers/*/terminal", "GET"}, // Web 终端：仅 admin（超管中间件直接放行）
+	{"admin", "/servers/*/terminal", "GET"}, // 展示用：终端实际裁决在 middleware/handler 双 gate，通配不生效（仅 admin 角色 + 逐主机 ACL）
 	{"admin", "/server-containers", "GET|POST"},
 	{"admin", "/server-containers/*", "GET|POST"},
 	{"admin", "/server-env", "GET"},
@@ -246,11 +246,17 @@ var defaultPolicies = [][]string{
 	// v23：k3s 集群管理（P8-M3.2）——admin（kubeconfig 属集群凭证管理）
 	{"admin", "/k3s-clusters", "GET|POST|DELETE"},
 	{"admin", "/k3s-clusters/*", "PUT|POST"},
+	// v24：告警事件留痕（v0.12.0 审计）——admin/ops 管理，dev 只读；
+	// 通知投递记录（notify_records 读取端）仅 admin
+	{"admin", "/observ/alert-events", "GET|POST"},
+	{"ops", "/observ/alert-events", "GET|POST"},
+	{"dev", "/observ/alert-events", "GET"},
+	{"admin", "/notify/records", "GET"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "23" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "24" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -408,6 +414,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v22→v23：k3s-clusters 对 admin 是新资源点
 		if len(ps) > 0 && p[0] == "admin" && oldVersion == "22" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v23→v24：alert-events 对 admin/ops/dev、notify/records 对 admin 都是新资源点
+		if len(ps) > 0 && oldVersion == "23" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

@@ -301,14 +301,23 @@ func (s *Service) flushDue() {
 }
 
 // startAggSweeper 聚合到期兜底扫描（30s；即使之后长时间无事件也能到期投出）。
-func (s *Service) startAggSweeper() {
+// 返回停止函数（进程关停时调用——goroutine 永不退出属泄漏，v0.12.0 审计中等项）。
+func (s *Service) startAggSweeper() func() {
+	stop := make(chan struct{})
 	go func() {
 		t := time.NewTicker(aggSweepInterval)
 		defer t.Stop()
-		for range t.C {
-			s.flushDue()
+		for {
+			select {
+			case <-t.C:
+				s.flushDue()
+			case <-stop:
+				return
+			}
 		}
 	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stop) }) }
 }
 
 // getRule 按 id 取规则（handler 测试事件用）。

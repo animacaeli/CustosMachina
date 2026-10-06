@@ -172,3 +172,58 @@ export async function upsertAlertFromTemplateApi(data: {
 }) {
   return requestClient.post('/observ/alerts/from-template', data);
 }
+
+/** 告警事件留痕（v0.12.0 审计：告警历史页数据源） */
+export interface AlertEvent {
+  createdAt: string;
+  dedupKey: string;
+  detail: string;
+  handledBy: string;
+  id: number;
+  level: string;
+  source: string;
+  status: 'handled' | 'open';
+  title: string;
+}
+
+export interface AlertEventPage {
+  items: AlertEvent[];
+  total: number;
+}
+
+export async function getAlertEventsApi(params: {
+  level?: string;
+  page?: number;
+  size?: number;
+  status?: string;
+}) {
+  return requestClient.get<AlertEventPage>('/observ/alert-events', { params });
+}
+
+export async function handleAlertEventApi(id: number) {
+  return requestClient.post(`/observ/alert-events/${id}/handle`);
+}
+
+/** 通知投递记录（admin：排障「为什么没收到通知」） */
+export interface SendRecord {
+  content: string;
+  createdAt: string;
+  error: string;
+  groupId: number;
+  id: number;
+  status: 'failed' | 'ok';
+  title: string;
+}
+
+export interface SendRecordPage {
+  items: SendRecord[];
+  total: number;
+}
+
+export async function getNotifyRecordsApi(params: {
+  groupId?: number;
+  page?: number;
+  size?: number;
+}) {
+  return requestClient.get<SendRecordPage>('/notify/records', { params });
+}
