@@ -13,6 +13,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("CI 配置不存在")
@@ -265,7 +266,7 @@ func (s *Service) SaveRegistry(ctx context.Context, id uint, in SaveRegistryInpu
 	}
 	r.Name, r.Type, r.Address, r.Remark = in.Name, in.Type, in.Address, in.Remark
 	if in.Credential != "" {
-		enc, err := s.encrypt(in.Credential, "registries.credential")
+		enc, err := s.encrypt(in.Credential, crypto.AADRegistryCredential)
 		if err != nil {
 			return nil, err
 		}
@@ -695,7 +696,7 @@ const (
 	aadGiteaToken   = "ci.gitea_token"
 	aadGiteeToken   = "ci.gitee_token"
 	aadJenkinsToken = "ci.jenkins_token"
-	aadProjectToken = "projects.ci_token"
+	aadProjectToken = crypto.AADProjectCIToken
 )
 
 // tailLines 取文本最后 n 行（log_tail 截尾存储用）。
@@ -773,5 +774,6 @@ func truncateLines(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "\n…（结果过长截断）"
+	// rune 安全截断（v0.12.2 复核：8000 字节硬切可能把中文尾行切出非法 UTF-8）
+	return strx.Truncate(s, n) + "\n…（结果过长截断）"
 }

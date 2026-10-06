@@ -68,11 +68,17 @@ func (c *Cipher) Decrypt(encoded string, aad ...string) (string, error) {
 	if len(data) < ns {
 		return "", errors.New("密文长度不合法")
 	}
-	var ad []byte
 	if len(aad) > 0 {
-		ad = []byte(aad[0])
+		ad := []byte(aad[0])
 		if plain, err := c.aead.Open(nil, data[:ns], data[ns:], ad); err == nil {
 			return string(plain), nil
+		}
+		// 回退兼容旧无 AAD 密文；两条路径都失败时报 AAD 路径的错误并注明
+		// 已尝试回退——区分「AAD 字段错配」与「主密钥不符」（v0.12.2 复核 N4）
+		if plain, err2 := c.aead.Open(nil, data[:ns], data[ns:], nil); err2 == nil {
+			return string(plain), nil
+		} else {
+			return "", fmt.Errorf("解密失败（AAD=%q 不符或主密钥不一致；已尝试旧格式回退）: %w", aad[0], err)
 		}
 	}
 	plain, err := c.aead.Open(nil, data[:ns], data[ns:], nil)

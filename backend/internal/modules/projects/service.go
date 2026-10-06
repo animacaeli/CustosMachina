@@ -33,7 +33,7 @@ type EnvStatus struct {
 }
 
 // 密文字段绑定（GCM AAD）
-const aadProjectCIToken = "projects.ci_token"
+// projects.ci_token 经 crypto.AADProjectCIToken 共享（projects 写 ci 读）
 
 func toOut(p Project) ProjectOut {
 	out := ProjectOut{Project: p, HasCIToken: p.CIToken != ""}
@@ -352,14 +352,14 @@ func (s *Service) DecryptedCIToken(ctx context.Context, projectID uint) (string,
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置")
 	}
-	return s.cipher.Decrypt(p.CIToken, aadProjectCIToken)
+	return s.cipher.Decrypt(p.CIToken, crypto.AADProjectCIToken)
 }
 
 func (s *Service) encryptToken(token string) (string, error) {
 	if s.cipher == nil {
 		return "", errors.New("平台主密钥未配置，无法加密 CI token")
 	}
-	return s.cipher.Encrypt(token, aadProjectCIToken)
+	return s.cipher.Encrypt(token, crypto.AADProjectCIToken)
 }
 
 func defaultStr(s, def string) string {
