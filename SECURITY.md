@@ -18,7 +18,7 @@ CustosMachina 是持有纳管主机 SSH 凭据与多套组件凭据的运维平�
 
 ## 安全设计要点（供评审参考）
 
-- SSH 全仓单一实现（`resources` 模块，TOFU 主机密钥固定）；凭据 AES-256-GCM 加密（AAD 字段绑定）
+- SSH 全仓单一实现（`resources` 模块，TOFU 主机密钥固定）；凭据 AES-256-GCM 加密（AAD 字段级绑定——**范围与约束**：①绑定到字段而非行，同字段跨行互换仍可解开（行级绑定在路线图上）；②保护仅对 v0.12.2+ 写入的密文生效，存量密文经无 AAD 回退读取、下次保存时自动升级；③**不可回滚**：新版二进制写入的密文旧版二进制（<v0.12.2）解不开——回滚版本会导致 webhook 通知、registry 凭据、kubeconfig、证书续期等静默失效，回滚前先备份并咨询）
 - 终端路径拒绝 casbin 通配：仅内置 admin 角色 + 逐主机精确 ACL（双 gate）
 - 用户输入拼远端 shell 命令处一律 `pkg/shellx.Quote` + 入参白名单
 - JWT HMAC 家族严格断言、登录限速/锁定、refresh token 一次性轮换（GETDEL）
