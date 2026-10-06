@@ -223,15 +223,18 @@ func (s *Service) OpsGroupID(ctx context.Context) (uint, bool) {
 
 func (s *Service) SetOpsGroup(ctx context.Context, id uint) error {
 	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`,
 		SettingOpsGroup, strconv.FormatUint(uint64(id), 10)).Error
 }
 
 func (s *Service) setting(ctx context.Context, key string) (string, bool, error) {
-	var row struct{ Key, Value string }
+	var row struct {
+		Key   string `gorm:"column:skey"`
+		Value string
+	}
 	err := s.db.WithContext(ctx).Table("platform_settings").
-		Select("key", "value").Where("key = ?", key).First(&row).Error
+		Select("skey", "value").Where("skey = ?", key).Order("skey").First(&row).Error
 	if err != nil {
 		return "", false, nil
 	}

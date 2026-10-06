@@ -531,8 +531,8 @@ func o2Request(ctx context.Context, cfg *O2Config, method, path string, body any
 // setSetting 通用平台设置写入（upsert）。
 func (s *Service) setSetting(ctx context.Context, key, value string) error {
 	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value).Error
+		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, key, value).Error
 }
 
 // randomToken 生成 webhook 共享密钥（16 字节 hex）。

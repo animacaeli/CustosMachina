@@ -15,7 +15,7 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
 	return db

@@ -44,7 +44,7 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 	if err := db.AutoMigrate(&Alert{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	var tplCalls, destCalls, alertCalls, putCalls int64

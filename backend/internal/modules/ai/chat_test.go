@@ -50,7 +50,7 @@ func chatTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&Usage{}, &Conversation{}, &ChatMessage{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatalf("建 settings 表失败: %v", err)
 	}
 	return db

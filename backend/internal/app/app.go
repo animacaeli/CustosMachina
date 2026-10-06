@@ -48,6 +48,14 @@ func init() {
 	database.RegisterGoHook("0003", func(db *gorm.DB) error {
 		return db.AutoMigrate(&notify.BusinessToken{})
 	})
+	// 0006：key→skey 改名（gorm Migrator 按方言转义保留字；幂等：旧列存在才改）
+	database.RegisterGoHook("0006", func(db *gorm.DB) error {
+		m := db.Migrator()
+		if m.HasColumn(&identity.PlatformSetting{}, "key") && !m.HasColumn(&identity.PlatformSetting{}, "skey") {
+			return m.RenameColumn(&identity.PlatformSetting{}, "key", "skey")
+		}
+		return nil
+	})
 }
 
 // ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。

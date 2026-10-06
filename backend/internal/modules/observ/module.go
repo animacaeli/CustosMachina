@@ -327,7 +327,7 @@ func truncateStr(s string, n int) string {
 func (s *Service) setting(ctx context.Context, key string) (string, error) {
 	var row struct{ Value string }
 	err := s.db.WithContext(ctx).Table("platform_settings").
-		Select("value").Where("key = ?", key).First(&row).Error
+		Select("value").Where("skey = ?", key).Order("skey").First(&row).Error
 	if err != nil {
 		return "", nil // 未配置
 	}
@@ -339,8 +339,8 @@ func (s *Service) SetO2URL(ctx context.Context, url string) error {
 		return errors.New("O2 地址须为 http(s)://...（含流路径，如 http://10.0.0.1:5080/api/default/custos/_json）")
 	}
 	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`,
 		settingO2URL, url).Error
 }
 

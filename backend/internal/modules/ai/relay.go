@@ -90,8 +90,8 @@ func (s *Service) SaveSettings(ctx context.Context, endpoint, model, apiKey stri
 	}
 	set := func(k, v string) error {
 		return s.db.WithContext(ctx).Exec(
-			`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v).Error
+			`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+			 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, k, v).Error
 	}
 	if endpoint != "" {
 		if err := set(settingEndpoint, strings.TrimRight(endpoint, "/")); err != nil {
@@ -156,8 +156,8 @@ func (s *Service) SaveContextWindow(ctx context.Context, window int) error {
 		v = fmt.Sprintf("%d", window)
 	}
 	return s.db.WithContext(ctx).Exec(
-		`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, settingWindow, v).Error
+		`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+		 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, settingWindow, v).Error
 }
 
 // Message OpenAI 兼容消息。Content 为 any：普通对话传 string；
@@ -460,7 +460,7 @@ func (s *Service) doCompleteStream(ctx context.Context, cfg *relayConfig, messag
 func (s *Service) setting(ctx context.Context, key string) (string, error) {
 	var row struct{ Value string }
 	err := s.db.WithContext(ctx).Table("platform_settings").
-		Select("value").Where("key = ?", key).First(&row).Error
+		Select("value").Where("skey = ?", key).Order("skey").First(&row).Error
 	if err != nil {
 		return "", err
 	}

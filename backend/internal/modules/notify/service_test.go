@@ -29,7 +29,7 @@ func testDB(t *testing.T) *gorm.DB {
 
 // identitySettingTable 仅用于建表（platform_settings 属 identity 模块，这里只建同名表避免跨模块依赖）。
 type identitySettingTable struct {
-	Key   string `gorm:"primarykey;size:64"`
+	Key   string `gorm:"column:skey;primarykey;size:64"`
 	Value string `gorm:"type:text"`
 }
 
@@ -134,7 +134,7 @@ func notifyTestService(t *testing.T) *Service {
 	if err := db.AutoMigrate(&Group{}, &SendRecord{}, &Rule{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	cipher, err := crypto.NewCipher("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")

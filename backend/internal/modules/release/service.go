@@ -136,7 +136,7 @@ type ReleaseInput struct {
 }
 
 // Execute 校验"已通过 CI"→ 取 compose 文件 → 部署 → 落发布历史 + 通知。
-func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string) (*Release, error) {
+func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string, rollbackOf ...uint) (*Release, error) {
 	p, err := s.project(ctx, in.ProjectID)
 	if err != nil {
 		return nil, err
@@ -188,6 +188,7 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string)
 		ProjectID: in.ProjectID, EnvType: in.EnvType, Tag: in.Tag,
 		ServerID: target.ServerID, Runtime: "compose",
 		ReleaseBy: operator, Status: ReleaseFailed,
+		RollbackOf: rollbackOfRef(rollbackOf),
 	}
 	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
 
@@ -228,17 +229,11 @@ func (s *Service) Rollback(ctx context.Context, releaseID uint, operator string)
 	if err := s.db.WithContext(ctx).First(&old, releaseID).Error; err != nil {
 		return nil, ErrNotFound
 	}
-	rel, err := s.Execute(ctx, ReleaseInput{
+	// P8-M1：rollback_of 经 Execute 变参并入单条 INSERT（原两步写在
+	// 补写失败时丢溯源关系；Execute 内含远程部署不可入事务，单条原子写是正解）
+	return s.Execute(ctx, ReleaseInput{
 		ProjectID: old.ProjectID, EnvType: old.EnvType, Tag: old.Tag,
-	}, operator)
-	// 无论成功失败，只要记录已落库就补上指向关系（failed 的回滚记录同样需要溯源）
-	if rel != nil && rel.ID != 0 {
-		rel.RollbackOf = &old.ID
-		if err := s.db.WithContext(ctx).Model(rel).Update("rollback_of", old.ID).Error; err != nil {
-			return nil, err
-		}
-	}
-	return rel, err
+	}, operator, old.ID)
 }
 
 // List 分页发布历史。
@@ -328,4 +323,12 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// rollbackOfRef 变参 → 可空指针（无参 = nil，普通发布）。
+func rollbackOfRef(rollbackOf []uint) *uint {
+	if len(rollbackOf) == 0 || rollbackOf[0] == 0 {
+		return nil
+	}
+	return &rollbackOf[0]
 }

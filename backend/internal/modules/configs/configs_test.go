@@ -565,7 +565,7 @@ func kvTestService(t *testing.T, agileURL string) *Service {
 	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`CREATE TABLE server_events (id INTEGER PRIMARY KEY AUTOINCREMENT, server_id INTEGER, type TEXT, message TEXT, created_at DATETIME)`).Error; err != nil {

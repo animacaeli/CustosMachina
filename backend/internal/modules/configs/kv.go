@@ -47,8 +47,8 @@ type KVSettingsOut struct {
 func (s *Service) SaveKVSettings(ctx context.Context, endpoint, user, pass string) error {
 	set := func(k, v string) error {
 		return s.db.WithContext(ctx).Exec(
-			`INSERT INTO platform_settings (key, value) VALUES (?, ?)
-			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v).Error
+			`INSERT INTO platform_settings (skey, value) VALUES (?, ?)
+			 ON CONFLICT(skey) DO UPDATE SET value = excluded.value`, k, v).Error
 	}
 	if endpoint != "" {
 		if !strings.HasPrefix(endpoint, "http") {
@@ -81,9 +81,9 @@ func (s *Service) SaveKVSettings(ctx context.Context, endpoint, user, pass strin
 func (s *Service) KVSettings(ctx context.Context) KVSettingsOut {
 	var ep, pass string
 	s.db.WithContext(ctx).Table("platform_settings").Select("value").
-		Where("key = ?", settingKVEndpoint).Scan(&ep)
+		Where("skey = ?", settingKVEndpoint).Scan(&ep)
 	s.db.WithContext(ctx).Table("platform_settings").Select("value").
-		Where("key = ?", settingKVPass).Scan(&pass)
+		Where("skey = ?", settingKVPass).Scan(&pass)
 	return KVSettingsOut{Configured: ep != "" && pass != "", Endpoint: ep}
 }
 
@@ -149,7 +149,7 @@ func (s *Service) agileClient(ctx context.Context) (*agileClient, error) {
 	var ep, user, encPass string
 	q := func(key string, dest *string) {
 		s.db.WithContext(ctx).Table("platform_settings").Select("value").
-			Where("key = ?", key).Scan(dest)
+			Where("skey = ?", key).Scan(dest)
 	}
 	q(settingKVEndpoint, &ep)
 	q(settingKVUser, &user)

@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -146,6 +147,14 @@ func Load() (*Config, error) {
 			MaxBackups: v.GetInt("log.max_backups"),
 			MaxAgeDays: v.GetInt("log.max_age_days"),
 		},
+	}
+	// P8-M1 安全硬化：JWT secret 为默认值或过短一律拒绝启动（生产防呆；
+	// 双 token 会话体系全系签名依赖它）。开发直跑显式豁免：
+	// CUSTOS_AUTH_ALLOW_DEFAULT_SECRET=1（make dev 已注入）。
+	if cfg.Auth.JWTSecret == "change-me-in-production" || len(cfg.Auth.JWTSecret) < 32 {
+		if !v.GetBool("auth.allow_default_secret") {
+			return nil, fmt.Errorf("CUSTOS_AUTH_JWT_SECRET 未设置或过短（<32 字节）——生产部署必须显式配置强随机密钥；本地开发可设 CUSTOS_AUTH_ALLOW_DEFAULT_SECRET=1 豁免")
+		}
 	}
 	return cfg, nil
 }

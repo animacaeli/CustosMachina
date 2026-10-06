@@ -6,9 +6,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"fmt"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 	"github.com/custos-machina/backend/internal/server"
+	"strings"
 )
 
 // registerQRLoginRoutes 扫码登录相关路由（公开）+ 会话与配置管理。
@@ -126,10 +128,35 @@ type imSaveInput struct {
 	Enabled bool              `json:"enabled"`
 }
 
+// imRequiredFields P8-M1：保存时的必填字段校验（#13——残缺凭证原先要到
+// verify/扫码时才暴露，保存即报错把反馈提前到填写时）。
+var imRequiredFields = map[string][]string{
+	"wecom":    {"corpId", "agentId", "secret"},
+	"dingtalk": {"clientKey", "clientSecret"},
+	"feishu":   {"appId", "appSecret"},
+}
+
+func validateIMConfig(provider string, cfg map[string]string) error {
+	req, ok := imRequiredFields[provider]
+	if !ok {
+		return fmt.Errorf("未知 IM 提供商: %s", provider)
+	}
+	for _, k := range req {
+		if strings.TrimSpace(cfg[k]) == "" {
+			return fmt.Errorf("缺少必填字段: %s", k)
+		}
+	}
+	return nil
+}
+
 func (h *Handler) imSave(c *gin.Context) {
 	provider := c.Param("provider")
 	var in imSaveInput
 	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := validateIMConfig(provider, in.Config); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}

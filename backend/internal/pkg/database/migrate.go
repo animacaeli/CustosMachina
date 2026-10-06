@@ -104,15 +104,30 @@ func splitSQL(s string) []string {
 }
 
 // hasBusinessTables 库里是否已有业务表（判断新库/存量库）。
+// P8-M1 双方言：information_schema 为 MySQL/PG 公共目录（SQLite 走 sqlite_master）。
 func hasBusinessTables(db *gorm.DB) bool {
 	var n int64
-	db.Table("sqlite_master").Where("type = 'table' AND name NOT LIKE 'sqlite_%' AND name = 'servers'").Count(&n)
-	if n > 0 {
-		return true
+	if db.Dialector.Name() == "sqlite" {
+		db.Table("sqlite_master").
+			Where("type = 'table' AND name NOT LIKE 'sqlite_%' AND name = 'servers'").Count(&n)
+	} else {
+		db.Table("information_schema.tables").
+			Where("table_schema = ? AND table_name = ?", currentSchema(db), "servers").Count(&n)
 	}
-	// MySQL/Postgres：information_schema
-	db.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'servers'`).Scan(&n)
 	return n > 0
+}
+
+// currentSchema 当前库名（MySQL=DATABASE()，PG=current_database()——
+// 取连接 DSN 的库名最省方言差异，取不到则退 CURRENT_SCHEMA 不可靠场景）。
+func currentSchema(db *gorm.DB) string {
+	if name := db.Dialector.Name(); name == "postgres" {
+		var s string
+		db.Raw("SELECT current_schema()").Scan(&s) // schema（默认 public），非库名
+		return s
+	}
+	var s string
+	db.Raw("SELECT DATABASE()").Scan(&s)
+	return s
 }
 
 // Migrate 版本化迁移入口：新库走 AutoMigrate + baseline；存量库跑增量。

@@ -286,7 +286,7 @@ func NewEnforcer(db *gorm.DB) (*casbin.SyncedEnforcer, func(), error) {
 	}
 	if seeded {
 		var setting identity.PlatformSetting
-		if err := db.Where("key = ?", "rbac.seed_version").First(&setting).Error; err != nil {
+		if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err != nil {
 			setting = identity.PlatformSetting{Key: "rbac.seed_version"}
 		}
 		setting.Value = policySeedVersion
@@ -321,7 +321,7 @@ func EnforceAny(e *casbin.SyncedEnforcer, roles []string, obj, act string) (bool
 func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 	oldVersion := ""
 	var setting identity.PlatformSetting
-	if err := db.Where("key = ?", "rbac.seed_version").First(&setting).Error; err == nil {
+	if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err == nil {
 		if setting.Value == policySeedVersion {
 			return false, nil
 		}

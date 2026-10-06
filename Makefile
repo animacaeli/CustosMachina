@@ -20,7 +20,7 @@ dev:
 	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-backend:
-	@cd $(BACKEND_DIR) && CUSTOS_HTTP_ADDR=$(HTTP_ADDR) CUSTOS_SECRETS_MASTER_KEY=$(DEV_MASTER_KEY) go run ./cmd/server
+	@cd $(BACKEND_DIR) && CUSTOS_HTTP_ADDR=$(HTTP_ADDR) CUSTOS_SECRETS_MASTER_KEY=$(DEV_MASTER_KEY) CUSTOS_AUTH_ALLOW_DEFAULT_SECRET=1 go run ./cmd/server
 
 dev-frontend:
 	@cd $(FRONTEND_DIR) && CUSTOS_API_TARGET=$(CUSTOS_API_TARGET) pnpm dev:antd

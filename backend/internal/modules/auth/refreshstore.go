@@ -37,7 +37,15 @@ func newMemoryRefreshStore() *memoryRefreshStore {
 func (m *memoryRefreshStore) Save(_ context.Context, token string, userID uint, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.tokens[token] = memoryEntry{userID: userID, expire: time.Now().Add(ttl)}
+	// P8-M1：写入时顺带清扫过期项（未消费的 token 原先只在被访问时删除，
+	// 长跑缓慢累积；与 ratelimit.Window 同款惰性清扫，免 ticker）
+	now := time.Now()
+	for k, e := range m.tokens {
+		if now.After(e.expire) {
+			delete(m.tokens, k)
+		}
+	}
+	m.tokens[token] = memoryEntry{userID: userID, expire: now.Add(ttl)}
 	return nil
 }
 
