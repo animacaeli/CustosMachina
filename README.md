@@ -28,7 +28,7 @@ cp .env.example .env   # 必改：JWT 密钥；按需：主密钥、公网地址
 docker compose pull && docker compose up -d
 ```
 
-镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.12.4`）。
+镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.12.5`）。
 
 ### 方式二：单镜像（nginx 基座，前后端同容器，最小部署）
 
@@ -37,7 +37,7 @@ docker run -d -p 80:80 --name custos \
   -v custos-data:/data \
   -e CUSTOS_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
   -e CUSTOS_SECRETS_MASTER_KEY=$(openssl rand -hex 32) \
-  ghcr.io/animacaeli/custosmachina:v0.12.4
+  ghcr.io/animacaeli/custosmachina:v0.12.5
 ```
 
 环境变量与 compose 方式一致，完整清单见 `deploy/.env.example`。
@@ -127,4 +127,4 @@ custos-machina/
 
 ## 状态
 
-**P1~P8 全量交付（当前 v0.12.4）——功能开发收官转维护期；v0.12.1~v0.12.4 为三视角安全审计及其三轮复核的修复批次。** 第七阶段：权限体系与 AI 深化（告警 AI 分析 / 编辑器 AI 助手 / 上下文管理 / 业务告警 API）；第八阶段：安全硬化（MySQL / PostgreSQL 双方言实测）、体验尾巴、k3s 基建演进（双轨部署载体 + 观测栈 DaemonSet），见 [P7](docs/plan-phase7-permissions-and-ai.md) / [P8 计划](docs/plan-phase8-hardening-and-k3s.md)。
+**P1~P8 全量交付（当前 v0.12.5）——功能开发收官转维护期；v0.12.1~v0.12.5 为三视角安全审计、三轮复核与生产事故响应的修复批次。** 第七阶段：权限体系与 AI 深化（告警 AI 分析 / 编辑器 AI 助手 / 上下文管理 / 业务告警 API）；第八阶段：安全硬化（MySQL / PostgreSQL 双方言实测）、体验尾巴、k3s 基建演进（双轨部署载体 + 观测栈 DaemonSet），见 [P7](docs/plan-phase7-permissions-and-ai.md) / [P8 计划](docs/plan-phase8-hardening-and-k3s.md)。
