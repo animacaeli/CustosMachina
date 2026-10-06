@@ -218,20 +218,50 @@ func TestGuestLosesSlotsWrite(t *testing.T) {
 	}
 }
 
-// 收权迁移「不复活人为删改」：dev 的 alerts 条目被整体删除后，
-// 升级收权不得把它加回来。
+// deNarrowPolicies 直测（v0.12.3 复核：上一版是空转测试——被测函数是
+// 闭包且从未被调用，任何实现都绿）。
 func TestDeNarrowDoesNotResurrectDeleted(t *testing.T) {
 	svc := newTestEnforcer(t)
 	e := svc.enforcer
-	// 模拟管理员整体删除 dev 的 alerts 条目
+	// 场景①：管理员整体删除 dev 的 alerts 条目（连旧带新都删），
+	// 从 v25 升级收权不得复活
 	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST")
 	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|POST")
-	// 复核 v25 收权逻辑：旧条目已不存在 → replacePolicy 应为 no-op
-	removed, _ := e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST")
-	if removed {
-		t.Error("已删除的条目不应再次移除成功")
+	if changed := deNarrowPolicies(e, "25"); changed {
+		t.Error("旧条目已不存在时应为 no-op（changed=false）")
 	}
 	if has, _ := e.HasPolicy("dev", "/observ/alerts/*", "GET|POST"); has {
 		t.Error("被删除的条目不应被复活")
+	}
+
+	// 场景②：存量 v24 库（dev 旧 GET|DELETE|POST 在）→ 收权生效且降级为新条目
+	svc2 := newTestEnforcer(t)
+	e2 := svc2.enforcer
+	if _, err := e2.AddPolicy("dev", "/observ/alerts/*", "GET|DELETE|POST"); err != nil {
+		t.Fatal(err)
+	}
+	if !deNarrowPolicies(e2, "24") {
+		t.Error("移除旧条目应返回 changed=true")
+	}
+	if has, _ := e2.HasPolicy("dev", "/observ/alerts/*", "GET|DELETE|POST"); has {
+		t.Error("旧条目应被移除")
+	}
+	if has, _ := e2.HasPolicy("dev", "/observ/alerts/*", "GET|POST"); !has {
+		t.Error("新条目应被补上")
+	}
+
+	// 场景③：已是 v26+ 的库 → 幂等跳过
+	if deNarrowPolicies(e2, "26") {
+		t.Error("v26 及以上应直接跳过（changed=false）")
+	}
+	// 场景④：极旧部署（版本缺失不可解析）→ 照样收权
+	svc3 := newTestEnforcer(t)
+	e3 := svc3.enforcer
+	_, _ = e3.AddPolicy("guest", "/slots", "GET|POST")
+	if !deNarrowPolicies(e3, "") {
+		t.Error("版本不可解析（极旧部署）应执行收权")
+	}
+	if has, _ := e3.HasPolicy("guest", "/slots", "POST"); has {
+		t.Error("guest 旧 POST 条目应被移除")
 	}
 }

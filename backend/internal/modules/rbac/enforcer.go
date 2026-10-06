@@ -427,24 +427,8 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 			entryLevelSeed[p[0]] = true
 		}
 	}
-	// ---- 版本收权（数值比较防字典序漏版；仅当确实移除了旧条目才补新，
-	// 不复活管理员人为删掉的条目）----
-	replacePolicy := func(sub, obj, oldAct, newAct string) {
-		if v, err := strconv.Atoi(oldVersion); err == nil && v >= 26 {
-			return // 已收过权（版本可解析且不小于 26）；解析失败=极旧部署，照收
-		}
-		removed, _ := e.RemovePolicy(sub, obj, oldAct)
-		if !removed {
-			return // 旧条目不存在（人为删改或从未有过）——不动
-		}
-		if has, _ := e.HasPolicy(sub, obj, newAct); !has {
-			_, _ = e.AddPolicy(sub, obj, newAct)
-		}
-		changed = true
-	}
-	replacePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST", "GET|POST") // v25
-	replacePolicy("guest", "/slots", "GET|POST", "GET")                     // v26
-	replacePolicy("guest", "/slots/*", "GET|POST", "GET")                   // v26
+	// ---- 版本收权（deNarrowPolicies，包级函数可单测）----
+	changed = deNarrowPolicies(e, oldVersion) || changed
 
 	for _, p := range defaultPolicies {
 		if !roleNeedsSeed[p[0]] && !entryLevelSeed[p[0]] {
@@ -458,4 +442,34 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 	}
 	return changed, nil
+}
+
+// deNarrowPolicies 版本收权（v25 起）：数值比较防字典序漏版（"9" > "25"）；
+// 仅当确实移除了旧条目才补新——不复活管理员人为删除的策略。返回是否有变更。
+// 包级函数（非闭包）以便直接单测——空转测试的教训（v0.12.3 复核）。
+func deNarrowPolicies(e *casbin.SyncedEnforcer, oldVersion string) bool {
+	if v, err := strconv.Atoi(oldVersion); err == nil && v >= 26 {
+		return false // 已收过权（版本可解析且不小于 26）；解析失败=极旧部署，照收
+	}
+	replace := func(sub, obj, oldAct, newAct string) bool {
+		removed, _ := e.RemovePolicy(sub, obj, oldAct)
+		if !removed {
+			return false // 旧条目不存在（人为删改或从未有过）——不动
+		}
+		if has, _ := e.HasPolicy(sub, obj, newAct); !has {
+			_, _ = e.AddPolicy(sub, obj, newAct)
+		}
+		return true
+	}
+	changed := false
+	for _, r := range [][4]string{
+		{"dev", "/observ/alerts/*", "GET|DELETE|POST", "GET|POST"}, // v25
+		{"guest", "/slots", "GET|POST", "GET"},                     // v26
+		{"guest", "/slots/*", "GET|POST", "GET"},                   // v26
+	} {
+		if replace(r[0], r[1], r[2], r[3]) {
+			changed = true
+		}
+	}
+	return changed
 }

@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -101,32 +100,3 @@ func orDefault(v, def int) int {
 	}
 	return v
 }
-
-// Writer 把日志门面桥接为 io.Writer（gorm logger 等三方需要 writer 的场景），
-// 替代标准库 log 直写 stderr——遵守「禁止多套日志并存」（v0.12.1 复核）。
-type writerAdapter struct{}
-
-func (writerAdapter) Write(p []byte) (int, error) {
-	// gorm logger 的格式化输出自带级别标记（errStr/warnStr/infoStr 的
-	// "[error]"/"[warn]"/"[info]" 前缀）——据此分流，SQL 错误不再被
-	// 降级成 INFO（v0.12.2 复核）
-	line := strings.TrimRight(string(p), "\r\n")
-	switch {
-	case strings.Contains(line, "[error]"):
-		Errorf("%s", line)
-	case strings.Contains(line, "[warn]"):
-		Warnf("%s", line)
-	default:
-		Infof("%s", line)
-	}
-	return len(p), nil
-}
-
-// Printf gorm logger.Writer 接口要求。
-func (writerAdapter) Printf(format string, args ...any) {
-	Infof(format, args...)
-}
-
-// Writer 返回经 zap 的 writer 适配器（同时实现 io.Writer 与 gorm 的
-// logger.Writer/Printf 接口——返回具体类型让两者都满足）。
-func Writer() writerAdapter { return writerAdapter{} }

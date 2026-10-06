@@ -6,16 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/custos-machina/backend/internal/config"
-	applog "github.com/custos-machina/backend/internal/pkg/logger"
 )
 
 // Open 按配置建立数据库连接并执行版本化迁移（Migrate：新库 AutoMigrate
@@ -38,15 +35,9 @@ func Open(cfg *config.Database, models []any) (*gorm.DB, error) {
 		return nil, fmt.Errorf("不支持的数据库驱动: %s", cfg.Driver)
 	}
 
-	// 记录未找到是正常业务分支，不落日志；慢查询与真实错误仍告警
-	gl := logger.New(applog.Writer(), logger.Config{
-		SlowThreshold:             200 * time.Millisecond,
-		LogLevel:                  logger.Warn,
-		IgnoreRecordNotFoundError: true,
-		Colorful:                  false, // JSON 管线不吃 ANSI 色
-	})
 	db, err := gorm.Open(dialector, &gorm.Config{
-		Logger: gl,
+		// 自定义日志实现：错误/慢查询分级直连 zap（见 gormlog.go）
+		Logger: gormLogger{},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
