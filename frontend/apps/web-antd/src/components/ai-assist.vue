@@ -27,10 +27,12 @@ const props = withDefaults(
     extract?: (result: string) => string;
   }>(),
   {
-    title: 'AI 助手',
-    placeholder: '',
+    // title/applyLabel/placeholder 默认 undefined（显式写以满足 lint 规则）：
+    // 保持 undefined 让 sceneMeta 的场景化文案生效，设真实默认值会短路 ?? 分支
+    title: undefined,
+    placeholder: undefined,
+    applyLabel: undefined,
     context: undefined,
-    applyLabel: '插 入',
     extract: undefined,
   },
 );
