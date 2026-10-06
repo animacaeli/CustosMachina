@@ -100,6 +100,10 @@ onBeforeUnmount(stopPoll);
 function pollRunning(id: number) {
   stopPoll();
   pollTimer = setInterval(async () => {
+    if (!props.open) {
+      stopPoll(); // 抽屉已关：详情轮询随停
+      return;
+    }
     try {
       const r = await getRunApi(id);
       activeRun.value = r;

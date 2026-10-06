@@ -46,8 +46,13 @@ export function usePagedListPolling<T>(options: PagedPollingOptions<T>) {
     if (!options.active() || !options.shouldPoll?.(items.value)) return;
     timer = setInterval(async () => {
       // 页面不可见或宿主已不可见（抽屉关闭）都暂停——只判 document.hidden
-      // 会在关抽屉后继续每 interval 请求一次（v0.12.1 复核）
-      if (document.hidden || !options.active()) return;
+      // 会在关抽屉后继续每 interval 请求一次（v0.12.1 复核）；
+      // 宿主不可见时直接停表，重开由调用方 load() 恢复（v0.12.2 复核）
+      if (!options.active()) {
+        stopPoll();
+        return;
+      }
+      if (document.hidden) return;
       try {
         const res = await options.fetch(page.value, size);
         items.value = res.items ?? [];

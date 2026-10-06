@@ -28,27 +28,37 @@ const users = ref<{ username: string; displayName: string; status: string }[]>(
 );
 const selected = ref<string[]>([]);
 const saving = ref(false);
+// 后端 PUT 是全量替换语义：加载失败时空勾选与「确实没授权」在 UI 上无法
+// 区分，一次误点即静默清空该主机全部终端授权——确定按钮在加载成功前禁用
+// （v0.12.2 复核）
+const loaded = ref(false);
 
 watch(
   () => [open.value, props.serverId],
   async ([v]) => {
     if (!v || !props.serverId) return;
+    loaded.value = false;
     selected.value = []; // 先清空：失败不残留上一台勾选（防 A 机授权存到 B 机）
     try {
       selected.value = await getTerminalAclsApi(props.serverId);
+      loaded.value = true;
     } catch {
-      // 拦截器已提示
+      // 拦截器已提示；loaded 保持 false，确定按钮禁用
     }
     if (users.value.length === 0) {
-      const list = await getUserListApi();
-      // 仅本地账号可授权（IM 账号 username 为空，无稳定 sub）
-      users.value = list
-        .filter((u) => (u.username ?? '') !== '')
-        .map((u) => ({
-          username: u.username as string,
-          displayName: u.displayName,
-          status: u.status,
-        }));
+      try {
+        const list = await getUserListApi();
+        // 仅本地账号可授权（IM 账号 username 为空，无稳定 sub）
+        users.value = list
+          .filter((u) => (u.username ?? '') !== '')
+          .map((u) => ({
+            username: u.username as string,
+            displayName: u.displayName,
+            status: u.status,
+          }));
+      } catch {
+        // 账号列表拉取失败不阻塞授权编辑（已授权用户仍可取消勾选）
+      }
     }
   },
 );
@@ -71,6 +81,7 @@ async function save() {
 <template>
   <a-modal
     v-model:open="open"
+    :ok-button-props="{ disabled: !loaded }"
     :title="`终端授权 · ${props.serverName ?? ''}`"
     :confirm-loading="saving"
     @ok="save"

@@ -131,7 +131,7 @@ function toggleFullscreen() {
   >
     <div
       ref="containerRef"
-      :style="{ height: fullscreen ? '94vh' : '76vh', background: '#1e1e1e' }"
+      :style="{ height: fullscreen ? '100%' : '76vh', background: '#1e1e1e' }"
       class="p-1"
     ></div>
     <template #title>

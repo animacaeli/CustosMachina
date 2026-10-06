@@ -107,7 +107,18 @@ func orDefault(v, def int) int {
 type writerAdapter struct{}
 
 func (writerAdapter) Write(p []byte) (int, error) {
-	Infof("%s", strings.TrimRight(string(p), "\r\n"))
+	// gorm logger 的格式化输出自带级别标记（errStr/warnStr/infoStr 的
+	// "[error]"/"[warn]"/"[info]" 前缀）——据此分流，SQL 错误不再被
+	// 降级成 INFO（v0.12.2 复核）
+	line := strings.TrimRight(string(p), "\r\n")
+	switch {
+	case strings.Contains(line, "[error]"):
+		Errorf("%s", line)
+	case strings.Contains(line, "[warn]"):
+		Warnf("%s", line)
+	default:
+		Infof("%s", line)
+	}
 	return len(p), nil
 }
 
