@@ -8,6 +8,7 @@ import { useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
+import { listClustersApi } from '#/api/k3s';
 import {
   getNotifyGroupsApi,
   getProjectApi,
@@ -128,12 +129,16 @@ async function saveConfig() {
       testSlotCount: config.testSlotCount,
       trafficCap: config.trafficCap,
     });
-    if (deployServerId.value) {
+    const targetServer = deployServerId.value;
+    const targetCluster = deployClusterId.value;
+    if (targetServer || (deployRuntime.value === 'k3s' && targetCluster)) {
       await saveProjectTargetsApi(props.projectId, {
         targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
           envType,
-          runtime: 'compose' as const,
-          serverId: deployServerId.value as number,
+          runtime: deployRuntime.value,
+          serverId:
+            deployRuntime.value === 'compose' ? (targetServer as number) : 0,
+          clusterId: deployRuntime.value === 'k3s' ? targetCluster : 0,
         })),
       });
     }
@@ -149,8 +154,21 @@ async function saveConfig() {
 // 三个环境通常同机（compose 期隔离域靠项目名前缀），UI 简化为一个下拉，保存时三环境同值。
 const deployServerId = ref<number | undefined>();
 
+// P8-M3.3 双轨载体：compose（SSH 主机）| k3s（集群 API，零 SSH）
+const deployRuntime = ref<'compose' | 'k3s'>('compose');
+const deployClusterId = ref<number | undefined>();
+const k3sClusters = ref<Array<{ id: number; name: string }>>([]);
+
 function fillTargets(ts: EnvTarget[]) {
   deployServerId.value = ts[0]?.serverId;
+  deployRuntime.value = ts[0]?.runtime === 'k3s' ? 'k3s' : 'compose';
+  deployClusterId.value = ts[0]?.clusterId || undefined;
+  // admin 才可见 k3s 集群列表（403 时静默空）
+  listClustersApi()
+    .then((cs) => {
+      k3sClusters.value = cs.map((c) => ({ id: c.id, name: c.name }));
+    })
+    .catch(() => {});
 }
 
 function close() {
@@ -174,6 +192,16 @@ function close() {
           <a-form layout="vertical" style="max-width: 42rem">
             <a-divider orientation="left" plain>CI / 部署</a-divider>
             <a-form-item
+              label="部署载体"
+              extra="compose=SSH 到主机部署；k3s=直连集群 API（零 SSH，蓝绿/灰度由原生 rollout/canary 承接）"
+            >
+              <a-radio-group v-model:value="deployRuntime" class="mr-3">
+                <a-radio value="compose">compose（主机）</a-radio>
+                <a-radio value="k3s">k3s（集群）</a-radio>
+              </a-radio-group>
+            </a-form-item>
+            <a-form-item
+              v-if="deployRuntime === 'compose'"
               label="部署主机"
               extra="正式 / 灰度 / 测试共用（隔离域靠项目名前缀区分）；编排细节在仓库的 compose 文件里"
             >
@@ -188,6 +216,21 @@ function close() {
                 allow-clear
                 placeholder="未配置（发布/槽位不可用）"
                 show-search
+                style="width: 360px"
+              />
+            </a-form-item>
+            <a-form-item
+              v-if="deployRuntime === 'k3s'"
+              label="k3s 集群"
+              extra="compose 文件翻译为 Deployment/Service/Ingress（主服务+sidecar 同 Pod）；集群在管理后台 → k3s 集群登记"
+            >
+              <a-select
+                v-model:value="deployClusterId"
+                :options="
+                  k3sClusters.map((c) => ({ label: c.name, value: c.id }))
+                "
+                allow-clear
+                placeholder="选择目标集群"
                 style="width: 360px"
               />
             </a-form-item>

@@ -6,6 +6,7 @@ import AiSkills from './tabs/ai-skills.vue';
 import AlertTemplates from './tabs/alert-templates.vue';
 import CiConfig from './tabs/ci-config.vue';
 import ImConfig from './tabs/im-config.vue';
+import K3sClusters from './tabs/k3s-clusters.vue';
 import McpTokens from './tabs/mcp-tokens.vue';
 import NotifyGroups from './tabs/notify-groups.vue';
 import NotifyRoutes from './tabs/notify-routes.vue';
@@ -53,6 +54,9 @@ const activeTab = ref('im');
         </a-tab-pane>
         <a-tab-pane key="skills" tab="AI 技能">
           <AiSkills />
+        </a-tab-pane>
+        <a-tab-pane key="k3s" tab="k3s 集群">
+          <K3sClusters />
         </a-tab-pane>
         <a-tab-pane key="ci" tab="CI / 镜像仓库">
           <CiConfig />

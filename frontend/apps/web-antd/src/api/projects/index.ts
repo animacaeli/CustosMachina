@@ -143,6 +143,7 @@ export interface SaveProjectInput {
 }
 
 export interface EnvTarget {
+  clusterId?: number; // k3s 运行时的目标集群（P8-M3.2）
   createdAt: string;
   envType: 'canary' | 'prod' | 'test';
   id: number;

@@ -97,7 +97,9 @@ type DeployInput struct {
 	Namespace   string // 项目-环境（custos-<project>-<env>）
 	ComposeYAML string
 	Tag         string // 发布 tag（镜像替换）
-	Host        string // Ingress host（空=不建）
+	ProjectName string // Host 组装用（<project>-<env>.<cluster.Domain>）
+	EnvType     string
+	Host        string // 显式 host（非空优先于域名策略）
 }
 
 // Deploy 翻译 + apply（create-or-update）+ 等 rollout ready。
@@ -107,7 +109,16 @@ func (s *Service) Deploy(ctx context.Context, in DeployInput) (*DeployResult, er
 	if err != nil {
 		return nil, err
 	}
-	t, err := Translate(spec, TranslateInput{Namespace: in.Namespace, Tag: in.Tag, Host: in.Host})
+	// Host 域名策略（M3.3）：显式 Host 优先；否则集群 Domain 配置时
+	// 组装 <project>-<env>.<domain>；都空不建 Ingress（仅集群内 Service）
+	host := in.Host
+	if host == "" && in.ProjectName != "" {
+		var c Cluster
+		if err := s.db.WithContext(ctx).Select("domain").First(&c, in.ClusterID).Error; err == nil && c.Domain != "" {
+			host = fmt.Sprintf("%s-%s.%s", in.ProjectName, in.EnvType, c.Domain)
+		}
+	}
+	t, err := Translate(spec, TranslateInput{Namespace: in.Namespace, Tag: in.Tag, Host: host})
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@
 package k3s
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -149,5 +150,35 @@ func TestPickMainService(t *testing.T) {
 		"zzz": {}, "abc": {},
 	}); got != "abc" {
 		t.Errorf("无关键词取字典序首，got %s", got)
+	}
+}
+
+func TestTranslateSidecars(t *testing.T) {
+	spec, _ := ParseCompose(sampleCompose) // api + sidecar
+	out, err := Translate(spec, TranslateInput{Namespace: "ns", Tag: "v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers := out.Deployment.Spec.Template.Spec.Containers
+	if len(containers) != 2 {
+		t.Fatalf("应 2 容器（主+sidecar），got %d", len(containers))
+	}
+	if containers[0].Name != "api" || containers[1].Name != "sidecar" {
+		t.Errorf("容器顺序不符: %s, %s", containers[0].Name, containers[1].Name)
+	}
+	if containers[1].Image != "registry.local/log/shipper:v2" {
+		t.Errorf("sidecar 镜像 tag 替换不符: %s", containers[1].Image)
+	}
+	if containers[1].ReadinessProbe != nil {
+		t.Error("sidecar 不应有独立探针（整 Pod 就绪由主容器代表）")
+	}
+	// 上限保护
+	big := "services:\n"
+	for i := 0; i < 7; i++ {
+		big += fmt.Sprintf("  s%d:\n    image: x/%d\n", i, i)
+	}
+	specBig, _ := ParseCompose(big)
+	if _, err := Translate(specBig, TranslateInput{Namespace: "ns"}); err == nil {
+		t.Error("7 个 service 应拒绝")
 	}
 }

@@ -369,7 +369,8 @@ func (s *Service) executeK3s(ctx context.Context, in ReleaseInput, p *projectRow
 		Namespace:   k3sNamespace(in.ProjectID, in.EnvType),
 		ComposeYAML: yamlContent,
 		Tag:         in.Tag,
-		Host:        "", // Host 由 k3s.Service 依集群 Domain 组装（M3.3 域名策略接缝）
+		ProjectName: p.Name,
+		EnvType:     in.EnvType, // Host=<project>-<env>.<cluster.Domain>（k3s 模块组装）
 	})
 	if err != nil {
 		return nil, fmt.Errorf("k3s 部署失败: %w", err)

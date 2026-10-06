@@ -65,14 +65,17 @@ func ParseCompose(content string) (*ComposeSpec, error) {
 	return &spec, nil
 }
 
-// Translate 翻译入口：多 service 的 compose 最小承载只取**首个 web 型 service**
-// （平台项目的 compose 主服务即发布单元；sidecar 类服务暂不拆 Pod——多容器
-// 翻译留给 M3.3，翻译器注释里留接缝）。Ingress 路由到该 service 的容器端口。
+// Translate 翻译入口：主 service（web/app/api/main 关键词选取）为发布单元，
+// 其余 service 作为同 Pod 的 sidecar 容器（compose 网络命名空间语义 =
+// K8s 同 Pod 共享网络；M3.3 多容器翻译落地）。Ingress 路由主服务容器端口。
 func Translate(spec *ComposeSpec, in TranslateInput) (*TranslateOutput, error) {
 	name := pickMainService(spec.Services)
 	svc := spec.Services[name]
 	if svc.Image == "" {
 		return nil, fmt.Errorf("service %q 缺 image", name)
+	}
+	if len(spec.Services) > 6 {
+		return nil, fmt.Errorf("service 数 %d 超出单 Pod 翻译上限（6）——请拆分 compose", len(spec.Services))
 	}
 	image := svc.Image
 	if in.Tag != "" {
@@ -113,6 +116,39 @@ func Translate(spec *ComposeSpec, in TranslateInput) (*TranslateOutput, error) {
 	// healthcheck CMD curl → readinessProbe（仅识别 HTTP 形态；其余降级为 TCP 探针）
 	probe := probeFrom(svc.Healthcheck, containerPort)
 
+	// sidecar 容器：其余 service 并入同 Pod（不含探针——整 Pod 就绪由主容器
+	// 探针代表；资源未配置时给保守限额防 BestEffort）
+	sidecars := make([]corev1.Container, 0, len(spec.Services)-1)
+	for svcName, sc := range spec.Services {
+		if svcName == name || sc.Image == "" {
+			continue
+		}
+		scRes := corev1.ResourceRequirements{Limits: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("200m"),
+		}}
+		if sc.Deploy != nil && sc.Deploy.Resources != nil && sc.Deploy.Resources.Limits != nil {
+			l := sc.Deploy.Resources.Limits
+			scRes.Limits = corev1.ResourceList{}
+			if l.CPUs != "" {
+				if q, err := resource.ParseQuantity(l.CPUs); err == nil {
+					scRes.Limits[corev1.ResourceCPU] = q
+				}
+			}
+			if l.Memory != "" {
+				if q, err := resource.ParseQuantity(l.Memory); err == nil {
+					scRes.Limits[corev1.ResourceMemory] = q
+				}
+			}
+		}
+		sideEnv := make([]corev1.EnvVar, 0, len(sc.Environment))
+		for k, v := range sc.Environment {
+			sideEnv = append(sideEnv, corev1.EnvVar{Name: k, Value: v})
+		}
+		sidecars = append(sidecars, corev1.Container{
+			Name: svcName, Image: tagOf(sc.Image, in.Tag), Env: sideEnv, Resources: scRes,
+		})
+	}
+
 	replicas := int32(1)
 	labels := map[string]string{"app": name, "custos-machina/managed": "true"}
 	dep := &appsv1.Deployment{
@@ -122,14 +158,14 @@ func Translate(spec *ComposeSpec, in TranslateInput) (*TranslateOutput, error) {
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Spec: corev1.PodSpec{Containers: append([]corev1.Container{{
 					Name:           name,
 					Image:          image,
 					Ports:          []corev1.ContainerPort{{ContainerPort: containerPort}},
 					Env:            env,
 					Resources:      res,
 					ReadinessProbe: probe,
-				}}},
+				}}, sidecars...)},
 			},
 		},
 	}
@@ -201,6 +237,14 @@ func firstPort(ports []string) int32 {
 		return 0
 	}
 	return port
+}
+
+// tagOf sidecar 镜像的 tag 替换（主容器同款规则）。
+func tagOf(image, tag string) string {
+	if tag == "" {
+		return image
+	}
+	return stripTag(image) + ":" + tag
 }
 
 func stripTag(image string) string {
