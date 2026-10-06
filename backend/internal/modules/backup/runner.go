@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/custos-machina/backend/internal/pkg/crypto"
+	"github.com/custos-machina/backend/internal/pkg/shellx"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 // appVersion 产物 manifest 记录的平台版本（恢复时可判断兼容性）。
@@ -161,8 +163,10 @@ func (r *runner) writeRemoteDir(ctx context.Context, tw *tar.Writer, mf *manifes
 		return fmt.Errorf("远端目录路径不合法: %q", r.job.RemotePath)
 	}
 	tmpRemote := fmt.Sprintf("/tmp/custos-bk-%d.tar.gz", timeNowUnix())
-	// 打包（在远端执行；失败时输出带回）
-	cmd := fmt.Sprintf("tar -czf %s -C %s %s && du -sh %s | cut -f1", tmpRemote, strings.TrimRight(parent, "/"), base, tmpRemote)
+	// 打包（在远端执行；失败时输出带回）。parent/base 源自用户填写的
+	// RemotePath，必须 shellQuote——校验白名单在 validateJob，这里是第二道防线
+	cmd := fmt.Sprintf("tar -czf %s -C %s %s && du -sh %s | cut -f1",
+		tmpRemote, shellx.Quote(strings.TrimRight(parent, "/")), shellx.Quote(base), tmpRemote)
 	out, err := r.sshRun(ctx, r.job.ServerID, cmd, 10*time.Minute)
 	if err != nil {
 		return fmt.Errorf("远端打包失败: %v（%s）", err, truncate(out, 300))
@@ -193,7 +197,13 @@ func (r *runner) writeRemoteDir(ctx context.Context, tw *tar.Writer, mf *manifes
 		if hdrErr != nil {
 			return fmt.Errorf("远端产物解析失败: %w", hdrErr)
 		}
-		hdr.Name = filepath.ToSlash(filepath.Join("remote", hdr.Name))
+		// 条目名逐条校验后显式拼前缀——不能用 filepath.Join：它的 Clean 会
+		// 吃掉 ../，恶意条目名将逃出 remote/ 前缀写坏产物结构
+		name := strings.TrimPrefix(filepath.ToSlash(hdr.Name), "./")
+		if name == "" || strings.HasPrefix(name, "/") || name == ".." || strings.Contains(name, "../") {
+			return fmt.Errorf("远端产物条目名不合法: %q", hdr.Name)
+		}
+		hdr.Name = "remote/" + name
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -229,5 +239,5 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return strx.Truncate(s, n) + "..." // rune 安全（防切碎中文，v0.12.0 审计）
 }

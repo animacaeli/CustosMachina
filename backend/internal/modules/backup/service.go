@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -22,10 +23,8 @@ import (
 
 var ErrNotFound = errors.New("备份任务不存在")
 
-// EventNotifier 统一通知路由出口（notify.Service 实现，app 层注入）。
-type EventNotifier interface {
-	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
-}
+// EventNotifier 统一别名（notify 是唯一生产实现；历史上 6 份逐字相同的声明收敛于此）。
+type EventNotifier = notify.EventNotifier
 
 // SSHExecutor resources.Service 的最小投影（避免模块反向依赖具体类型）。
 type SSHExecutor interface {
@@ -89,11 +88,11 @@ func (s *Service) scanDue(ctx context.Context) error {
 		if s.concurrentRunning(j.ID) {
 			continue // 上一轮还没结束：跳过本触发点（Forbid 语义）
 		}
-		go func(j Job) {
+		jobs.GoSafe("backup:run", func() {
 			if _, err := s.execute(context.WithoutCancel(ctx), &j, TriggerSchedule); err != nil {
 				logger.Warnf("[backup] 调度执行失败 job=%q: %v", j.Name, err)
 			}
-		}(j)
+		})
 	}
 	return nil
 }
@@ -136,6 +135,10 @@ type SaveJobInput struct {
 	RetentionCount int    `json:"retentionCount" binding:"min=1,max=365"`
 }
 
+// remotePathRe 远端目录白名单：绝对路径 + 安全字符（v0.12.0 审计严重项 4——
+// RemotePath 拆分后拼进目标机 shell，空格/分号/引号都是注入面）。
+var remotePathRe = regexp.MustCompile(`^/[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
+
 func (s *Service) validateJob(in SaveJobInput) error {
 	if in.Schedule != "" {
 		if _, err := cron.ParseStandard(in.Schedule); err != nil {
@@ -146,6 +149,9 @@ func (s *Service) validateJob(in SaveJobInput) error {
 	case TypeRemoteDir:
 		if in.ServerID == 0 || in.RemotePath == "" {
 			return fmt.Errorf("remote_dir 任务须指定目标主机与目录")
+		}
+		if !remotePathRe.MatchString(in.RemotePath) {
+			return fmt.Errorf("远端目录须为绝对路径，且仅含字母数字与 . _ - /（不支持空格、中文与特殊符号）")
 		}
 	case TypePlatformSelf:
 		if in.Passphrase == "" {
@@ -421,11 +427,11 @@ func (s *Service) notifyFailure(ctx context.Context, j *Job, err error) {
 		return
 	}
 	detail := fmt.Sprintf("任务：%s（%s）\n错误：%v", j.Name, j.Type, err)
-	go func() {
+	jobs.GoSafe("backup:notify-fail", func() {
 		s.notifier.NotifyEvent(context.WithoutCancel(ctx),
 			notify.SourceBackupFailed, notify.LevelWarn,
 			fmt.Sprintf("backup-job-%d", j.ID), "备份失败："+j.Name, detail)
-	}()
+	})
 }
 
 func retentionNote(removed int) string {

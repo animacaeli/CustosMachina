@@ -15,7 +15,9 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/resources"
+	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/shellx"
 )
 
 var ErrNotFound = errors.New("任务或脚本不存在")
@@ -30,9 +32,8 @@ type Runner interface {
 
 // EventNotifier 统一通知路由出口（notify.Service 实现，app 层注入）：
 // 任务失败/超时走 cron_failed 事件源——半夜失败不能等第二天才发现。
-type EventNotifier interface {
-	NotifyEvent(ctx context.Context, source, level, dedupKey, title, detail string)
-}
+// EventNotifier 统一别名（notify 是唯一生产实现；历史上 6 份逐字相同的声明收敛于此）。
+type EventNotifier = notify.EventNotifier
 
 // DomainResolver 项目基础名 → 当前活跃隔离域名（release.Service 提供，
 // app 层 SetDomainResolver 事后注入）。蓝绿项目的 compose 载体任务跟随
@@ -179,25 +180,28 @@ func (s *Service) SchedulePreview(expr string, count int) ([]time.Time, error) {
 }
 
 // validateCarrier 按计划的"脚本类型 × 执行载体"矩阵校验合法组合。
+// 注意：所有分支必须穿透到末尾的 project/service 白名单正则——
+// shell/python × compose 组合曾在此提前 return 旁路校验，service/project
+// 裸拼进远端 shell 构成注入面（v0.12.0 审计严重项 2）。
 func validateCarrier(scriptType, carrier, image, project, service string) error {
 	switch scriptType {
 	case ScriptShell, ScriptPython:
 		if carrier == CarrierCompose {
-			// shell/python 走 compose run 也合法（跑在项目服务环境内）
+			// shell/python 走 compose run 也合法（跑在项目服务环境内）；
+			// 只拦必填，正则校验继续穿透
 			if project == "" || service == "" {
 				return fmt.Errorf("compose 载体需填写项目名与服务名")
 			}
-			return nil
-		}
-		if carrier != CarrierRun {
+		} else if carrier != CarrierRun {
 			return fmt.Errorf("未知载体 %q", carrier)
-		}
-		if image == "" {
-			return fmt.Errorf("%s 脚本走 docker run 需绑定镜像（%s 须含 %s）",
-				scriptType, image, map[string]string{ScriptShell: "sh", ScriptPython: "python3"}[scriptType])
-		}
-		if !imageRe.MatchString(image) {
-			return fmt.Errorf("镜像名含非法字符")
+		} else {
+			if image == "" {
+				return fmt.Errorf("%s 脚本走 docker run 需绑定镜像（%s 须含 %s）",
+					scriptType, image, map[string]string{ScriptShell: "sh", ScriptPython: "python3"}[scriptType])
+			}
+			if !imageRe.MatchString(image) {
+				return fmt.Errorf("镜像名含非法字符")
+			}
 		}
 	case ScriptComposeRun:
 		if carrier != CarrierCompose {
@@ -476,26 +480,29 @@ func buildCommand(job *CronJob, script *CronScript, hostScriptPath, runLabel, do
 		extra = " " + job.Command
 	}
 	if job.Carrier == CarrierCompose {
-		// docker compose run：项目 compose 文件在部署固定目录（resources.DeployComposeTo 约定）
+		// docker compose run：项目 compose 文件在部署固定目录（resources.DeployComposeTo 约定）。
+		// domain/service/file 全部 shellQuote——它们源自用户输入，任何一条漏引号
+		// 都会在目标机登录 shell 里展开（注入面，v0.12.0 审计严重项 2）。
 		composeFile := resources.ComposeFileFor(domain)
 		if hostScriptPath != "" {
 			return fmt.Sprintf(
 				`docker compose -p %s -f %s run --rm %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
-				domain, composeFile, runLabel, hostScriptPath, job.Service, interpreter, extra)
+				shellQuote(domain), shellQuote(composeFile), runLabel, shellQuote(hostScriptPath),
+				shellQuote(job.Service), interpreter, extra)
 		}
 		return fmt.Sprintf(`docker compose -p %s -f %s run --rm %s %s%s`,
-			domain, composeFile, runLabel, job.Service, extra)
+			shellQuote(domain), shellQuote(composeFile), runLabel, shellQuote(job.Service), extra)
 	}
 	// docker run：脚本以只读卷挂进一次性容器；可选 --network 连业务网络（查数据用）
 	netFlag := ""
 	if job.Network != "" {
-		netFlag = "--network " + job.Network
+		netFlag = "--network " + shellQuote(job.Network)
 	}
 	return fmt.Sprintf(`docker run --rm %s %s -v %s:/tmp/cron-task:ro %s %s /tmp/cron-task%s`,
-		runLabel, netFlag, hostScriptPath, job.Image, interpreter, extra)
+		runLabel, netFlag, shellQuote(hostScriptPath), shellQuote(job.Image), interpreter, extra)
 }
 
-func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
+func shellQuote(v string) string { return shellx.Quote(v) }
 
 // truncateUTF8 按字节截断但回退到 rune 边界（防止切碎多字节字符出非法 UTF-8）。
 func truncateRunes(s string, n int) string { return truncateUTF8(s, n) }
@@ -546,10 +553,15 @@ func (s *Service) executeWithRetry(ctx context.Context, job *CronJob, run *CronR
 		// 执行完顺手清理脚本文件（不因清理失败判任务失败）
 		cmd = fmt.Sprintf(`sh -c %s`, shellQuote(cmd+fmt.Sprintf("; rc=$?; rm -f %s; exit $rc", hostScriptPath)))
 	}
-	// 流式执行：输出增量落库（节流 1s），手动触发后前端轮询即可近实时看到日志
+	// 流式执行：输出增量落库（节流 1s），手动触发后前端轮询即可近实时看到日志。
+	// onChunk 会被 SSH 的 stdout/stderr 两条 copy goroutine 并发调用，必须串行化
+	//（strings.Builder 并发写可 panic，v0.12.0 审计严重项 5）。
 	var live strings.Builder
 	lastFlush := time.Now()
+	var chunkMu sync.Mutex
 	onChunk := func(chunk string) {
+		chunkMu.Lock()
+		defer chunkMu.Unlock()
 		live.WriteString(chunk)
 		if time.Since(lastFlush) >= time.Second {
 			lastFlush = time.Now()
@@ -594,11 +606,11 @@ func (s *Service) finishAndMaybeRetry(ctx context.Context, job *CronJob, run *Cr
 			title := fmt.Sprintf("定时任务失败：%s", job.Name)
 			detail := fmt.Sprintf("状态：%s（第 %d 次尝试）\n触发：%s\n服务器 ID：%d\n\n%s",
 				status, attempt+1, run.Trigger, job.ServerID, truncateRunes(output, 500))
-			go func() {
+			jobs.GoSafe("cron:notify-fail", func() {
 				s.notifier.NotifyEvent(context.WithoutCancel(ctx),
 					notify.SourceCronFailed, notify.LevelWarn,
 					fmt.Sprintf("job-%d", job.ID), title, detail)
-			}()
+			})
 		}
 		// 重试链：间隔 5 分钟（Forbid 语义不变——重试前若有新调度触发会被它顶掉）
 		if attempt < job.Retry {

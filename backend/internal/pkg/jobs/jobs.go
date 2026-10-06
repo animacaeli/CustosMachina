@@ -5,6 +5,7 @@ package jobs
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -86,4 +87,19 @@ func (g *Group) Stop() {
 	}
 	g.cancel()
 	g.wg.Wait()
+}
+
+// GoSafe 游离后台 goroutine 的兜底包装：recover + 结构化日志。
+// 平台里"HTTP 请求甩后台继续跑"的 WithoutCancel goroutine（发布/备份/同步/
+// 通知）此前全部裸奔——一个 nil panic 就能带走整个进程（v0.12.0 审计）。
+// 渐进迁移：新代码一律用它，存量裸 go 逐步收敛。
+func GoSafe(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("[jobs:%s] 后台任务 panic: %v\n%s", name, r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
 }

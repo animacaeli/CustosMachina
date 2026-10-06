@@ -15,6 +15,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/pkg/crypto"
+	"github.com/custos-machina/backend/internal/pkg/shellx"
+	"github.com/custos-machina/backend/internal/pkg/strx"
 )
 
 var ErrNotFound = errors.New("配置文件不存在")
@@ -124,11 +126,21 @@ type SaveFileInput struct {
 	Remark      string `json:"remark" binding:"max=255"`
 }
 
+// 生效目标白名单（v0.12.0 审计严重项 3：此前只查非空，target 会拼进远端 shell）。
+// SIGHUP 目标是 pkill -f 的匹配串（可为绝对路径）；restart 目标是容器名。
+var (
+	sighupTargetRe  = regexp.MustCompile(`^/?[a-zA-Z0-9][a-zA-Z0-9_.:/+-]*$`)
+	restartTargetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+)
+
 func validateTarget(action, target string) error {
 	switch action {
 	case ApplySighup:
 		if target == "" {
 			return fmt.Errorf("SIGHUP 动作须填写目标进程名（pkill -f 匹配）")
+		}
+		if !sighupTargetRe.MatchString(target) {
+			return fmt.Errorf("SIGHUP 目标进程名含非法字符（仅允许字母数字与 . : / + - _）")
 		}
 	case ApplyHTTP:
 		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
@@ -137,6 +149,9 @@ func validateTarget(action, target string) error {
 	case ApplyRestart:
 		if target == "" {
 			return fmt.Errorf("重启动作须填写容器名")
+		}
+		if !restartTargetRe.MatchString(target) {
+			return fmt.Errorf("重启目标容器名含非法字符（仅允许字母数字与 . _ -）")
 		}
 	}
 	return nil
@@ -406,8 +421,9 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 func (s *Service) applyAction(ctx context.Context, f *File) error {
 	switch f.ApplyAction {
 	case ApplySighup:
+		// shellx.Quote 而非 %q：Go 字面量不转义 $()/反引号，双引号内照常展开
 		out, err := s.exec.RunCommandOn(ctx, f.ServerID,
-			fmt.Sprintf("pkill -HUP -f %q", f.ApplyTarget), "", 30*time.Second)
+			"pkill -HUP -f "+shellx.Quote(f.ApplyTarget), "", 30*time.Second)
 		if err != nil {
 			return fmt.Errorf("SIGHUP %q: %v（%s）", f.ApplyTarget, err, truncate(out, 200))
 		}
@@ -416,7 +432,7 @@ func (s *Service) applyAction(ctx context.Context, f *File) error {
 		return postRefresh(ctx, f.ApplyTarget)
 	case ApplyRestart:
 		out, err := s.exec.RunCommandOn(ctx, f.ServerID,
-			"docker restart "+f.ApplyTarget, "", 5*time.Minute)
+			"docker restart "+shellx.Quote(f.ApplyTarget), "", 5*time.Minute)
 		if err != nil {
 			return fmt.Errorf("docker restart %s: %v（%s）", f.ApplyTarget, err, truncate(out, 200))
 		}
@@ -429,7 +445,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return strx.Truncate(s, n) + "..." // rune 安全（防切碎中文，v0.12.0 审计）
 }
 
 // EnvSyncInput 环境同步：把源环境（可选子前缀）下的配置文件内容完整同步到
