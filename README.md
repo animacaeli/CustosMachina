@@ -26,7 +26,7 @@ cp .env.example .env   # 必改：JWT 密钥；按需：主密钥、公网地址
 docker compose pull && docker compose up -d
 ```
 
-镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.11.0`）。
+镜像发布在 [ghcr.io](https://github.com/animacaeli/CustosMachina/pkgs/container/custosmachina)（`custosmachina-backend` / `custosmachina-frontend` / `custosmachina` 单镜像），随版本 tag 发布，当前仅 **linux/amd64**。锁版本可将 compose 中 `:latest` 改为具体 tag（如 `:v0.11.1`）。
 
 ### 方式二：单镜像（nginx 基座，前后端同容器，最小部署）
 
@@ -35,7 +35,7 @@ docker run -d -p 80:80 --name custos \
   -v custos-data:/data \
   -e CUSTOS_AUTH_JWT_SECRET=$(openssl rand -hex 32) \
   -e CUSTOS_SECRETS_MASTER_KEY=$(openssl rand -hex 32) \
-  ghcr.io/animacaeli/custosmachina:v0.11.0
+  ghcr.io/animacaeli/custosmachina:v0.11.1
 ```
 
 环境变量与 compose 方式一致，完整清单见 `deploy/.env.example`。
@@ -124,4 +124,4 @@ custos-machina/
 
 ## 状态
 
-P1~P7 已交付（当前 v0.11.0）。第七阶段：权限体系（自定义角色 / 业务动作粒度 / 环境隔离 / 项目级授权）、告警 AI 分析（先析后发 / critical 先发再补）、编辑器 AI 助手、对话上下文管理（自动压缩 / compact）、轻量业务告警 API，见 [P7 计划](docs/plan-phase7-permissions-and-ai.md)。
+P1~P7 已交付（当前 v0.11.1）。第七阶段：权限体系（自定义角色 / 业务动作粒度 / 环境隔离 / 项目级授权）、告警 AI 分析（先析后发 / critical 先发再补）、编辑器 AI 助手、对话上下文管理（自动压缩 / compact）、轻量业务告警 API，见 [P7 计划](docs/plan-phase7-permissions-and-ai.md)。
