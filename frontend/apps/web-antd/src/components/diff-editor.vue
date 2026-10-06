@@ -52,26 +52,37 @@ onMounted(() => {
     renderSideBySide: sideBySide.value,
     scrollBeyondLastLine: false,
   });
-  editor.setModel({
-    original: monaco.editor.createModel(props.original, props.language),
-    modified: monaco.editor.createModel(props.value, props.language),
-  });
+  setModels(props.original, props.value);
 });
+
+// setModel 换新后旧 model 不被 editor.dispose 释放（model 归全局管理器），
+// 必须显式 dispose，否则每次对比泄漏 2 个 model（v0.12.0 审计资源泄漏项）
+function setModels(original?: string, value?: string) {
+  if (!editor) return;
+  const old = editor.getModel();
+  if (old) {
+    old.original?.dispose();
+    old.modified?.dispose();
+  }
+  editor.setModel({
+    original: monaco.editor.createModel(original ?? '', props.language),
+    modified: monaco.editor.createModel(value ?? '', props.language),
+  });
+}
 
 watch(
   () => [props.original, props.value, props.language],
-  () => {
-    if (!editor) return;
-    editor.setModel({
-      original: monaco.editor.createModel(props.original ?? '', props.language),
-      modified: monaco.editor.createModel(props.value ?? '', props.language),
-    });
-  },
+  () => setModels(props.original, props.value),
 );
 
 watch(sideBySide, (v) => editor?.updateOptions({ renderSideBySide: v }));
 
-onBeforeUnmount(() => editor?.dispose());
+onBeforeUnmount(() => {
+  const m = editor?.getModel();
+  m?.original?.dispose();
+  m?.modified?.dispose();
+  editor?.dispose();
+});
 </script>
 
 <template>

@@ -4,6 +4,7 @@ import type { CronRun } from '#/api/cron';
 import { onBeforeUnmount, ref, watch } from 'vue';
 
 import { LoadingOutlined } from '@ant-design/icons-vue';
+import { message } from 'ant-design-vue';
 
 import { getRunApi, getRunsApi } from '#/api/cron';
 import { fileDownloadUrl } from '#/api/resources/files';
@@ -41,11 +42,19 @@ const {
   fetch: (p, sz) => getRunsApi({ jobId: props.jobId, page: p, size: sz }),
 });
 
-// 快速执行链路：抽屉打开后自动展开指定运行的实时日志
+// 打开抽屉 / 切换 jobId / 外部 nonce 递增（快速执行后强制刷新）→ 重置分页并
+// 加载。P8-M2 重构回归修复：原 watch 只追 autoOpenRun，打开抽屉与切任务都不
+// 触发 load，用户看到的恒是空表（v0.12.0 审计严重项）。
 watch(
-  () => [props.open, props.autoOpenRun],
-  async () => {
-    if (props.open && props.autoOpenRun) {
+  () => [props.open, props.jobId, props.nonce] as const,
+  async ([isOpen], old) => {
+    if (!isOpen) return;
+    if (old && (old[0] !== true || old[1] !== props.jobId)) {
+      page.value = 1; // 打开或切任务回到第一页
+    }
+    load();
+    // 快速执行链路：抽屉打开后自动展开指定运行的实时日志
+    if (props.autoOpenRun) {
       try {
         const r = await getRunApi(props.autoOpenRun);
         showDetail(r);
@@ -106,10 +115,14 @@ async function downloadFullLog() {
   const r = activeRun.value;
   if (!r?.outputFile || !r.serverId || downloadingLog.value) return;
   downloadingLog.value = true;
+  // await 后开窗已脱离用户手势会被拦截：先同步占位，拿到 URL 再跳转
+  const win = window.open('', '_blank');
   try {
     const url = await fileDownloadUrl(r.serverId, r.outputFile);
-    window.open(url, '_blank');
+    if (win) win.location.href = url;
+    else message.warning('弹窗被浏览器拦截，请允许弹窗后重试');
   } catch {
+    win?.close();
     // ticket 签发失败由拦截器提示
   } finally {
     downloadingLog.value = false;

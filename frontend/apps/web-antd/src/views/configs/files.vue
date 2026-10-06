@@ -2,7 +2,7 @@
 import type { ConfigFile, ConfigVersion } from '#/api/configs';
 import type { ConfigFormat } from '#/utils/config-format';
 
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { DownOutlined } from '@ant-design/icons-vue';
 import { message } from 'ant-design-vue';
@@ -362,6 +362,7 @@ function closeCtxMenu() {
   ctxMenu.open = false;
 }
 onMounted(() => document.addEventListener('click', closeCtxMenu));
+onBeforeUnmount(() => document.removeEventListener('click', closeCtxMenu));
 
 function openCtxMenu(x: number, y: number, dirKey: string) {
   ctxMenu.x = x;
@@ -494,11 +495,11 @@ async function onImportFile(ev: Event) {
     message.warning('脱敏视图不能导入（先查看明文）');
     return;
   }
-  const text = await file.text();
-  if (text.length > 1024 * 1024) {
+  if (file.size > 1024 * 1024) {
     message.error('文件超过 1MB 上限');
-    return;
+    return; // 先按 size 拒绝，避免超大文件整体读入内存
   }
+  const text = await file.text();
   content.value = text;
   message.success(`已导入 ${file.name} 到编辑器（点「仅保存」生成新版本）`);
 }
@@ -969,7 +970,7 @@ function openMerged() {
       v-model:open="mergedOpen"
       :title="`合并视图 · ${currentProjectName ?? ''} / ${mergedEnv}（最终生效配置，只读）`"
       :width="860"
-      footer-only-close
+      :footer="null"
     >
       <div class="mb-2 flex flex-wrap items-center gap-2">
         <span class="text-xs text-muted-foreground">环境</span>

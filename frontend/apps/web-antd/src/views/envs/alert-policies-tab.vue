@@ -116,7 +116,16 @@ async function refreshPreview() {
   }
 }
 
-watch(params, refreshPreview, { deep: true });
+// 每次击键都渲染预览会打爆后端：400ms 防抖
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  params,
+  () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(refreshPreview, 400);
+  },
+  { deep: true },
+);
 
 function openCreate() {
   editingId.value = 0;

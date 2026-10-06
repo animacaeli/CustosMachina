@@ -162,7 +162,7 @@ function addRow() {
 }
 
 function removeRow(index: number) {
-  draft.value.splice(index);
+  draft.value.splice(index, 1); // 单参 splice 会从 index 删到末尾（v0.12.0 审计严重项）
 }
 
 async function save() {

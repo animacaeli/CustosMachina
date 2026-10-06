@@ -66,6 +66,8 @@ async function load() {
       xAxis: { type: 'time' },
       yAxis: { max: 100, min: 0, type: 'value' },
     });
+  } catch {
+    // 拦截器已提示；保留旧数据
   } finally {
     loading.value = false;
   }

@@ -46,7 +46,11 @@ async function save() {
     endpoint: form.endpoint || undefined,
     model: form.model || undefined,
     apiKey: form.apiKey || undefined,
-    contextWindow: form.contextWindow === '' ? 0 : form.contextWindow,
+    // a-input-number 清空产出 null（非 ''）；0 = 恢复后端默认窗口
+    contextWindow:
+      form.contextWindow === null || form.contextWindow === undefined || form.contextWindow === ''
+        ? 0
+        : form.contextWindow,
   });
   message.success('已保存');
   await load();

@@ -330,6 +330,17 @@ async function testRender() {
               :max="1440"
             />
           </a-form-item>
+          <a-form-item
+            extra="同一告警连续触发时的静默窗口（分钟），期内不重复通知"
+            label="静默(分)"
+          >
+            <a-input-number
+              v-model:value="form.silence"
+              class="w-full"
+              :min="0"
+              :max="1440"
+            />
+          </a-form-item>
           <a-form-item label="级别">
             <a-select
               v-model:value="form.level"

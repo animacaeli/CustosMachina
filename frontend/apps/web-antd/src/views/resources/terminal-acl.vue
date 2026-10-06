@@ -30,8 +30,8 @@ const selected = ref<string[]>([]);
 const saving = ref(false);
 
 watch(
-  () => open.value,
-  async (v) => {
+  () => [open.value, props.serverId],
+  async ([v]) => {
     if (!v || !props.serverId) return;
     selected.value = await getTerminalAclsApi(props.serverId);
     if (users.value.length === 0) {

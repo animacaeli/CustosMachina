@@ -245,7 +245,7 @@ async function saveOpsGroup() {
           </a-button>
           <a-button
             :loading="testingId === record.id"
-            :disabled="!record.hasWebhook"
+            :disabled="record.channel !== 'smtp' && !record.hasWebhook"
             size="small"
             type="link"
             @click="onTest(record)"

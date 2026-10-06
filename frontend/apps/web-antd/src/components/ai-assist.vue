@@ -138,7 +138,7 @@ defineExpose({ show });
             v-model:value="question"
             :placeholder="placeholder ?? sceneMeta.placeholder"
             :rows="3"
-            @press-enter="generate"
+            @press-enter="(e: KeyboardEvent) => !e.isComposing && generate()"
           />
         </a-form-item>
         <a-button :loading="loading" type="primary" @click="generate">

@@ -240,7 +240,7 @@ const levelColor: Record<string, string> = {
         <template v-else-if="column.key === 'sync'">
           <a-tooltip v-if="record.syncError" :title="record.syncError">
             <a-tag :color="syncColor[record.syncStatus]">
-              {{ syncText[record.syncStatus] }}?
+              {{ syncText[record.syncStatus] }}
             </a-tag>
           </a-tooltip>
           <a-tag v-else :color="syncColor[record.syncStatus]">

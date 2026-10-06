@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed } from 'vue';
+import { computed, getCurrentInstance } from 'vue';
 
 /**
  * 单指标迷你面积图（对标阿里云监控缩略图）：渐变填充折线 + 当前值。
@@ -38,12 +38,14 @@ const current = computed(() => {
   return pts.length > 0 ? pts[pts.length - 1] : undefined;
 });
 
+// 同色多行会生成重复 SVG id（非法 HTML）：组件实例 uid 兜底唯一
+const uid = getCurrentInstance()?.uid ?? 0;
 const gid = computed(() => {
   let hash = 7;
   for (const ch of color.value) {
     hash = Math.trunc(hash * 31 + (ch.codePointAt(0) ?? 0));
   }
-  return `sg-${Math.abs(hash)}`;
+  return `sg-${Math.abs(hash)}-${uid}`;
 });
 </script>
 

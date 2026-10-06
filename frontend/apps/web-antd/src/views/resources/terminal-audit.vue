@@ -32,11 +32,14 @@ const playing = ref<null | TerminalSession>(null);
 const playerBox = ref<HTMLElement>();
 // asciinema-player 按需动态加载（首播才拉包）
 let playerInstance: null | { dispose?: () => void } = null;
+let playUrl: null | string = null;
 
 async function load() {
   loading.value = true;
   try {
     sessions.value = await listTerminalSessionsApi(props.serverId);
+  } catch {
+    // 拦截器已提示
   } finally {
     loading.value = false;
   }
@@ -50,8 +53,10 @@ async function play(s: TerminalSession) {
     await new Promise((r) => setTimeout(r, 50)); // 等 playerBox 渲染
     if (!playerBox.value) return;
     playerInstance?.dispose?.();
+    if (playUrl) URL.revokeObjectURL(playUrl); // 上一次回放的 Blob URL 先释放
     const blob = new Blob([cast], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
+    playUrl = url;
     // 库类型重载与当前 DOM 包装不兼容（as any 收口：参数形状按官方文档）
     const createFn = mod.create as unknown as (
       el: HTMLElement,
@@ -92,6 +97,10 @@ async function download(s: TerminalSession) {
 function stopPlay() {
   playerInstance?.dispose?.();
   playerInstance = null;
+  if (playUrl) {
+    URL.revokeObjectURL(playUrl); // 回放全程持有，停止/换源时释放
+    playUrl = null;
+  }
   playing.value = null;
 }
 

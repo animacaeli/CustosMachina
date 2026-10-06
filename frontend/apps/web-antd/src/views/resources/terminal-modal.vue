@@ -61,6 +61,11 @@ async function start() {
   fit.fit();
 
   const { ticket } = await issueTicketApi();
+  // 等待 ticket 期间用户可能已关窗（cleanup 已跑、term 已销毁）：
+  // 再建 WebSocket 会成为永不关闭的孤儿连接
+  if (!term || !props.server) {
+    return;
+  }
   ws = new WebSocket(wsURL(s.id, ticket));
   ws.binaryType = 'arraybuffer';
   const sendResize = () => {
@@ -139,3 +144,13 @@ function toggleFullscreen() {
     </template>
   </a-modal>
 </template>
+
+<style>
+/* 全屏抽屉（wrap-class-name 引用；非 scoped 才能作用到 wrap 层） */
+.full-modal .ant-drawer-content {
+  height: 100vh;
+}
+.full-modal .ant-drawer-body {
+  padding-top: 0;
+}
+</style>

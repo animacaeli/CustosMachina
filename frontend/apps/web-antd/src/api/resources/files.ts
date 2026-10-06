@@ -1,4 +1,4 @@
-import { requestClient } from '#/api/request';
+import { apiURL, requestClient } from '#/api/request';
 
 export interface FileEntry {
   isDir: boolean;
@@ -31,7 +31,7 @@ export async function fileDownloadUrl(serverId: number, path: string) {
   const { ticket } = await requestClient.post<{ ticket: string }>(
     '/auth/tickets',
   );
-  return `/api/server-files/${serverId}/download?path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(ticket)}`;
+  return `${apiURL}/server-files/${serverId}/download?path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(ticket)}`;
 }
 
 export async function writeFileApi(

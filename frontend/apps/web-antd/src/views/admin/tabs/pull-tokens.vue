@@ -290,7 +290,7 @@ onMounted(async () => {
     <a-modal
       v-model:open="diffOpen"
       title="对账结果（AgileConfig 漂移检测）"
-      footer-only-close
+      :footer="null"
     >
       <template v-if="diff">
         <a-alert

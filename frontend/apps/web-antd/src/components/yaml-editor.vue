@@ -98,6 +98,15 @@ onMounted(() => {
   });
 });
 
+// language 变化（复用实例编辑不同后缀文件）时切换高亮
+watch(
+  () => props.language,
+  (lang) => {
+    const model = editor?.getModel();
+    if (model) monaco.editor.setModelLanguage(model, lang);
+  },
+);
+
 watch(isDark, (dark) => {
   monaco.editor.setTheme(dark ? 'vs-dark' : 'vs');
 });

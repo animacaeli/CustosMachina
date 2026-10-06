@@ -51,6 +51,8 @@ async function load() {
   try {
     const res = await listFilesApi(props.serverId, cwd.value);
     entries.value = res.entries ?? [];
+  } catch {
+    // 拦截器已提示；保留旧数据避免空白
   } finally {
     loading.value = false;
   }
@@ -219,10 +221,14 @@ async function onDownload(e: FileEntry) {
   if (!props.serverId) return;
   const p = cwd.value === '/' ? `/${e.name}` : `${cwd.value}/${e.name}`;
   downloading.value = e.name;
+  // await 后开窗已脱离用户手势会被拦截：先同步占位，拿到 URL 再跳转
+  const win = window.open('', '_blank');
   try {
     const url = await fileDownloadUrl(props.serverId, p);
-    window.open(url, '_blank');
+    if (win) win.location.href = url;
+    else message.warning('弹窗被浏览器拦截，请允许弹窗后重试');
   } catch {
+    win?.close();
     // ticket 签发失败由拦截器提示
   } finally {
     downloading.value = '';
@@ -349,6 +355,7 @@ async function onRemove(e: FileEntry) {
       :title="`编辑：${editPath}`"
       :width="760"
       :confirm-loading="editSaving"
+      destroy-on-close
       ok-text="保存"
       @ok="saveEdit"
     >
