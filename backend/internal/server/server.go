@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -51,6 +52,12 @@ func New(cfg *config.Config, engine *gin.Engine) *Server {
 	return &Server{cfg: cfg, http: &http.Server{
 		Addr:    cfg.HTTP.Addr,
 		Handler: engine,
+		// Slowloris 面（v0.12.3 独立审核 T1）：请求头 10s 内必须到齐、空闲
+		// 连接 3 分钟回收。不设 Read/WriteTimeout——SSE 流式响应与 WebSocket
+		// 终端是长连接，全局读写超时会拦腰掐断（终端经 Upgrade 已脱离
+		// http.Server 计时，SSE 没有）
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       3 * time.Minute,
 	}}
 }
 

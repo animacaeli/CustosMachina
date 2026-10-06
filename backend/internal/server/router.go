@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"runtime/debug"
 
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/custos-machina/backend/internal/config"
+	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
@@ -23,9 +25,9 @@ func NewEngine(cfg *config.Config, modules Modules, auth AuthMiddleware, authz g
 		logger.Warnf("[server] 可信代理配置无效 %q: %v", cfg.HTTP.TrustedProxies, err)
 		_ = e.SetTrustedProxies(nil)
 	}
-	e.Use(requestLogger(), zapRecovery(), cors(cfg.CORS.Origins))
+	e.Use(requestLogger(), zapRecovery(), securityHeaders(), cors(cfg.CORS.Origins))
 
-	api := e.Group("/api")
+	api := e.Group("/api", bodyLimit())
 	public := api.Group("")
 	authed := api.Group("")
 	authed.Use(auth(), authz)
@@ -44,6 +46,53 @@ func requestLogger() gin.HandlerFunc {
 		c.Next()
 		logger.Infof("[gin] %3d | %13v | %-7s %s",
 			c.Writer.Status(), time.Since(start), c.Request.Method, c.Request.URL.Path)
+	}
+}
+
+// bodyLimit 全局请求体上限兜底（v0.12.3 独立审核 T2）：路由层各自有业务
+// 校验（binding max / io.LimitReader），但缺全局兜底——畸形大请求会先被
+// 整体读入。默认 2MB；上传/部署类路由单独放宽。按 FullPath 前缀匹配，
+// 覆盖各环境段（:id 参数化路径）。
+func bodyLimit() gin.HandlerFunc {
+	const def = 2 << 20 // 2MB
+	exempt := map[string]int64{
+		"/api/server-files/":  110 << 20, // SFTP 上传（handler 限 100MB）
+		"/api/server-compose": 16 << 20,  // compose 部署（yaml+伴随配置）
+	}
+	return func(c *gin.Context) {
+		var max int64 = def
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		for prefix, m := range exempt {
+			if strings.HasPrefix(path, prefix) {
+				max = m
+				break
+			}
+		}
+		if c.Request.ContentLength > max {
+			c.Header("Connection", "close")
+			httpx.Fail(c, http.StatusRequestEntityTooLarge, 413,
+				fmt.Sprintf("请求体超过上限 %dMB", max>>20))
+			c.Abort()
+			return
+		}
+		// chunked（无 Content-Length）场景在读侧强制封顶
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
+		c.Next()
+	}
+}
+
+// securityHeaders 基础安全响应头（v0.12.3 独立审核 T5）。HSTS 由前置
+// nginx 在 TLS 终止处下发（HTTP 明文端口下发会被浏览器忽略）。
+func securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := c.Writer.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Next()
 	}
 }
 

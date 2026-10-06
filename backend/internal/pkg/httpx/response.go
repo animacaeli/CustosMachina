@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/custos-machina/backend/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -39,8 +40,11 @@ func FailUpstream(c *gin.Context, message string) {
 	Fail(c, http.StatusBadGateway, 502, message)
 }
 
+// FailServer 500：内部错误详情只落日志（回显 err.Error() 会外泄内部实现
+// 细节——表名/驱动/文件路径，v0.12.3 独立审核 T3），响应体给通用文案。
 func FailServer(c *gin.Context, err error) {
-	Fail(c, http.StatusInternalServerError, 500, err.Error())
+	logger.Errorf("[httpx] 500 %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+	Fail(c, http.StatusInternalServerError, 500, "服务器内部错误（详情见服务端日志）")
 }
 
 // ParamID 解析路径参数 :id 为正整数；非法时直接回 400 并返回 ok=false。

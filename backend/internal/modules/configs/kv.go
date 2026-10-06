@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -169,10 +170,15 @@ func (s *Service) agileClient(ctx context.Context) (*agileClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("AgileConfig 凭据解密失败: %v", err)
 	}
+	// 默认校验 TLS（该通道携带 AgileConfig admin 凭据，跳过校验=中间人可
+	// 截获配置中心口令——v0.12.3 独立审核 T4）。自签内网显式豁免：
+	// CUSTOS_AGILE_INSECURE_TLS=1
+	transport := &http.Transport{}
+	if os.Getenv("CUSTOS_AGILE_INSECURE_TLS") == "1" {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	return &agileClient{base: ep, adminUser: user, adminPass: pass,
-		http: &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // 自签内网常见
-		}}}, nil
+		http: &http.Client{Timeout: 20 * time.Second, Transport: transport}}, nil
 }
 
 func (c *agileClient) do(ctx context.Context, method, path, user, pass string, body any) (int, []byte, error) {
