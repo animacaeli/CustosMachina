@@ -239,7 +239,9 @@ async function onDelete(p: Project) {
               {{ envStat(record).lastTag }}
               <a-tag
                 v-if="envStat(record).activeColor"
-                :color="envStat(record).activeColor === 'blue' ? 'blue' : 'green'"
+                :color="
+                  envStat(record).activeColor === 'blue' ? 'blue' : 'green'
+                "
                 class="ml-1"
               >
                 {{ envStat(record).activeColor }}
@@ -250,20 +252,24 @@ async function onDelete(p: Project) {
           <template v-else-if="column.key === 'lastStatus'">
             <a-badge
               :status="
-                ({
-                  failed: 'error',
-                  running: 'processing',
-                  success: 'success',
-                  timeout: 'warning',
-                } as Record<string, any>)[envStat(record).lastStatus ?? ''] ?? 'default'
+                (
+                  {
+                    failed: 'error',
+                    running: 'processing',
+                    success: 'success',
+                    timeout: 'warning',
+                  } as Record<string, any>
+                )[envStat(record).lastStatus ?? ''] ?? 'default'
               "
               :text="
-                ({
-                  failed: '失败',
-                  running: '进行中',
-                  success: '正常',
-                  timeout: '超时',
-                } as Record<string, any>)[envStat(record).lastStatus ?? ''] ??
+                (
+                  {
+                    failed: '失败',
+                    running: '进行中',
+                    success: '正常',
+                    timeout: '超时',
+                  } as Record<string, any>
+                )[envStat(record).lastStatus ?? ''] ??
                 (envStat(record).lastStatus || '—')
               "
             />

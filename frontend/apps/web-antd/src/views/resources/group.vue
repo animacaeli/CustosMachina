@@ -107,7 +107,9 @@ async function onDelete(g: ServerGroup) {
               v-if="record.serverCount > 0"
               :title="`分组下有 ${record.serverCount} 台服务器，先移出再删除`"
             >
-              <a-button size="small" type="link" danger disabled> 删除 </a-button>
+              <a-button size="small" type="link" danger disabled>
+                删除
+              </a-button>
             </a-tooltip>
             <a-popconfirm
               v-else

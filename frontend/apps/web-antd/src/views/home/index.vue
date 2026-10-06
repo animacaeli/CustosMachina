@@ -127,7 +127,9 @@ function goFeature(path: string) {
       <a-card title="快捷入口">
         <a-space wrap>
           <a-button @click="router.push('/cron/jobs')">定时任务</a-button>
-          <a-button @click="router.push('/resources/observ-alerts')">告警中心</a-button>
+          <a-button @click="router.push('/resources/observ-alerts')">
+            告警中心
+          </a-button>
           <template v-if="isAdmin">
             <a-button
               v-for="t in TODO"
@@ -141,10 +143,7 @@ function goFeature(path: string) {
             </a-button>
           </template>
         </a-space>
-        <p
-          v-if="!isAdmin"
-          class="text-muted-foreground mt-3 text-xs"
-        >
+        <p v-if="!isAdmin" class="text-muted-foreground mt-3 text-xs">
           联系管理员开通更多权限
         </p>
         <p class="text-muted-foreground mt-3 text-xs">

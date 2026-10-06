@@ -48,7 +48,9 @@ async function save() {
     apiKey: form.apiKey || undefined,
     // a-input-number 清空产出 null（非 ''）；0 = 恢复后端默认窗口
     contextWindow:
-      form.contextWindow === null || form.contextWindow === undefined || form.contextWindow === ''
+      form.contextWindow === null ||
+      form.contextWindow === undefined ||
+      form.contextWindow === ''
         ? 0
         : form.contextWindow,
   });

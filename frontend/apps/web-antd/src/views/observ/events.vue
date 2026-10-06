@@ -281,7 +281,9 @@ const levelColor: Record<string, string> = {
       :width="640"
       @cancel="detailEvent = null"
     >
-      <pre class="max-h-96 overflow-auto rounded bg-black/90 p-3 text-xs text-green-300">{{ detailEvent?.detail || '（无详情）' }}</pre>
+      <pre
+        class="max-h-96 overflow-auto rounded bg-black/90 p-3 text-xs text-green-300"
+        >{{ detailEvent?.detail || '（无详情）' }}</pre>
     </a-modal>
   </div>
 </template>

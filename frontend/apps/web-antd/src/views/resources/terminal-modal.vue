@@ -150,6 +150,7 @@ function toggleFullscreen() {
 .full-modal .ant-drawer-content {
   height: 100vh;
 }
+
 .full-modal .ant-drawer-body {
   padding-top: 0;
 }

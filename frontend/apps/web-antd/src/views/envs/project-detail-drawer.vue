@@ -135,8 +135,10 @@ async function saveConfig() {
       targets: (['prod', 'canary', 'test'] as const).map((envType) => ({
         envType,
         runtime: deployRuntime.value,
-        serverId: deployRuntime.value === 'compose' ? deployServerId.value ?? 0 : 0,
-        clusterId: deployRuntime.value === 'k3s' ? deployClusterId.value ?? 0 : 0,
+        serverId:
+          deployRuntime.value === 'compose' ? (deployServerId.value ?? 0) : 0,
+        clusterId:
+          deployRuntime.value === 'k3s' ? (deployClusterId.value ?? 0) : 0,
       })),
     });
     message.success('配置已保存');

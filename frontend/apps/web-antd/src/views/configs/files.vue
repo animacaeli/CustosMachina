@@ -2,7 +2,14 @@
 import type { ConfigFile, ConfigVersion } from '#/api/configs';
 import type { ConfigFormat } from '#/utils/config-format';
 
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from 'vue';
 
 import { DownOutlined } from '@ant-design/icons-vue';
 import { message } from 'ant-design-vue';
