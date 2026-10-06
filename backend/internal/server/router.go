@@ -1,6 +1,8 @@
 package server
 
 import (
+	"runtime/debug"
+
 	"net/http"
 	"strings"
 	"time"
@@ -51,7 +53,7 @@ func zapRecovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				logger.Errorf("[gin] panic: %v\n%s %s", err, c.Request.Method, c.Request.URL.Path)
+				logger.Errorf("[gin] panic: %v\n%s %s\n%s", err, c.Request.Method, c.Request.URL.Path, debug.Stack())
 				c.AbortWithStatus(http.StatusInternalServerError)
 			}
 		}()

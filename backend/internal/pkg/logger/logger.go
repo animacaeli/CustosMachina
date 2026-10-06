@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -100,3 +101,21 @@ func orDefault(v, def int) int {
 	}
 	return v
 }
+
+// Writer 把日志门面桥接为 io.Writer（gorm logger 等三方需要 writer 的场景），
+// 替代标准库 log 直写 stderr——遵守「禁止多套日志并存」（v0.12.1 复核）。
+type writerAdapter struct{}
+
+func (writerAdapter) Write(p []byte) (int, error) {
+	Infof("%s", strings.TrimRight(string(p), "\r\n"))
+	return len(p), nil
+}
+
+// Printf gorm logger.Writer 接口要求。
+func (writerAdapter) Printf(format string, args ...any) {
+	Infof(format, args...)
+}
+
+// Writer 返回经 zap 的 writer 适配器（同时实现 io.Writer 与 gorm 的
+// logger.Writer/Printf 接口——返回具体类型让两者都满足）。
+func Writer() writerAdapter { return writerAdapter{} }
