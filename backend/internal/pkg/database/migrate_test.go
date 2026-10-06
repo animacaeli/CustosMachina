@@ -55,11 +55,17 @@ func TestMigrateExistingDBSkipsAutoMigrate(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE builds (id INTEGER PRIMARY KEY, status TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`CREATE TABLE ai_conversations (id INTEGER PRIMARY KEY, title TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := Migrate(db, []any{&migTestModel{}}); err != nil {
 		t.Fatalf("存量库迁移失败: %v", err)
 	}
 	if !db.Migrator().HasColumn("builds", "log_tail") {
 		t.Fatal("0004 应为存量 builds 表加 log_tail 列")
+	}
+	if !db.Migrator().HasColumn("ai_conversations", "compact_text") {
+		t.Fatal("0005 应为存量 ai_conversations 表加 compact_text 列")
 	}
 	// 存量库不走 AutoMigrate：新模型表不应被建
 	if db.Migrator().HasTable(&migTestModel{}) {

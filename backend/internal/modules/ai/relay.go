@@ -27,6 +27,7 @@ const (
 	settingEndpoint = "ai.endpoint" // 如 https://api.deepseek.com 或 http://ollama:11434/v1
 	settingAPIKey   = "ai.api_key"  // AES
 	settingModel    = "ai.model"
+	settingWindow   = "ai.context_window" // token 数（P7-M4 自动压缩阈值；空=默认 32768）
 )
 
 // Usage 用量记录（审计与成本追踪）。
@@ -121,15 +122,42 @@ type SettingsOut struct {
 	Configured bool   `json:"configured"`
 	Endpoint   string `json:"endpoint"`
 	Model      string `json:"model"`
+	// ContextWindow 上下文窗口（token；P7-M4，0 = 默认 32768）
+	ContextWindow int `json:"contextWindow"`
 }
 
 func (s *Service) Settings(ctx context.Context) SettingsOut {
 	cfg, ok := s.config(ctx)
 	if !ok {
 		ep, _ := s.setting(ctx, settingEndpoint)
-		return SettingsOut{Endpoint: ep}
+		return SettingsOut{Endpoint: ep, ContextWindow: s.ContextWindow(ctx)}
 	}
-	return SettingsOut{Configured: true, Endpoint: cfg.Endpoint, Model: cfg.Model}
+	return SettingsOut{Configured: true, Endpoint: cfg.Endpoint, Model: cfg.Model,
+		ContextWindow: s.ContextWindow(ctx)}
+}
+
+// ContextWindow 模型上下文窗口（token 近似；未配置返回 0 由调用方兜底默认）。
+func (s *Service) ContextWindow(ctx context.Context) int {
+	v, _ := s.setting(ctx, settingWindow)
+	n := 0
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
+// SaveContextWindow 窗口设置（0/空 = 恢复默认）。
+func (s *Service) SaveContextWindow(ctx context.Context, window int) error {
+	v := ""
+	if window > 0 {
+		v = fmt.Sprintf("%d", window)
+	}
+	return s.db.WithContext(ctx).Exec(
+		`INSERT INTO platform_settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, settingWindow, v).Error
 }
 
 // Message OpenAI 兼容消息。Content 为 any：普通对话传 string；

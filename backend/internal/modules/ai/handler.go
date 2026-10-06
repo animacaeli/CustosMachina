@@ -37,6 +37,8 @@ func (h *Handler) putSettings(c *gin.Context) {
 		Endpoint string `json:"endpoint" binding:"omitempty,max=255"`
 		Model    string `json:"model" binding:"omitempty,max=64"`
 		APIKey   string `json:"apiKey" binding:"omitempty,max=255"`
+		// P7-M4：上下文窗口（token；0 = 恢复默认 32768）
+		ContextWindow *int `json:"contextWindow" binding:"omitempty,min=0,max=2000000"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
@@ -45,6 +47,12 @@ func (h *Handler) putSettings(c *gin.Context) {
 	if err := h.relay.SaveSettings(c.Request.Context(), in.Endpoint, in.Model, in.APIKey); err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
+	}
+	if in.ContextWindow != nil {
+		if err := h.relay.SaveContextWindow(c.Request.Context(), *in.ContextWindow); err != nil {
+			httpx.FailServer(c, err)
+			return
+		}
 	}
 	httpx.OK(c, h.relay.Settings(c.Request.Context()))
 }

@@ -33,14 +33,18 @@ const (
 
 // Conversation 对话会话（归属用户；admin 可跨用户查看/管理——对话内容合规审阅所需）。
 type Conversation struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	UserID    uint           `gorm:"index;not null" json:"userId"`
-	Title     string         `gorm:"size:128" json:"title"` // 首条用户消息截断
-	Mode      string         `gorm:"size:16;not null;default:general" json:"mode"`
-	MountJSON string         `gorm:"type:text" json:"-"` // 挂载快照（platform 模式）
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID        uint   `gorm:"primarykey" json:"id"`
+	UserID    uint   `gorm:"index;not null" json:"userId"`
+	Title     string `gorm:"size:128" json:"title"` // 首条用户消息截断
+	Mode      string `gorm:"size:16;not null;default:general" json:"mode"`
+	MountJSON string `gorm:"type:text" json:"-"` // 挂载快照（platform 模式）
+	// P7-M4 上下文管理：CompactText 为已压缩的"前情提要"（自动超窗压缩 / 手动
+	// /compact 共用），CompactAfterID 为分界——构造 prompt 只载 id 大于它的消息。
+	CompactText    string         `gorm:"type:text" json:"-"`
+	CompactAfterID uint           `gorm:"not null;default:0" json:"-"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (Conversation) TableName() string { return "ai_conversations" }
@@ -373,6 +377,20 @@ func (s *ChatService) ChatStream(ctx context.Context, userID uint, convID uint, 
 	}
 	defer release()
 
+	// P7-M4 手动压缩命令：/compact 把全部历史压成前情提要（AI 未配置时报错提示）
+	if strings.TrimSpace(content) == "/compact" {
+		summary, cerr := s.Compact(ctx, c)
+		if cerr != nil {
+			return nil, cerr
+		}
+		// 命令与结果各落一条消息（前端可见"已压缩"与摘要）
+		s.db.WithContext(ctx).Create(&ChatMessage{ConversationID: c.ID, Role: "user", Content: content, Status: MsgDone})
+		out := &ChatMessage{ConversationID: c.ID, Role: "assistant",
+			Content: "已压缩上下文（后续对话基于前情提要继续）：\n\n" + summary, Status: MsgDone}
+		s.db.WithContext(ctx).Create(out)
+		return out, nil
+	}
+
 	// /命令触发：解析技能并对角色校验（越权与不存在同语义）
 	var skill *Skill
 	if skillName != "" && s.Skills != nil {
@@ -561,8 +579,10 @@ func roleLabel(roles []string) string {
 // buildPrompt 组 prompt：system（平台身份 + 挂载 pack 围栏）+ 最近 N 轮 + 本轮用户消息。
 // 第二返回值 = pack 的 DLP 拦截数（消息留痕用）。
 func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRoles []string, skill *Skill, userQuery string) ([]Message, int, error) {
+	// P7-M4：只载压缩分界之后的历史；之前的内容以 CompactText（前情提要）并入 system
 	var history []ChatMessage
-	if err := s.db.WithContext(ctx).Where("conversation_id = ?", c.ID).
+	if err := s.db.WithContext(ctx).
+		Where("conversation_id = ? AND id > ?", c.ID, c.CompactAfterID).
 		Order("id DESC").Limit(chatHistoryRounds * 2).Find(&history).Error; err != nil {
 		return nil, 0, err
 	}
@@ -608,6 +628,9 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 	if skill != nil {
 		sys += "\n\n" + RenderSkill(skill, userQuery)
 	}
+	if c.CompactText != "" {
+		sys += "\n\n【前情提要（此前对话的压缩摘要）】\n" + c.CompactText
+	}
 
 	msgs := []Message{{Role: "system", Content: sys}}
 	for _, h := range history {
@@ -618,6 +641,8 @@ func (s *ChatService) buildPrompt(ctx context.Context, c *Conversation, viewerRo
 			msgs = append(msgs, Message{Role: h.Role, Content: messageContent(h)})
 		}
 	}
+	// P7-M4：超窗口 70% 自动压缩（失败降级截断，绝不阻塞对话）
+	msgs = s.maybeAutoCompact(ctx, c, msgs, history)
 	return msgs, redactions, nil
 }
 

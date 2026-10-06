@@ -11,10 +11,17 @@ const loading = ref(false);
 const testing = ref(false);
 const settings = reactive({
   configured: false,
+  contextWindow: 0,
   endpoint: '',
   model: '',
 });
-const form = reactive({ endpoint: '', model: '', apiKey: '' });
+const form = reactive({
+  endpoint: '',
+  model: '',
+  apiKey: '',
+  // P7-M4：上下文窗口（token；空 = 默认 32768，超 70% 自动压缩对话历史）
+  contextWindow: '' as '' | number,
+});
 const usages = ref<Array<Record<string, any>>>([]);
 
 async function load() {
@@ -25,6 +32,7 @@ async function load() {
     form.endpoint = s.endpoint;
     form.model = s.model;
     form.apiKey = '';
+    form.contextWindow = s.contextWindow || '';
     usages.value = await requestClient.get('/ai/usages');
   } finally {
     loading.value = false;
@@ -38,6 +46,7 @@ async function save() {
     endpoint: form.endpoint || undefined,
     model: form.model || undefined,
     apiKey: form.apiKey || undefined,
+    contextWindow: form.contextWindow === '' ? 0 : form.contextWindow,
   });
   message.success('已保存');
   await load();
@@ -84,6 +93,18 @@ const usageCols = [
       </a-form-item>
       <a-form-item label="API Key（留空保留）">
         <a-input-password v-model:value="form.apiKey" />
+      </a-form-item>
+      <a-form-item
+        extra="对话历史超过窗口 70% 时自动压缩为前情提要；用户也可在对话中输入 /compact 手动压缩"
+        label="上下文窗口（token，留空 = 32768）"
+      >
+        <a-input-number
+          v-model:value="form.contextWindow"
+          :min="0"
+          :max="2_000_000"
+          :placeholder="settings.contextWindow || '32768'"
+          class="w-full"
+        />
       </a-form-item>
       <a-space>
         <a-button :loading="testing" @click="test">连通性测试</a-button>
