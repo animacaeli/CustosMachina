@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.12.2 (2026-10-06)
+
+v0.12.1 修复复核（reverify）批：修复上一批引入的 3 条高危回归 + AAD 全字段化 + 残留收尾。
+
+### 回归修复（v0.12.1 引入）
+
+- **N1（P0）**：清空部署目标落 `server_id=0` 零行——校验循环跳过但事务循环照写，击穿 release/configs/slots/canary 四处存在性守卫；顺带修复 k3s 目标被「服务器 0 不存在」误杀（校验按 runtime 分流到 k3s_clusters）
+- **N2（P0）**：服务异常退出码为 0，`restart=on-failure` 不拉起（静默死亡）——显式 cleanup+Sync 后 `os.Exit(1)`
+- **N3（P1）**：项目范围守卫 fail-open——dev 收掉告警 DELETE（种子 v25，迁移先删旧策略再补新）；dev/guest+自定义角色混挂时显式项目行优先（不再被 dev 头衔绕过），纯 dev 行为不变
+
+### 安全
+
+- **N4**：GCM AAD 从单字段扩到全部 15 个凭据字段成对绑定（webhook/SMTP/O2/Redis/IM/AI key/AgileConfig/k3s kubeconfig/证书/CI token/备份口令/registry 凭据），存量密文经回退分支兼容、下次保存升级
+
+### 健壮性
+
+- backup 拉流 io.Pipe 读端失败 CloseWithError（goroutine+SFTP 连接泄漏）；zapRecovery 补堆栈；certs 手动签发与调度扫描互斥（os.Setenv 竞态全覆盖）
+
+### 工程 / 前端
+
+- gorm 慢查询/错误日志走 zap（消灭标准库 log 并存）；strx 补测试（0%→覆盖 Truncate/NormalizeName）；剩余 5 处字节截断委托 rune 安全实现（含审计点名的中文告警正文）
+- 终端全屏弹窗 CSS 选择器修正（此前为死代码）；ai-assistant 监听卸载与拖拽 userSelect 自愈；分页轮询补宿主可见性判定（关抽屉即停）；告警策略防抖 timer 清理；终端 ACL 加载失败不残留上一台勾选
+
 ## v0.12.1 (2026-10-06)
 
 对 v0.12.0 三视角审核报告（安全 6 严重 + 中等 + 前端/UI/产品项）的全量修复。
