@@ -116,6 +116,7 @@ onMounted(async () => {
 watch(serverIds, loadStatus);
 
 async function saveO2Url() {
+  // 空串=清空（P8-M2：后端已允许）；确认弹窗防误触
   try {
     await setO2UrlApi(o2Url.value.trim());
     message.success('O2 地址已保存');
@@ -254,9 +255,7 @@ function configLanguage(filename: string) {
           placeholder="http://<o2>:5080/api/<org>/<stream>/_json（可内嵌 user:pass）"
           style="width: 380px"
         />
-        <a-button v-if="canWrite" :disabled="!o2Url" @click="saveO2Url">
-          保存
-        </a-button>
+        <a-button v-if="canWrite" @click="saveO2Url"> 保存 </a-button>
       </div>
       <a-alert
         class="mb-4"

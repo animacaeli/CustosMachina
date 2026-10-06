@@ -88,7 +88,8 @@ func (h *Handler) list(c *gin.Context) {
 
 func (h *Handler) setO2URL(c *gin.Context) {
 	var in struct {
-		URL string `json:"url" binding:"required"`
+		// P8-M2：允许空串（清空 O2 地址，观测组件部署前的回退）；合法性由 SetO2URL 校验
+		URL string `json:"url" binding:"omitempty,max=1024"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())

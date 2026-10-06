@@ -7,6 +7,7 @@ import { LoadingOutlined } from '@ant-design/icons-vue';
 
 import { getRunApi, getRunsApi } from '#/api/cron';
 import { fileDownloadUrl } from '#/api/resources/files';
+import { usePagedListPolling } from '#/composables/use-paged-list-polling';
 
 defineOptions({ name: 'CronRunsDrawer' });
 
@@ -22,38 +23,23 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:open': [value: boolean] }>();
 
-onBeforeUnmount(stopPoll);
-
-const loading = ref(false);
-const runs = ref<CronRun[]>([]);
-const total = ref(0);
-const page = ref(1);
 const size = 20;
 
-async function load() {
-  loading.value = true;
-  try {
-    const res = await getRunsApi({
-      jobId: props.jobId,
-      page: page.value,
-      size,
-    });
-    runs.value = res.items ?? [];
-    total.value = res.total ?? 0;
-  } finally {
-    loading.value = false;
-  }
-}
-
-watch(
-  () => [props.open, props.jobId, props.nonce],
-  () => {
-    if (props.open) {
-      page.value = 1;
-      load();
-    }
-  },
-);
+// P8-M2：列表+条件轮询收敛到 usePagedListPolling（running 存在时 3s 静默刷新；
+// 详情日志轮询另有 pollRunning 单条追）
+const {
+  items: runs,
+  total,
+  page,
+  loading,
+  load,
+} = usePagedListPolling<CronRun>({
+  size,
+  interval: 3000,
+  active: () => props.open,
+  shouldPoll: (items) => items.some((r) => r.status === 'running'),
+  fetch: (p, sz) => getRunsApi({ jobId: props.jobId, page: p, size: sz }),
+});
 
 // 快速执行链路：抽屉打开后自动展开指定运行的实时日志
 watch(
@@ -98,6 +84,8 @@ function stopPoll() {
     pollTimer = undefined;
   }
 }
+
+onBeforeUnmount(stopPoll);
 
 // 运行中的记录每 2s 轮询单条（后端流式执行节流 1s 增量刷库，近实时看日志）
 function pollRunning(id: number) {

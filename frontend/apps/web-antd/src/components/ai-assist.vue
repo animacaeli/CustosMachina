@@ -14,7 +14,7 @@ import { assistApi } from '#/api/chat';
 const props = withDefaults(
   defineProps<{
     /** 场景：editor / cron / alert_rule（决定后端提示词） */
-    scene: 'alert_rule' | 'cron' | 'editor';
+    scene: 'alert_rule' | 'cron' | 'editor' | 'release_check';
     /** 抽屉标题 */
     title?: string;
     /** 输入占位示例 */

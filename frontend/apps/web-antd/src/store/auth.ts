@@ -1,4 +1,3 @@
-
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 
@@ -15,7 +14,6 @@ export const useAuthStore = defineStore('auth', () => {
   const router = useRouter();
 
   const loginLoading = ref(false);
-
 
   async function logout(redirect: boolean = true) {
     try {

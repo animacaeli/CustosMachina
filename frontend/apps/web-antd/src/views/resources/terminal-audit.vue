@@ -73,6 +73,22 @@ async function play(s: TerminalSession) {
   }
 }
 
+/** 下载会话录制（cast 文本经 Blob 落盘；旧格式后端已转 cast） */
+async function download(s: TerminalSession) {
+  try {
+    const cast = await getTerminalCastApi(s.serverId, s.file);
+    const blob = new Blob([cast], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = s.file.endsWith('.cast') ? s.file : `${s.file}.cast`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error: any) {
+    message.error(error?.response?.data?.message ?? '下载录制失败');
+  }
+}
+
 function stopPlay() {
   playerInstance?.dispose?.();
   playerInstance = null;
@@ -144,10 +160,13 @@ onBeforeUnmount(stopPlay);
           <a-tag v-else color="green">cast</a-tag>
         </template>
       </a-table-column>
-      <a-table-column title="操作" :width="80">
+      <a-table-column title="操作" :width="120">
         <template #default="{ record }">
           <a-button size="small" type="link" @click="play(record)">
             回放
+          </a-button>
+          <a-button size="small" type="link" @click="download(record)">
+            下 载
           </a-button>
         </template>
       </a-table-column>

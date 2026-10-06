@@ -1,9 +1,10 @@
 <script lang="ts" setup>
 import type { Build } from '#/api/ci';
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import { getBuildLogApi, getBuildsApi } from '#/api/ci';
+import { usePagedListPolling } from '#/composables/use-paged-list-polling';
 
 defineOptions({ name: 'BuildDrawer' });
 
@@ -15,37 +16,30 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>();
 
-const list = ref<Build[]>([]);
-
-// test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
-function splitTag(tag: string): { branch: string; slot: string } {
-  const at = tag.lastIndexOf('@');
-  if (at === -1) return { branch: tag, slot: '-' };
-  return { branch: tag.slice(0, at), slot: tag.slice(at + 1) };
-}
-const total = ref(0);
-const page = ref(1);
+// P8-M2：分页+轮询收敛到 usePagedListPolling（构建抽屉为 30s 常驻轮询——
+// 后端 jobs 每 30s 拉 commit status，未终态记录靠它转绿）
 const size = ref(10);
-const loading = ref(false);
-
-let timer: null | ReturnType<typeof setInterval> = null;
-
-async function load() {
-  if (!props.projectId) return;
-  loading.value = true;
-  try {
-    const res = await getBuildsApi({
-      env: props.env,
-      page: page.value,
-      projectId: props.projectId,
-      size: size.value,
-    });
-    list.value = res.items ?? [];
-    total.value = res.total ?? 0;
-  } finally {
-    loading.value = false;
-  }
-}
+const {
+  items: list,
+  total,
+  page,
+  loading,
+  load,
+} = usePagedListPolling<Build>({
+  size: 10,
+  interval: 30_000,
+  active: () => props.open,
+  shouldPoll: () => true,
+  fetch: (p, sz) =>
+    props.projectId
+      ? getBuildsApi({
+          env: props.env,
+          page: p,
+          projectId: props.projectId,
+          size: sz,
+        })
+      : Promise.resolve({}),
+});
 
 watch(
   () => props.projectId,
@@ -56,29 +50,17 @@ watch(
 
 watch(
   () => [props.open, props.projectId, page.value],
-  async () => {
-    if (props.open)
-      await load().catch((error) => console.warn('[load]', error));
+  () => {
+    if (props.open) load().catch((error) => console.warn('[load]', error));
   },
 );
 
-// 未终态的记录持续轮询（后端 jobs 每 30s 拉 gitea commit status）
-watch(
-  () => props.open,
-  (open) => {
-    if (open && !timer) {
-      timer = setInterval(load, 30_000);
-    } else if (!open && timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-  },
-  { immediate: true },
-);
-
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
-});
+// test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
+function splitTag(tag: string): { branch: string; slot: string } {
+  const at = tag.lastIndexOf('@');
+  if (at === -1) return { branch: tag, slot: '-' };
+  return { branch: tag, slot: tag.slice(at + 1) };
+}
 
 const envTitles: Record<string, string> = {
   canary: '灰度环境构建',

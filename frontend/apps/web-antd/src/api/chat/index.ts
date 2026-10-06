@@ -209,7 +209,7 @@ export async function assistApi(data: {
   fileName?: string;
   fileType?: string;
   question: string;
-  scene: 'alert_rule' | 'cron' | 'editor';
+  scene: 'alert_rule' | 'cron' | 'editor' | 'release_check';
 }) {
   const out = await requestClient.post<{ result: string }>('/ai/assist', data);
   return out.result;

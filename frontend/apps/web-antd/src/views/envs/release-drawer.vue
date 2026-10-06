@@ -13,6 +13,7 @@ import {
   getReleaseApi,
   getReleasesApi,
 } from '#/api/release';
+import AiAssist from '#/components/ai-assist.vue';
 
 defineOptions({ name: 'ReleaseDrawer' });
 
@@ -23,6 +24,15 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ close: [] }>();
+
+// P8-M2：发布前检查的场景上下文（借 content 字段带结构化信息，模型按提示词用工具自查）
+const releaseCheckContext = computed(() => ({
+  content: `即将发布 —— 项目ID: ${props.projectId ?? '-'}，环境: ${props.env}，标签: ${selectedTag.value || '-'}${
+    activeColor.value ? `，当前蓝绿活跃色: ${activeColor.value}` : ''
+  }`,
+  fileName: 'release-check',
+  fileType: 'ctx',
+}));
 
 const list = ref<ReleaseItem[]>([]);
 
@@ -299,6 +309,26 @@ function fmtTime(v: string) {
       >
         {{ anyRunning ? '发布中…' : '发布' }}
       </a-button>
+      <!-- P8-M2 发布前检查（advisory）：AI 综合构建/配置/回滚基线给 GO/NO-GO
+           建议——仅供参考，绝不构成发布闸门（AI 安全红线） -->
+      <AiAssist
+        apply-label="查 看 结 论"
+        :context="releaseCheckContext"
+        :extract="(r: string) => r"
+        scene="release_check"
+        title="AI 发布前检查"
+      >
+        <template #default="{ open: openCheck }">
+          <a-button
+            :disabled="!selectedTag"
+            size="small"
+            title="AI 发布前检查（建议仅供参考）"
+            @click="openCheck"
+          >
+            ✨ 检查
+          </a-button>
+        </template>
+      </AiAssist>
       <a-tooltip
         v-if="env === 'prod'"
         :title="
