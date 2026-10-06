@@ -3,7 +3,9 @@
  * 此前 yaml-editor 与 diff-editor 各自在 setup 顶层装配——每个实例重跑，
  * 且互相覆盖（v0.12.3 复核残留项）。
  */
-import * as monaco from 'monaco-editor';
+// monaco 仅作副作用类型引用；再导出会触发 oxlint no-re-export 规则——
+// 调用方（yaml-editor/diff-editor）各自直接 import monaco-editor
+
 // oxlint-disable-next-line import/default
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
@@ -31,5 +33,3 @@ export function ensureMonacoEnv() {
     validate: true,
   });
 }
-
-export { monaco };

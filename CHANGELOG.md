@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.12.4 (2026-10-07)
+
+v0.12.3 复核批：更正一条虚假声称（gorm 日志）+ 独立审核 T1~T5 加固 + 前端残留清理。
+
+### 更正（v0.12.3 的 gorm 日志条目为虚假声称）
+
+- v0.12.3 声称「gorm 日志按级别分流」——实际分流写在 gorm 永不调用的 `Write` 方法上（探针实测失败 SQL 下 Write 调用 0 次），且 SQL Trace 行本身无级别标记可嗅探，**SQL 错误仍全落 INFO**。本版改为完整实现 `logger.Interface`：Trace 直连 zap（错误→Error、慢查询→Warn、正常→Info），分级纯函数配测试
+
+### 安全（独立审核 T1~T5）
+
+- **T4** AgileConfig 客户端默认校验 TLS（原无条件 `InsecureSkipVerify`，通道携带配置中心 admin 凭据）；自签内网显式豁免 `CUSTOS_AGILE_INSECURE_TLS=1`
+- **T1** `http.Server` 补 `ReadHeaderTimeout=10s`/`IdleTimeout=3m`（Slowloris）；不设 Read/WriteTimeout——会拦腰掐断 SSE 流式响应
+- **T3** 500 响应不再回显 `err.Error()`（表名/驱动/路径外泄面），详情落服务端日志
+- **T5** 基础安全响应头（gin 中间件 + 三份 nginx：nosniff/SAMEORIGIN/Referrer-Policy；HSTS 留待 TLS 终止处）
+- **T2** 全局请求体上限兜底（默认 2MB，SFTP 上传/compose 部署按路由放宽）
+
+### 测试（复核指出的空转测试）
+
+- `deNarrowPolicies` 提为包级函数；原 `TestDeNarrowDoesNotResurrectDeleted` 是空转测试（被测函数是局部闭包且从未被调用），改为四场景直测
+
+### 前端（连续三轮在表的残留清理）
+
+- Monaco 全局装配抽共享模块单次执行（无 schema 的实例不再清掉其他编辑器的 compose 补全）；`extractErrMsg` 工具化收敛 19 处手写；chat 裸 fetch 补 401 刷新（会话过期不再停在登录假象）；SSE 日志显示视图封顶 64KB（高频日志重渲染有界）；深色终端色集中 `--custos-term-bg`；拖拽 selfHeal 正常收尾摘监听；新增 `use-paged-list-polling` 行为测试（active 停表契约）
+
 ## v0.12.3 (2026-10-06)
 
 v0.12.2 复核批：补上上轮遗漏的存量库迁移 P0，收掉 guest 测试槽位越权链，AAD 落档。
