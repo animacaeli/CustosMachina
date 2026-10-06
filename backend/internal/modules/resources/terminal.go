@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/custos-machina/backend/internal/modules/auth"
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 )
 
@@ -148,6 +149,12 @@ type resizeMsg struct {
 func (h *Handler) handleTerminal(c *gin.Context) {
 	id, ok := idParam(c)
 	if !ok {
+		return
+	}
+	// 兜底 gate（中间件已按同一口径裁决）：终端不认通配策略，
+	// 仅内置 admin 角色或该登录名的逐主机精确 ACL。
+	if !rbac.TerminalAllowedForServer(c, id) {
+		httpx.Fail(c, http.StatusForbidden, 403, "无该主机的终端授权（需管理员角色或主机级授权）")
 		return
 	}
 	srv, err := h.svc.servers.GetByID(c.Request.Context(), id)

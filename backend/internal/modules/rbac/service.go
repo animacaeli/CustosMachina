@@ -244,8 +244,9 @@ const subjectCtxKey = "rbac.subject"
 
 // subject 请求主体（中间件查库后塞入，gate 免二次查询）。
 type subject struct {
-	IsAdmin bool
-	Roles   []string
+	IsAdmin  bool
+	Roles    []string
+	Username string
 }
 
 // Can 业务动作裁决（P7-M1）：handler gate 入口。
@@ -291,6 +292,62 @@ func InProjectScope(c *gin.Context, projectID uint) bool {
 	}
 	for _, id := range ids {
 		if id == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+// TerminalAllowedFor 终端授权统一裁决（中间件与 handler 兜底两处共用）。
+// 通配策略一律不认（keyMatch 下 /servers/* 与 /servers/*/terminal 均含 *），
+// 只认两条路：① 内置 admin 角色（原始设计：Web 终端仅管理员，超管在中间件层放行）；
+// ② 写给登录名的逐主机精确 ACL（M6 堡垒机细粒度授权）。
+func TerminalAllowedFor(c *gin.Context, serverID uint, roles []string, username string) bool {
+	claims := auth.ClaimsFromContext(c)
+	if claims == nil {
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	return terminalAllowed(roles, username, serverID)
+}
+
+// TerminalAllowedForServer handler 层兜底 gate：从请求上下文取主体再裁决，
+// 不单纯依赖中间件语义——终端这条路径值得双重防护。
+func TerminalAllowedForServer(c *gin.Context, serverID uint) bool {
+	claims := auth.ClaimsFromContext(c)
+	if claims == nil {
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	if v, ok := c.Get(subjectCtxKey); ok {
+		if s, ok := v.(subject); ok {
+			return terminalAllowed(s.Roles, s.Username, serverID)
+		}
+	}
+	return false
+}
+
+func terminalAllowed(roles []string, username string, serverID uint) bool {
+	for _, r := range roles {
+		if r == "admin" || r == "superadmin" {
+			return true
+		}
+	}
+	if gateService == nil || username == "" || serverID == 0 {
+		return false
+	}
+	return gateService.terminalACLAllows(username, serverID)
+}
+
+// terminalACLAllows 登录名是否持有该主机的精确终端授权策略。
+func (s *Service) terminalACLAllows(username string, serverID uint) bool {
+	ps, _ := s.enforcer.GetFilteredPolicy(1, terminalACLPath(serverID), "GET")
+	for _, p := range ps {
+		if len(p) == 3 && p[0] == username {
 			return true
 		}
 	}

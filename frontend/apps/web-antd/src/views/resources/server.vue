@@ -9,7 +9,7 @@ import type {
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
-import { useUserStore } from '@vben/stores';
+import { useAccessStore, useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
@@ -76,7 +76,9 @@ function hostTooltip(raw: string): string {
 }
 
 const userStore = useUserStore();
-// 终端仅 admin 以上（后端 casbin 兜底，这里只控制按钮可见性）
+const accessStore = useAccessStore();
+// 终端按钮可见性：admin 以上，或被授予 terminal.access 动作（M6 逐主机 ACL 的
+// 受权用户；后端仍按「admin 角色 + 逐主机精确 ACL」双重裁决，未授权主机 403）
 // P6-M6 终端审计/授权（admin）
 const auditOpen = ref(false);
 const auditServerId = ref<number | undefined>();
@@ -84,9 +86,17 @@ const aclOpen = ref(false);
 const aclServer = ref<{ id?: number; name?: string }>({});
 const canTerminal = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
-  return roles.includes('superadmin') || roles.includes('admin');
+  return (
+    roles.includes('superadmin') ||
+    roles.includes('admin') ||
+    (accessStore.accessCodes ?? []).includes('terminal.access')
+  );
 });
-const isAdmin = canTerminal; // 审计/授权入口与终端按钮同权限面
+const isAdmin = computed(
+  () =>
+    (userStore.userInfo?.roles ?? []).includes('superadmin') ||
+    (userStore.userInfo?.roles ?? []).includes('admin'),
+); // 审计/授权入口仅管理员
 
 const loading = ref(false);
 const list = ref<ManagedServer[]>([]);

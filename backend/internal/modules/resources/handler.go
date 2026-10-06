@@ -36,7 +36,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		servers.PUT("/:id", h.updateServer)
 		servers.DELETE("/:id", h.deleteServer)
 		servers.POST("/:id/test", h.testServer)
-		servers.GET("/:id/terminal", h.handleTerminal) // WebSocket；admin 通配 + 用户级细粒度授权（M6）
+		servers.GET("/:id/terminal", h.handleTerminal) // WebSocket；仅内置 admin 角色 + 用户级逐主机 ACL（通配不生效）
 		// P6-M6 终端会话审计（admin，种子 v19）
 		r.Authed.GET("/server-terminals", h.listTerminalSessions)
 		r.Authed.GET("/server-terminals/content", h.terminalCastContent)
