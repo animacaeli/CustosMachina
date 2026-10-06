@@ -243,11 +243,14 @@ var defaultPolicies = [][]string{
 	{"admin", "/ai/assist", "POST"},
 	{"ops", "/ai/assist", "POST"},
 	{"dev", "/ai/assist", "POST"},
+	// v23：k3s 集群管理（P8-M3.2）——admin（kubeconfig 属集群凭证管理）
+	{"admin", "/k3s-clusters", "GET|POST|DELETE"},
+	{"admin", "/k3s-clusters/*", "PUT|POST"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "22" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "23" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -401,6 +404,10 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		// v21→v22：/ai/assist 对 admin/ops/dev 都是新资源点
 		if len(ps) > 0 && oldVersion == "21" {
+			entryLevelSeed[p[0]] = true
+		}
+		// v22→v23：k3s-clusters 对 admin 是新资源点
+		if len(ps) > 0 && p[0] == "admin" && oldVersion == "22" {
 			entryLevelSeed[p[0]] = true
 		}
 	}

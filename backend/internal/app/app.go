@@ -25,6 +25,7 @@ import (
 	cronmod "github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
 	"github.com/custos-machina/backend/internal/modules/identity"
+	k3smod "github.com/custos-machina/backend/internal/modules/k3s"
 	mcpmod "github.com/custos-machina/backend/internal/modules/mcp"
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/observ"
@@ -34,6 +35,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/modules/setup"
 	"github.com/custos-machina/backend/internal/modules/slots"
+	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/database"
 	jwtpkg "github.com/custos-machina/backend/internal/pkg/jwt"
 	"github.com/custos-machina/backend/internal/server"
@@ -78,6 +80,7 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, canary.Models()...)
 	models = append(models, slots.Models()...)
 	models = append(models, cronmod.Models()...)
+	models = append(models, k3smod.Models()...)
 	db, err := database.Open(&cfg.Database, models)
 	if err != nil {
 		return nil, nil, err
@@ -126,6 +129,7 @@ func ProvideModules(
 	mcpSvc *mcpmod.Service,
 	mcpH *mcpmod.Handler,
 	db *gorm.DB,
+	cipher *crypto.Cipher,
 	backupSvc *backup.Service,
 	backupSched *backup.Scheduler, // 拉起 backup:sched 调度扫描（哨兵依赖）
 	slotsSvc *slots.Service,
@@ -147,6 +151,9 @@ func ProvideModules(
 	canarySvc.SetColorGetter(releaseSvc)
 	// 桥接：cron 的 compose 载体任务跟随蓝绿活跃颜色域（同注入模式解构造环）
 	cronSvc.SetDomainResolver(releaseSvc)
+	// 桥接（P8-M3.2）：k3s 集群服务注入 release（k3s 目标分流；cipher 复用平台主密钥）
+	k3sSvc := k3smod.NewService(db, cipher)
+	releaseSvc.SetK3sDeployer(k3sSvc)
 	// 桥接：cron 任务失败 / observ 部署失败 / 备份失败推统一通知路由
 	cronSvc.SetNotifier(notifySvc)
 	observSvc.SetNotifier(notifySvc)
@@ -175,7 +182,7 @@ func ProvideModules(
 	// 桥接（P6 M4，建议卡定调）：NL→操作建议——白名单三件套只生成建议卡
 	// （校验对象真实存在 + 跳转路由），AI 不执行任何变更
 	aiChatSvc.ActionSource = &chatActionBridge{db: db, res: resSvc}
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH, ai.NewAssistHandler(assistSvc)}
+	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH, ai.NewAssistHandler(assistSvc), k3smod.NewHandler(k3sSvc)}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。

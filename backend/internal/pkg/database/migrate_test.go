@@ -61,6 +61,9 @@ func TestMigrateExistingDBSkipsAutoMigrate(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE platform_settings (key TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, env_type TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := Migrate(db, []any{&migTestModel{}}); err != nil {
 		t.Fatalf("存量库迁移失败: %v", err)
 	}

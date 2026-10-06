@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	k3smod "github.com/custos-machina/backend/internal/modules/k3s"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type Service struct {
 	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
 	cipher *crypto.Cipher  // registry 凭据解密
 	canary ConfRenderer    // 整份 nginx conf 单写者（蓝绿切换时取整份配置；依赖单向：release→canary）
+	k3s    K3sDeployer     // P8-M3.2：k3s 目标部署器（nil = 未装配，目标仍拒）
 }
 
 // registryCred 项目绑定的 registry 凭据（namespace 隔离：镜像路径里的
@@ -109,15 +111,16 @@ func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
 
 // EnvTarget 项目某环境的部署目标。
 type EnvTargetRow struct {
-	ServerID uint
-	Runtime  string
+	ServerID  uint
+	Runtime   string
+	ClusterID uint
 }
 
 func (s *Service) envTarget(ctx context.Context, projectID uint, env string) (*EnvTargetRow, error) {
 	var t EnvTargetRow
 	if err := s.db.WithContext(ctx).
 		Table("project_env_targets").
-		Select("server_id, runtime").
+		Select("server_id, runtime, cluster_id").
 		Where("project_id = ? AND env_type = ?", projectID, env).
 		First(&t).Error; err != nil {
 		return nil, fmt.Errorf("项目未配置 %s 环境的部署目标", env)
@@ -156,8 +159,9 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	if err != nil {
 		return nil, err
 	}
-	if target.Runtime != "" && target.Runtime != "compose" {
-		return nil, fmt.Errorf("部署目标运行时 %s 尚未支持（MVP 仅 compose）", target.Runtime)
+	// P8-M3.2 双轨载体：k3s 目标走 K8s API 分流（零 SSH），compose 原路径不变
+	if target.Runtime == "k3s" {
+		return s.executeK3s(ctx, in, p, target, operator, rollbackOf)
 	}
 
 	yamlContent, err := s.fetchCompose(ctx, p, in.Tag)
@@ -331,4 +335,57 @@ func rollbackOfRef(rollbackOf []uint) *uint {
 		return nil
 	}
 	return &rollbackOf[0]
+}
+
+// ---- P8-M3.2 k3s 分流 ----
+
+// K3sDeployer k3s 部署能力投影（k3s.Service 实现；release→k3s 单向依赖无环）。
+type K3sDeployer interface {
+	Deploy(ctx context.Context, in k3smod.DeployInput) (*k3smod.DeployResult, error)
+	Rollback(ctx context.Context, clusterID uint, namespace, name string) error
+}
+
+// SetK3sDeployer 注入 k3s 部署器（nil = k3s 目标仍报"未支持"）。
+func (s *Service) SetK3sDeployer(d K3sDeployer) { s.k3s = d }
+
+// K3sHostFor Ingress host（k3s 集群域名 + 项目-环境命名，由 k3s 模块约定）。
+func k3sNamespace(projectID uint, env string) string {
+	return fmt.Sprintf("custos-%d-%s", projectID, env)
+}
+
+func (s *Service) executeK3s(ctx context.Context, in ReleaseInput, p *projectRow, target *EnvTargetRow, operator string, rollbackOf []uint) (*Release, error) {
+	if s.k3s == nil {
+		return nil, fmt.Errorf("部署目标运行时 k3s 尚未支持（k3s 模块未装配）")
+	}
+	if target.ClusterID == 0 {
+		return nil, fmt.Errorf("k3s 部署目标未绑定集群（环境管理 → 目标设置）")
+	}
+	yamlContent, err := s.fetchCompose(ctx, p, in.Tag)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.k3s.Deploy(ctx, k3smod.DeployInput{
+		ClusterID:   target.ClusterID,
+		Namespace:   k3sNamespace(in.ProjectID, in.EnvType),
+		ComposeYAML: yamlContent,
+		Tag:         in.Tag,
+		Host:        "", // Host 由 k3s.Service 依集群 Domain 组装（M3.3 域名策略接缝）
+	})
+	if err != nil {
+		return nil, fmt.Errorf("k3s 部署失败: %w", err)
+	}
+	rel := Release{
+		ProjectID: in.ProjectID, EnvType: in.EnvType, Tag: in.Tag, ReleaseBy: operator,
+		Runtime: "k3s", Status: ReleaseSuccess,
+		Output:       fmt.Sprintf("k3s 部署 %s/%s 镜像 %s（rollout %ds）", res.Namespace, res.Name, res.Image, res.RolloutSecs),
+		DurationSecs: res.RolloutSecs,
+	}
+	if len(rollbackOf) > 0 && rollbackOf[0] > 0 {
+		rel.RollbackOf = &rollbackOf[0]
+	}
+	if err := s.db.WithContext(ctx).Create(&rel).Error; err != nil {
+		return nil, err
+	}
+	s.notifyRelease(ctx, p, &rel)
+	return &rel, nil
 }

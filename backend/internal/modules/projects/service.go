@@ -210,9 +210,10 @@ type SaveTargetsInput struct {
 }
 
 type TargetInput struct {
-	EnvType  string `json:"envType" binding:"required,oneof=prod canary test"`
-	ServerID uint   `json:"serverId" binding:"required,min=1"`
-	Runtime  string `json:"runtime" binding:"omitempty,oneof=compose k3s"`
+	EnvType   string `json:"envType" binding:"required,oneof=prod canary test"`
+	ServerID  uint   `json:"serverId" binding:"required,min=1"`
+	Runtime   string `json:"runtime" binding:"omitempty,oneof=compose k3s"`
+	ClusterID uint   `json:"clusterId"` // runtime=k3s 时必填（服务层校验）
 }
 
 // SaveTargets 整体替换某项目的部署目标（前端表格一次提交）。
@@ -246,7 +247,7 @@ func (s *Service) SaveTargets(ctx context.Context, projectID uint, in SaveTarget
 				runtime = RuntimeCompose
 			}
 			if err := tx.Create(&EnvTarget{
-				ProjectID: projectID, EnvType: t.EnvType, ServerID: t.ServerID, Runtime: runtime,
+				ProjectID: projectID, EnvType: t.EnvType, ServerID: t.ServerID, Runtime: runtime, ClusterID: t.ClusterID,
 			}).Error; err != nil {
 				return err
 			}

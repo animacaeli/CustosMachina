@@ -63,6 +63,7 @@ type EnvTarget struct {
 	EnvType   string    `gorm:"uniqueIndex:uniq_proj_env;size:16;not null" json:"envType"` // prod | canary | test
 	ServerID  uint      `gorm:"not null" json:"serverId"`                                  // FK servers.id（资源管理）
 	Runtime   string    `gorm:"size:16;not null;default:compose" json:"runtime"`           // compose | k3s
+	ClusterID uint      `gorm:"not null;default:0" json:"clusterId"`                       // k3s 运行时的目标集群（FK k3s_clusters；compose 恒 0）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
