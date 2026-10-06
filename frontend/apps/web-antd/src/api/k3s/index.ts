@@ -43,3 +43,9 @@ export async function deleteClusterApi(id: number) {
 export async function testClusterApi(id: number) {
   return requestClient.post<{ version: string }>(`/k3s-clusters/${id}/test`);
 }
+
+export async function deployObservStackApi(id: number) {
+  return requestClient.post<{ summary: string }>(
+    `/k3s-clusters/${id}/observ-stack`,
+  );
+}

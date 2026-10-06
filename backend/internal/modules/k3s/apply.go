@@ -54,3 +54,17 @@ func upsertIngress(ctx context.Context, cs *kubernetes.Clientset, ing *networkin
 	ing.ResourceVersion = cur.ResourceVersion
 	return cs.NetworkingV1().Ingresses(ing.Namespace).Update(ctx, ing, metav1.UpdateOptions{})
 }
+
+func upsertDaemonSet(ctx context.Context, cs *kubernetes.Clientset, ds *appsv1.DaemonSet) error {
+	cur, err := cs.AppsV1().DaemonSets(ds.Namespace).Get(ctx, ds.Name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		_, err = cs.AppsV1().DaemonSets(ds.Namespace).Create(ctx, ds, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("查询 DaemonSet 失败: %w", err)
+	}
+	ds.ResourceVersion = cur.ResourceVersion
+	_, err = cs.AppsV1().DaemonSets(ds.Namespace).Update(ctx, ds, metav1.UpdateOptions{})
+	return err
+}

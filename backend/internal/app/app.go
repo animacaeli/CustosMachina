@@ -154,6 +154,8 @@ func ProvideModules(
 	// 桥接（P8-M3.2）：k3s 集群服务注入 release（k3s 目标分流；cipher 复用平台主密钥）
 	k3sSvc := k3smod.NewService(db, cipher)
 	releaseSvc.SetK3sDeployer(k3sSvc)
+	// 桥接（P8-M3.3）：观测栈 O2 地址供给（observ settings → k3s DaemonSet 渲染）
+	k3sSvc.SetObservURL(observSvc.O2URL)
 	// 桥接：cron 任务失败 / observ 部署失败 / 备份失败推统一通知路由
 	cronSvc.SetNotifier(notifySvc)
 	observSvc.SetNotifier(notifySvc)

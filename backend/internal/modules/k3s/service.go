@@ -20,9 +20,10 @@ import (
 var ErrNotFound = errors.New("k3s 集群不存在")
 
 type Service struct {
-	db     *gorm.DB
-	cipher *crypto.Cipher
-	kube   *kubeCache
+	db        *gorm.DB
+	cipher    *crypto.Cipher
+	kube      *kubeCache
+	observURL ObservURLFunc // P8-M3.3：观测栈 O2 地址供给（app 注入）
 }
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {

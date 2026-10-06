@@ -8,6 +8,7 @@ import { message } from 'ant-design-vue';
 import {
   createClusterApi,
   deleteClusterApi,
+  deployObservStackApi,
   listClustersApi,
   testClusterApi,
   updateClusterApi,
@@ -79,6 +80,18 @@ async function save() {
   await load();
 }
 
+const deploying = ref(0);
+
+async function deployObserv(c: Cluster) {
+  deploying.value = c.id;
+  try {
+    const out = await deployObservStackApi(c.id);
+    message.success(out.summary);
+  } finally {
+    deploying.value = 0;
+  }
+}
+
 async function remove(c: Cluster) {
   await deleteClusterApi(c.id);
   message.success('集群已删除');
@@ -136,7 +149,7 @@ async function test(c: Cluster) {
         </template>
       </a-table-column>
       <a-table-column data-index="remark" title="备注" />
-      <a-table-column title="操作" :width="230">
+      <a-table-column title="操作" :width="330">
         <template #default="{ record }">
           <a-button
             :loading="testing === record.id"
@@ -145,6 +158,15 @@ async function test(c: Cluster) {
             @click="test(record)"
           >
             连通测试
+          </a-button>
+          <a-button
+            :loading="deploying === record.id"
+            size="small"
+            type="link"
+            title="部署 node-exporter + fluent-bit DaemonSet（每节点一份；需先配置 O2 地址）"
+            @click="deployObserv(record)"
+          >
+            部署观测栈
           </a-button>
           <a-button size="small" type="link" @click="openEdit(record)">
             编辑

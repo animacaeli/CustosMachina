@@ -24,6 +24,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.PUT("/:id", h.update)
 		g.DELETE("/:id", h.remove)
 		g.POST("/:id/test", h.test)
+		g.POST("/:id/observ-stack", h.deployObservStack)
 	}
 }
 
@@ -78,6 +79,20 @@ func (h *Handler) remove(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// deployObservStack P8-M3.3：一键部署观测 DaemonSet（node-exporter + fluent-bit）。
+func (h *Handler) deployObservStack(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	summary, err := h.svc.DeployObservStack(c.Request.Context(), id)
+	if err != nil {
+		httpx.Fail(c, 502, 502, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"summary": summary})
 }
 
 func (h *Handler) test(c *gin.Context) {
