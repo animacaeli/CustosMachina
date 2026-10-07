@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -46,11 +45,15 @@ type Service struct {
 
 	// 业务告警有界投递（独立审核 T7）：固定 worker + 满载拒绝——
 	// 每请求裸 go 在突发告警时会放大下游阻塞且停机时不可控。
-	// 停机语义（独立审核 N4）：拒绝新入队 → 关队列 → 限时等在途投递排空
+	// 停机语义（独立审核 N4）：拒绝新入队 → 关队列 → 限时等在途投递排空。
+	// stopMu 使「检查 stopping + 发送」与「置位 + close」互斥——v0.12.15
+	// 复核 R1：atomic.Bool 只保证读写原子，check 与 send 之间 Stop 可完成
+	// close，命中窗口即 send on closed channel panic（TOCTOU）
 	bizCh    chan bizEvent
 	stopOnce sync.Once
 	bizWG    sync.WaitGroup
-	stopping atomic.Bool
+	stopMu   sync.RWMutex
+	stopping bool // 由 stopMu 保护（RLock=可入队，Lock=关停中）
 }
 
 type bizEvent struct {
@@ -87,8 +90,11 @@ func (s *Service) startBizWorkers() {
 }
 
 // EnqueueBusiness 业务告警入队（满载或停机中返回 false，调用方回 429）。
+// 读锁内完成检查+非阻塞发送：发送不阻塞，锁只跨越纳秒级窗口。
 func (s *Service) EnqueueBusiness(level, dedupKey, title, detail string) bool {
-	if s.stopping.Load() {
+	s.stopMu.RLock()
+	defer s.stopMu.RUnlock()
+	if s.stopping {
 		return false
 	}
 	select {
@@ -107,14 +113,17 @@ func NewServiceWithCleanup(db *gorm.DB, cipher *crypto.Cipher) (*Service, func()
 }
 
 // Stop 停止聚合清扫并排空投递队列（进程关停时由 cleanup 链调用，
-// 先于 DB 关闭——wire cleanup 逆序保证）。
+// 先于 DB 关闭——wire cleanup 逆序保证）。置位与 close 在写锁内完成，
+// 与 EnqueueBusiness 的读锁互斥——close 时不可能有并发发送者。
 func (s *Service) Stop() {
 	s.stopOnce.Do(func() {
-		s.stopping.Store(true)
+		s.stopMu.Lock()
+		s.stopping = true
+		close(s.bizCh) // worker for-range 排空在途事件后退出
+		s.stopMu.Unlock()
 		if s.stopSweeper != nil {
 			s.stopSweeper()
 		}
-		close(s.bizCh) // worker for-range 排空在途事件后退出
 		done := make(chan struct{})
 		go func() {
 			s.bizWG.Wait()
