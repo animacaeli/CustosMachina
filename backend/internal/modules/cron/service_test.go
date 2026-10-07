@@ -287,6 +287,13 @@ func TestTriggerExecutesAndAudits(t *testing.T) {
 	if got.Status != RunSuccess {
 		t.Fatalf("期望 success, got %s output=%s", got.Status, got.Output)
 	}
+	// 状态落库与审计事件（RecordEvent）是 execute 尾部的两步，偶发在状态
+	// 就绪后几十毫秒才到——CI 上曾以 3s 窗口竞态失败（service_test.go:306
+	// "应落审计事件, got []"，本地 25 次复现不出）。等事件窗口与状态等待同长。
+	auditDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(auditDeadline) && len(r.snapshotEvents()) == 0 {
+		time.Sleep(50 * time.Millisecond)
+	}
 	if len(r.snapshotCommands()) < 2 {
 		t.Fatalf("应有上传脚本+执行两条命令, got %d: %v", len(r.snapshotCommands()), r.commands)
 	}
