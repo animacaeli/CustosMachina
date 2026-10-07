@@ -15,6 +15,24 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  consistency:
+    # 发版纪律前置校验（v0.12.15 独立复核 R3）：status.md 是「唯一真相源」，
+    # tag 推送时校验其版本号与 tag 一致——防止发版文档滞后（此前停在旧版本）
+    name: 发版一致性校验（tag ↔ status.md 版本）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER=$(grep -m1 -oE 'v0\.[0-9]+\.[0-9]+' docs/status.md || true)
+          echo "tag=$TAG status.md=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::docs/status.md 版本（$VER）与 tag（$TAG）不一致——发版前须同步 status.md"
+            exit 1
+          fi
+
   images:
     name: 构建并推送镜像
     runs-on: ubuntu-latest

@@ -95,6 +95,9 @@ func bodyLimit() gin.HandlerFunc {
 // 的 body 因此无期限——慢速 body 可长期占用连接与 goroutine。分层设期限：
 // 普通 JSON API 30s、上传/compose 10 分钟。仅对带 body 的请求生效——GET
 // 无 body 的 SSE 与终端 WebSocket（升级请求无 body）天然豁免。
+// h2 备注（v0.12.15 独立复核 §八.2）：HTTP/2 请求 CL=-1 且无 TE，会被判
+// 「无 body」豁免——当前部署 h1.1（nginx 前置）不可达；启用 h2 前须补
+// ProtoMajor==2 分支。
 func bodyDeadline() gin.HandlerFunc {
 	return bodyDeadlineWith(30*time.Second, 10*time.Minute)
 }
@@ -119,8 +122,13 @@ func bodyDeadlineWith(def, upload time.Duration) gin.HandlerFunc {
 			}
 		}
 		// ResponseController 把期限落到底层连接；handler 返回后 server
-		// 会按 IdleTimeout 重置，不影响该连接后续请求
-		_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Now().Add(deadline))
+		// 会按 IdleTimeout 重置，不影响该连接后续请求。自定义 Writer 不
+		// 支持 deadline 时返回错误——记 debug 便于识别此类部署环境
+		//（v0.12.15 独立复核 §6.2 建议），期限静默失效不应无声
+		if err := http.NewResponseController(c.Writer).
+			SetReadDeadline(time.Now().Add(deadline)); err != nil {
+			logger.Debugf("[server] 设置 body 读取期限失败（Writer 不支持）: %v", err)
+		}
 		c.Next()
 	}
 }

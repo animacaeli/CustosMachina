@@ -47,6 +47,14 @@ for (const adv of Object.values(advisories)) {
   if (adv.severity !== 'critical' && adv.severity !== 'high') continue;
   const entry = allow.get(adv.github_advisory_id) ?? allow.get(adv.url);
   if (entry && entry.expires >= today) {
+    // 例外对象与公告对象须一致（独立复核 §6.3：防 advisory ID 写对但
+    // module 字段写错——登记的是别的包）
+    if (entry.module && entry.module !== adv.module_name) {
+      failures.push(
+        `例外 ${adv.github_advisory_id} 登记的 module（${entry.module}）与公告对象（${adv.module_name}）不一致，须更正 allowlist`,
+      );
+      continue;
+    }
     console.log(
       `⏭  放行 ${adv.module_name} ${adv.github_advisory_id}（${entry.reason}，到期 ${entry.expires}）`,
     );
