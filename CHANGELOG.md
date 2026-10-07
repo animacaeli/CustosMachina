@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.12.15 (2026-10-07)
+
+双报告（逐提交复核 + 独立审核 v0.12.14）合并整改：供应链清零 + 契约纠偏 + 可靠性收口 + 权限修复。对照 `reverify-report-v0.12.4-14.md` §九 合并裁定。
+
+### 权限（P1，复核 §7.1）
+
+- **home casbin 种子 v26→v27 补种**：v0.12.8 上线首页/就绪度时漏种策略——admin/ops/dev 登录后首屏 `/home/summary`、`/home/readiness` 全 403（E2E 全绿是因超管旁路）。补 defaultPolicies 六条 + 存量库 entry-level 迁移 + 存量自定义角色补基础读集（customBaseRoutes 同步）；真机 curl 以 ops token 实测两接口 200
+
+### 供应链（P1，独立审核 N1）
+
+- 生产依赖官方 registry 审计 **54 项（3C/26H）→ critical 0、high 2（均为修复版未发布的例外）**：catalog 升级 vue 3.5.42 / axios 1.20 / tiptap 3.30.5 / dompurify 3.4.16；overrides 钉传递依赖 tinypool/seroval/prosemirror-view/undici/svgo/fast-uri/js-yaml/brace-expansion/glob/source-map-js/qs/postcss-selector-parser
+- **CI 新增两道硬门禁**：`pnpm-audit-gate.mjs`（官方源审计，critical/high 未处置即失败，例外须登记理由与到期日）+ `check-bundle-size.mjs`（gzip 总量预算 3.5MB + ts/css/html worker 禁入清单）
+
+### HTTP 可靠性（P1，独立审核 N3 + T6 遗留）
+
+- **分层 body 读取期限**：普通 API 30s / 上传与 compose 10 分钟（ResponseController 按请求设期限，无 body 的 SSE/WebSocket 天然豁免）——慢速 body 不再能无限期占用连接；此前仅 ReadHeaderTimeout
+- **`ratelimit.StopAll()` 接入 app 关停**（main cleanup 链）——v0.12.7「app 关停统一回收」声称落地
+
+### 通知停机语义（P2，独立审核 N4）
+
+- `Service.Stop()` 完整化：拒绝新入队 → 关队列 → worker 限时排空在途事件（5s，先于 DB 关闭）→ 幂等；删 `bizCap` 死字段；429 收敛 httpx.Fail；Lockout 清扫抽方法 + 注释归位
+
+### 契约纠偏（P1/P2，独立审核 N2/N7）
+
+- **`docs/providers/README.md` 按真实接口重写**：CIProvider 实为 Name/Status/Log（只读，构建由 webhook 驱动）；删除不存在的 `RegisterProvider` 注册方式，改为真实修改点清单（ciEngineFor 工厂 / handler 路由 / 配置模型 / 前端枚举）；契约测试注释与签名对齐（删虚标的 5 项契约与不存在的 BuildRef.ExternalID）
+- `docs/status.md` 更新至当前版本，修复第 3 批残缺重复行与失实的「✅ 完成」标记
+
+### Monaco 体积与 JSON 语言服务（P2，独立审核 N6 + 复核 §7.4）
+
+- **editor.api 精确入口**：编辑器组件不再从根入口 import（根入口注册全部语言）——dist 21MB→12MB、gzip 3.2MB，**ts/css/html worker 从产物消失**；json/shell/python/ini 显式注册（v0.8.2 教训：防惰性挂载）
+- **json worker 路由补齐**：此前一律回落 editor.worker，JSON 诊断/补全/JSONC 容忍项从不生效——「不报注释错误」实为诊断整体缺席
+
+### 首页与窄屏（P3，独立审核 N9/N10/N11）
+
+- 首页状态卡/就绪度项/功能卡改 **router-link 语义导航**（键盘可 Tab、读屏可识别）；emoji 换 Lucide SVG（@vben/icons 既有体系）
+- **删除超管旧首登弹窗**（localStorage 一次性引导）——统一到常驻就绪度面板
+- 管理后台 4 个宽表（通知路由 9 列等）加 `scroll.x`——窄屏表头不再逐字换行；抽屉宽度 `min(100vw, …)` 自适应
+
+### E2E（P2/P3，独立审核 N5 + 复核 §7.5）
+
+- **每次运行唯一临时 SQLite**（退出清理）——不再固定复用 `/tmp/e2e-custos.db` 跨运行累积；workers 串行化防 SQLite 并发写
+- **新增非超管（ops）用例**：手签 JWT 注入登录态，直断言 `/home/summary` 200——**堵住「仅超管登录恰好绕过权限回归」的结构性盲区**（§7.1 即因此漏检）
+- 加深 3 条浅断言：项目总览→详情页深链（v0.12.11 卖点此前无覆盖）、发布走确认抽屉+取消、配置文件页结构断言；新增 Monaco 编辑器加载用例（语言注册回归点）
+
+### 其他
+
+- `.gitignore` 修 `.ideae2e-server` 粘连错（107MB e2e 二进制未被忽略的根因）
+- `ai-assist.vue` 错误提取收敛 extractErrMsg（v0.12.3 残留批漏网最后一处）；SSE 截断文案「字节」→「字符」；`frontend/scripts/deploy/nginx.conf` location 块安全头重申（add_header 继承规则导致静默失效）；gorm SQL 分级测试改绑实现（弱断言加固）；T6 sweep/T7 停机各补测试
+
 ## v0.12.14 (2026-10-07)
 
 独立审核第 3 批全部完成：E2E 扩链路 / app.go 拆分 / Monaco chunk 预算 / provider 扩展契约。
@@ -53,6 +102,10 @@
 
 - **`GET /home/readiness`**：七项检查从真实配置状态计算——IM 扫码（可选）/ Redis 会话（可选）/ 通知群（必配）/ CI 全局（可选）/ 主机或集群（必配）/ 备份任务（可选）/ AI 中转（可选），跨模块只读投影
 - **首页就绪度面板**：常驻可折叠卡片（不再一次性消失）——必配缺失红色标记 + 计数、可选缺失灰色提示；每项点击直达对应设置页（含管理后台 section/tab 深链）；超仅在有待配置项时默认展开
+
+## v0.12.9（补记，2026-10-07）
+
+管理后台二级导航双参深链（U1 完结，tag v0.12.9 → `74f3d4e`）：11 个域内 tab 与 URL `?section=&tab=` 双向同步、`replace` 无循环、深链含登录回跳。当时未同步 CHANGELOG，本条补记保持发布记录连续。
 
 ## v0.12.8 (2026-10-07)
 
