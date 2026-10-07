@@ -11,6 +11,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/modules/identity"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
+	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
 	"github.com/custos-machina/backend/internal/pkg/strx"
 )
@@ -39,12 +40,49 @@ type Service struct {
 	analyzer AlertAnalyzer // P7-M2 告警 AI 分析（nil = 关闭）
 
 	stopSweeper func()
+
+	// 业务告警有界投递（独立审核 T7）：固定 worker + 满载拒绝——
+	// 每请求裸 go 在突发告警时会放大下游阻塞且停机时不可控
+	bizCh  chan bizEvent
+	bizCap int
 }
 
+type bizEvent struct {
+	source, level, dedupKey, title, detail string
+}
+
+const (
+	bizWorkers = 4
+	bizQueue   = 256
+)
+
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
-	s := &Service{db: db, cipher: cipher, sender: newSender(), agg: newAggregator()}
+	s := &Service{db: db, cipher: cipher, sender: newSender(), agg: newAggregator(),
+		bizCh: make(chan bizEvent, bizQueue)}
 	s.stopSweeper = s.startAggSweeper()
+	s.startBizWorkers()
 	return s
+}
+
+// startBizWorkers 固定 worker 消费投递队列（recover 保护）。
+func (s *Service) startBizWorkers() {
+	for range make([]struct{}, bizWorkers) {
+		jobs.GoSafe("notify:biz-worker", func() {
+			for ev := range s.bizCh {
+				s.NotifyEvent(context.Background(), ev.source, ev.level, ev.dedupKey, ev.title, ev.detail)
+			}
+		})
+	}
+}
+
+// EnqueueBusiness 业务告警入队（满载返回 false，调用方回 429）。
+func (s *Service) EnqueueBusiness(level, dedupKey, title, detail string) bool {
+	select {
+	case s.bizCh <- bizEvent{source: SourceBusiness, level: level, dedupKey: dedupKey, title: title, detail: detail}:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewServiceWithCleanup wire 装配专用：返回清扫停止函数，让 wire_gen

@@ -1,8 +1,8 @@
 package notify
 
 import (
-	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -105,7 +105,10 @@ func (h *Handler) businessAlert(c *gin.Context) {
 	title, detail, dedupKey := RenderBusinessAlert(in)
 	// 投递异步化：webhook 投递可达秒级（企微 API 慢），同步会把业务侧响应拖到
 	// 3s+——入口受理即返回，脱离 request ctx 投递（只发消息，无半完成态）
-	go h.svc.NotifyEvent(context.WithoutCancel(c.Request.Context()), SourceBusiness, in.Level, dedupKey, title, detail)
+	if !h.svc.EnqueueBusiness(in.Level, dedupKey, title, detail) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "message": "投递队列已满，请稍后重试"})
+		return
+	}
 	httpx.OK(c, gin.H{"accepted": true})
 }
 

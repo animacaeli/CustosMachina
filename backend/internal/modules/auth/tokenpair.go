@@ -148,7 +148,12 @@ func (s *AuthService) SaveRedisConfig(ctx context.Context, cfg RedisConfig) erro
 	if _, err := s.refreshHolder.Get(ctx, &cfg); err != nil {
 		return err // 连接失败直接报错
 	}
-	if cfg.Password != "" && s.cipher != nil {
+	if cfg.Password != "" {
+		if s.cipher == nil {
+			// 与其他凭据「缺主密钥即拒绝保存」策略对齐（独立审核 T8）——
+			// 明文回退会让 Redis 密码成为库内唯一明文凭据
+			return fmt.Errorf("未配置主密钥 CUSTOS_SECRETS_MASTER_KEY，Redis 密码拒绝明文保存（无密码 Redis 可留空密码）")
+		}
 		enc, err := s.cipher.Encrypt(cfg.Password, aadRedisPassword)
 		if err != nil {
 			return fmt.Errorf("Redis 密码加密失败: %w", err)

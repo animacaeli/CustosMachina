@@ -23,8 +23,72 @@ type Window struct {
 	window time.Duration
 }
 
+var (
+	sweepMu    sync.Mutex
+	sweepStops []func()
+)
+
+// registerSweeper 注册停止函数，StopAll 统一回收（进程关停时调用一次）。
+func registerSweeper(stop func()) {
+	sweepMu.Lock()
+	sweepStops = append(sweepStops, stop)
+	sweepMu.Unlock()
+}
+
+// StopAll 停止全部限速器清扫 goroutine（app cleanup 调用）。
+func StopAll() {
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	for _, stop := range sweepStops {
+		stop()
+	}
+	sweepStops = nil
+}
+
 func NewWindow(max int, window time.Duration) *Window {
-	return &Window{hits: map[string][]time.Time{}, max: max, window: window}
+	w := &Window{hits: map[string][]time.Time{}, max: max, window: window}
+	registerSweeper(w.StartSweeper())
+	return w
+}
+
+// sweepEvery 机会式全局清扫间隔：清理只在各自 key 访问时发生，长期不再
+// 访问的 key 会驻留（独立审核 T6）——按固定频率整体扫一遍过期 key。
+const sweepEvery = 10 * time.Minute
+
+func (w *Window) sweep(now time.Time) {
+	for k, hits := range w.hits {
+		alive := false
+		for _, t := range hits {
+			if now.Sub(t) <= w.window {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			delete(w.hits, k)
+		}
+	}
+}
+
+// StartSweeper 启动清扫 goroutine（返回停止函数，随宿主 cleanup 调用）。
+func (w *Window) StartSweeper() func() {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(sweepEvery)
+		defer t.Stop()
+		for {
+			select {
+			case now := <-t.C:
+				w.mu.Lock()
+				w.sweep(now)
+				w.mu.Unlock()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stop) }) }
 }
 
 // Allow 记录一次命中并判定是否放行（false = 已超窗内上限）。
@@ -58,8 +122,10 @@ type Lockout struct {
 }
 
 func NewLockout(maxFails int, window, lockFor time.Duration) *Lockout {
-	return &Lockout{fails: map[string][]time.Time{}, blocked: map[string]time.Time{},
+	l := &Lockout{fails: map[string][]time.Time{}, blocked: map[string]time.Time{},
 		maxFails: maxFails, window: window, lockFor: lockFor}
+	registerSweeper(l.StartSweeper())
+	return l
 }
 
 // Blocked 该 key 当前是否处于锁定期。
@@ -117,6 +183,43 @@ func (w *Window) Middleware() gin.HandlerFunc {
 }
 
 // Gin 中间件形态：失败锁定（Blocked 即 429；由业务在失败时调 ReportFail）。
+// StartSweeper 同 Window：周期清理过期 fails/blocked（独立审核 T6）。
+func (l *Lockout) StartSweeper() func() {
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(sweepEvery)
+		defer t.Stop()
+		for {
+			select {
+			case now := <-t.C:
+				l.mu.Lock()
+				for k, fails := range l.fails {
+					alive := false
+					for _, ts := range fails {
+						if now.Sub(ts) <= l.window {
+							alive = true
+							break
+						}
+					}
+					if !alive {
+						delete(l.fails, k)
+					}
+				}
+				for k, until := range l.blocked {
+					if now.After(until) {
+						delete(l.blocked, k)
+					}
+				}
+				l.mu.Unlock()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stop) }) }
+}
+
 func (l *Lockout) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if l.Blocked(c.ClientIP()) {
