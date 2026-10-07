@@ -39,7 +39,7 @@ async function load() {
   }
 }
 
-// ---- P6-M9 渠道凭据设置（Telegram Bot / SMTP，平台级）----
+// ---- P6-M9 渠道凭据设置（SMTP，平台级）----
 const channelForm = reactive({
   smtpHost: '',
   smtpPort: '',
@@ -260,7 +260,7 @@ async function saveOpsGroup() {
       </template>
     </a-table>
 
-    <!-- P6-M9 渠道凭据（平台级）：Telegram Bot / SMTP 账号，群上只存目标 -->
+    <!-- P6-M9 渠道凭据（平台级）：SMTP 账号，群上只存目标（Telegram 已移除） -->
     <div class="mt-2 rounded-lg border border-border p-3">
       <div class="mb-2 text-sm font-medium">
         通道设置（平台级凭据）

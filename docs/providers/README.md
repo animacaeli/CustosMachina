@@ -9,9 +9,9 @@
 |---|---|---|---|
 | CI 引擎 | `ci.CIProvider` | gitea Actions、Jenkins | 核心 |
 | Git 托管 | `ci.GitProvider` | gitea、gitee | 核心 |
-| 通知渠道 | `notify` channel const | 企微/钉钉/飞书 webhook、SMTP、Telegram | 核心 |
-| DNS provider | `certs.DNSProvider`（lego） | alidns、cloudflare、dnspod、tencentcloud、huaweicloud、gandi、godaddy | 核心（随 lego） |
-| 观测后端 | `observ.ObservBackend` | OpenObserve（v2 API） | 核心 |
+| 通知渠道 | `notify` channel const | 企微/钉钉/飞书 webhook、SMTP | 核心 |
+| DNS provider | `certs.buildDNSProvider`（返回 lego `challenge.Provider`） | alidns、cloudflare、dnspod、tencentcloud、huaweicloud、gandi、godaddy | 核心（随 lego） |
+| 观测后端 | `observ` 模块（Handler/Alert，OpenObserve v2 API 直连） | OpenObserve | 核心 |
 | 配置中心 | `configs` AgileConfig 通道 | AgileConfig | 核心 |
 
 ## CI 引擎（CIProvider）——只读
@@ -93,7 +93,7 @@ r.Public.POST("/ci/webhook/gitee", h.webhookGitee)   // 实际路径 /api/ci/web
 ## 通知渠道
 
 通知渠道当前为**枚举常量**（`notify.Channel`），非插件式。添加新渠道需改：
-1. `notify/model.go` 加 `Channel` 常量
+1. `notify/channels.go` 加 `Channel` 常量（当前仅 webhook/smtp）
 2. `notify/sender.go` `detectProvider` 加 URL Host 判定
 3. `notify/sender.go` `Send` 加消息格式分支
 4. 前端 `admin/tabs/notify-groups.vue` 群表单渠道下拉
