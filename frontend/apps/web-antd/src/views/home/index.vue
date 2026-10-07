@@ -1,12 +1,12 @@
 <script lang="ts" setup>
-import type { HomeSummary } from '#/api/home';
+import type { HomeSummary, ReadinessItem } from '#/api/home';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useUserStore } from '@vben/stores';
 
-import { getHomeSummaryApi } from '#/api/home';
+import { getHomeSummaryApi, getReadinessApi } from '#/api/home';
 
 defineOptions({ name: 'Home' });
 
@@ -74,6 +74,50 @@ const statCards = computed<StatCard[]>(() => [
     link: '/system/certs',
   },
 ]);
+
+// 系统就绪度（独立审核第 2 批：替代 localStorage 一次性引导——
+// 从真实配置状态计算，缺失项常驻提示、可折叠、点击直达设置）
+const readiness = ref<ReadinessItem[]>([]);
+const readinessOpen = ref(false);
+
+const readinessLabel: Record<string, string> = {
+  ai: 'AI 中转层',
+  backup: '备份任务',
+  ci: 'CI 全局配置',
+  im: 'IM 扫码登录',
+  notify: '通知群',
+  redis: 'Redis 会话',
+  target: '主机 / 集群',
+};
+const readinessLink: Record<string, string> = {
+  ai: '/admin?section=ai&tab=ai',
+  backup: '/system/backup',
+  ci: '/admin?section=delivery&tab=ci',
+  im: '/admin?section=identity&tab=im',
+  notify: '/admin?section=notify&tab=notify',
+  redis: '/admin?section=identity&tab=session',
+  target: '/resources/servers',
+};
+
+const missingRequired = computed(() =>
+  readiness.value.filter((r) => r.status === 'missing' && !r.optional),
+);
+const missingOptional = computed(() =>
+  readiness.value.filter((r) => r.status === 'missing' && r.optional),
+);
+
+async function loadReadiness() {
+  try {
+    const res = await getReadinessApi();
+    readiness.value = res.items ?? [];
+    const isSuper = (userStore.userInfo?.roles ?? []).includes('superadmin');
+    readinessOpen.value =
+      isSuper &&
+      (missingRequired.value.length > 0 || missingOptional.value.length > 0);
+  } catch {
+    // 拦截器已提示
+  }
+}
 
 const levelText: Record<string, string> = {
   critical: '严重',
@@ -158,6 +202,7 @@ const STEPS = [
 
 onMounted(() => {
   loadSummary();
+  loadReadiness();
   const isSuper = (userStore.userInfo?.roles ?? []).includes('superadmin');
   if (isSuper && !localStorage.getItem(ONBOARD_KEY)) {
     showOnboard.value = true;
@@ -190,6 +235,52 @@ function goFeature(path: string) {
         <img alt="logo" class="h-14 w-14" src="/logo.svg" />
       </div>
     </a-card>
+
+    <!-- 系统就绪度：常驻可折叠（替代一次性 localStorage 引导） -->
+    <div v-if="readiness.length > 0" class="mt-4">
+      <a-card size="small">
+        <template #title>
+          <span class="text-sm">系统就绪度</span>
+          <a-tag v-if="missingRequired.length === 0" class="ml-2" color="green">
+            就绪
+          </a-tag>
+          <a-tag v-else class="ml-2" color="red">
+            缺 {{ missingRequired.length }} 项必配
+          </a-tag>
+          <span
+            v-if="missingOptional.length > 0"
+            class="text-muted-foreground ml-2 text-xs"
+          >
+            另有 {{ missingOptional.length }} 项可选未配置
+          </span>
+        </template>
+        <template #extra>
+          <a-button
+            size="small"
+            type="link"
+            @click="readinessOpen = !readinessOpen"
+          >
+            {{ readinessOpen ? '收起' : '展开' }}
+          </a-button>
+        </template>
+        <div v-if="readinessOpen" class="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div
+            v-for="item in readiness"
+            :key="item.key"
+            class="cursor-pointer rounded border border-border p-2 text-xs hover:border-primary"
+            @click="router.push(readinessLink[item.key] ?? '/admin')"
+          >
+            <span v-if="item.status === 'ok'" class="text-green-500">✓</span>
+            <span v-else-if="!item.optional" class="text-red-500">✗</span>
+            <span v-else class="text-muted-foreground">—</span>
+            {{ readinessLabel[item.key] ?? item.key }}
+            <span v-if="item.optional" class="text-muted-foreground">
+              （可选）
+            </span>
+          </div>
+        </div>
+      </a-card>
+    </div>
 
     <!-- 运维态势：五个数字 + 待处理事项 + 最近变更 -->
     <div class="mt-4">

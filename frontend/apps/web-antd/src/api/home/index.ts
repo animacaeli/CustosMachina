@@ -29,3 +29,13 @@ export interface HomeSummary {
 export async function getHomeSummaryApi() {
   return requestClient.get<HomeSummary>('/home/summary');
 }
+
+export interface ReadinessItem {
+  key: string;
+  optional: boolean;
+  status: 'missing' | 'ok';
+}
+
+export async function getReadinessApi() {
+  return requestClient.get<{ items: ReadinessItem[] }>('/home/readiness');
+}

@@ -21,6 +21,69 @@ func (h *Handler) Name() string { return "home" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
 	r.Authed.GET("/home/summary", h.summary)
+	r.Authed.GET("/home/readiness", h.readiness)
+}
+
+// ReadinessItem 系统就绪度检查项（独立审核第 2 批：替代 localStorage
+// 一次性引导——就绪度从真实配置状态计算，可持续查看、可直达设置）。
+type ReadinessItem struct {
+	Key      string `json:"key"`
+	Status   string `json:"status"` // ok | missing
+	Optional bool   `json:"optional"`
+}
+
+func (h *Handler) readiness(c *gin.Context) {
+	db := h.db.WithContext(c.Request.Context())
+	items := []ReadinessItem{}
+
+	// IM 扫码登录（可选启用；配置后团队可扫码）
+	var imN int64
+	db.Table("im_provider_configs").Where("enabled = ?", true).Count(&imN)
+	items = append(items, ReadinessItem{Key: "im", Status: statusOf(imN), Optional: true})
+
+	// Redis（可选：登出踢下线/重启不丢会话）
+	var redisCfg string
+	db.Table("platform_settings").Select("value").
+		Where("skey = ?", "redis.config").Scan(&redisCfg)
+	items = append(items, ReadinessItem{Key: "redis", Status: strStatus(redisCfg != ""), Optional: true})
+
+	// 通知群（告警/任务失败可送达）
+	var grpN int64
+	db.Table("notify_groups").Count(&grpN)
+	items = append(items, ReadinessItem{Key: "notify", Status: statusOf(grpN)})
+
+	// CI 全局配置（gitea base url）
+	var ciURL string
+	db.Table("ci_global_config").Select("gitea_base_url").
+		Where("id = ?", 1).Scan(&ciURL)
+	items = append(items, ReadinessItem{Key: "ci", Status: strStatus(ciURL != ""), Optional: true})
+
+	// 至少一台主机或一个 k3s 集群
+	var srvN, k3sN int64
+	db.Table("servers").Count(&srvN)
+	db.Table("k3s_clusters").Count(&k3sN)
+	items = append(items, ReadinessItem{Key: "target", Status: strStatus(srvN > 0 || k3sN > 0)})
+
+	// 备份任务（可选但强烈建议）
+	var bkN int64
+	db.Table("backup_jobs").Where("enabled = ?", true).Count(&bkN)
+	items = append(items, ReadinessItem{Key: "backup", Status: statusOf(bkN), Optional: true})
+
+	// AI 中转（可选：对话/诊断/建议卡）
+	var aiEp string
+	db.Table("platform_settings").Select("value").
+		Where("skey = ?", "ai.endpoint").Scan(&aiEp)
+	items = append(items, ReadinessItem{Key: "ai", Status: strStatus(aiEp != ""), Optional: true})
+
+	httpx.OK(c, gin.H{"items": items})
+}
+
+func statusOf(n int64) string { return strStatus(n > 0) }
+func strStatus(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "missing"
 }
 
 // Summary 运维态势（计数为全局聚合，不泄露凭据/内容明细）。
