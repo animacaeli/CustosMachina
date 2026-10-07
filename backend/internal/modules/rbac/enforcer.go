@@ -433,22 +433,20 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		if len(ps) > 0 && oldVersion == "23" {
 			entryLevelSeed[p[0]] = true
 		}
-		// v26→v27：/home summary+readiness 对 admin/ops/dev 都是新资源点
-		// （v0.12.14 复核 §7.1：v0.12.8 上线时漏种）。数值比较防跳级漏补
-		//（v0.12.15 复核 §八.1-B：精确匹配 "26" 时，"24"/"25" 库直升不仅
-		// 漏种且版本号永不推进——deNarrowPolicies 同款教训，对齐其模式）；
-		// 解析失败=极旧部署照补
-		if v, perr := strconv.Atoi(oldVersion); len(ps) > 0 && (perr != nil || v < 27) {
-			entryLevelSeed[p[0]] = true
-		}
+		// 注意：v27 的 home 补种不走 entryLevelSeed（见下方精确补种块）——
+		// entryLevelSeed 是角色级全量补齐，会把管理员通过产品界面删除的
+		// 内置角色权限一并恢复（role.vue 允许编辑内置角色矩阵，v0.12.16
+		// 独立复核 R1）
 	}
-	// v26→v27：存量自定义角色补 /home 基础读集（customBaseRoutes 同步新增）。
-	// 自定义角色的 home 条目在 v27 之前不存在，无「复活人为删改」风险；
-	// guest 是内置角色不在 defaultPolicies 迁移面，不补。版本 gate 同上
-	//（数值比较）：v27+ 的库再升级时不再重放本块——未来管理员删除自定义
-	// 角色的 home 条目不会被后续种子版本复活
+	// v26→v27：/home 精确补种（v0.12.14 复核 §7.1：v0.12.8 上线时漏种）。
+	// 内置角色 admin/ops/dev 与存量自定义角色都只精确补 home 两条 GET，
+	// 不做角色级全量补齐——升级不得改变管理员主动调整的权限面。
+	// 数值比较防跳级漏补（v0.12.15 复核 §八.1-B：精确匹配 "26" 时
+	// "24"/"25" 库直升漏种且版本永不推进）；解析失败=极旧部署照补；
+	// v27+ 的库不再重放——未来管理员删除 home 条目不会被后续升级复活。
+	// guest 不补（扫码即得角色，与 v26 收权方向一致）
 	if v, perr := strconv.Atoi(oldVersion); perr != nil || v < 27 {
-		for _, sub := range customRoleSubjects(e) {
+		for _, sub := range append(customRoleSubjects(e), "admin", "ops", "dev") {
 			for _, obj := range []string{"/home/summary", "/home/readiness"} {
 				if has, _ := e.HasPolicy(sub, obj, "GET"); !has {
 					if _, err := e.AddPolicy(sub, obj, "GET"); err != nil {

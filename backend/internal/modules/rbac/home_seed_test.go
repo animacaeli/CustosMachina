@@ -151,6 +151,45 @@ func TestCustomRoleHomeSeedNotReplayedOnV27Plus(t *testing.T) {
 	}
 }
 
+// v0.12.16 独立复核 R1 回归：升级只精确补 home 两条——管理员通过产品
+// 界面删除的内置角色默认权限（role.vue 支持编辑内置角色矩阵）在任意
+// 版本升级/跳级后必须保持删除。旧缺陷：v<27 触发 entryLevelSeed 角色级
+// 全量补齐，被删除的 /certs 等条目随升级静默复活（授权边界扩大）。
+func TestUpgradeDoesNotResurrectDeletedPermissions(t *testing.T) {
+	for _, old := range []string{"25", "26"} {
+		t.Run("v"+old, func(t *testing.T) {
+			svc := newTestEnforcer(t)
+			db, e := svc.db, svc.enforcer
+			// 管理员经产品界面删除 ops 的证书权限（defaultPolicies 中存在
+			// 的默认条目，非本次新增）
+			if _, err := e.RemovePolicy("ops", "/certs", "GET|POST|PUT|DELETE"); err != nil {
+				t.Fatal(err)
+			}
+			for _, obj := range []string{"/home/summary", "/home/readiness"} {
+				for _, sub := range []string{"admin", "ops", "dev"} {
+					_, _ = e.RemovePolicy(sub, obj, "GET")
+				}
+			}
+			if err := db.Model(&identity.PlatformSetting{}).
+				Where("skey = ?", "rbac.seed_version").
+				Update("value", old).Error; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := migrateSeedVersion(db, e); err != nil {
+				t.Fatal(err)
+			}
+			// home 精确补上（升级目的达成）
+			if has, _ := e.HasPolicy("ops", "/home/summary", "GET"); !has {
+				t.Error("升级后 ops 应补得 /home/summary")
+			}
+			// 被删除的默认权限不得复活（R1 核心）
+			if has, _ := e.HasPolicy("ops", "/certs", "GET|POST|PUT|DELETE"); has {
+				t.Error("管理员删除的 ops /certs 权限被升级复活——升级不得扩大授权边界")
+			}
+		})
+	}
+}
+
 func countPolicies(e *casbin.SyncedEnforcer, sub, obj string) int {
 	ps, _ := e.GetFilteredPolicy(0, sub, obj)
 	return len(ps)
