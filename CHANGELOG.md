@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.12.17 (2026-10-07)
+
+v0.12.16 双报告复核（第四轮逐提交复核 + 独立复核）补丁：两项 P1（RBAC 升级复活已删权限、发布门禁无效）+ 断言检测力修复。对照 `reverify-report-v0.12.4-16.md` §九 / `reverify-report-v0.12.16-independent.md` R1/R2/R3/R9。
+
+### RBAC 升级正确性（P1，独立复核 R1）
+
+- **v27 迁移改精确补种——升级不得复活管理员删除的内置角色权限**。v0.12.16 跳级修复引入的扩大面：`v<27` 触发的 `entryLevelSeed` 是角色级全量补齐语义，管理员经 role.vue（支持编辑内置角色动作集与 HTTP 矩阵）删除的默认权限（如 ops 的 `/certs`）会在任意升级/跳级后静默恢复——授权边界扩大。独立复核以临时 overlay 反例实证。修法：删 v27 的 entryLevelSeed 分支，`oldVersion < 27` 时只对 admin/ops/dev 与存量自定义角色精确补 home 两条 GET；跳级补种与版本推进语义不变（22/24/25 用例保持绿）。回归测试：删除内置角色权限后升级，home 补上而删除项保持删除
+
+### 发布治理（P1，独立复核 R2）
+
+- **consistency 门禁挂入发布依赖链**：`images` 增 `needs: consistency`——tag 与 status.md 版本不一致时，镜像推送/包公开/GitHub Release 全部阻断（此前 jobs 并行，失败只红 workflow 拦不住产物）。workflow_dispatch（无 tag）时脚本自行成功退出，避免下游 needs 被 skip 连坐
+
+### 测试有效性（P3，复核 P3-N1 / 独立复核 R3/R9）
+
+- **tokenization 断言检测力修复**：mtk span 计数 >0 改为 distinct mtk class ≥2——两报告反例实证未注册语言 Monaco 仍产出单类纯文本 span，旧断言两态恒真；反例验证：注释 shell 注册后新断言必红，恢复后绿
+- **删除 E2E 的 AI 悬浮球 CSS 注入**（独立复核 R3）：实测无注入正常点击通过——悬浮球从未真实遮挡（真遮挡者=创建项目后自动弹出的详情抽屉，v0.12.16 已修）；E2E 不再修改被测 UI
+
+### 未做（后续批次）
+
+R4 发布确认提交与敏感 reveal 的 E2E、R5 移动端记录布局、R6 顶栏图标按钮可访问名称、R7 大文件拆分（`bridge.go`/`configs/files.vue`）、R8 Vben Form slot 迁移、R10 console.error 治理。
+
 ## v0.12.16 (2026-10-07)
 
 v0.12.15 双报告复核（第三轮逐提交复核 + 独立复核）的补丁批：并发竞态修复 + 跳级升级根治 + 回归盲区补测。对照 `reverify-report-v0.12.4-15.md` §八 / `reverify-report-v0.12.15-independent.md` R1~R3。
