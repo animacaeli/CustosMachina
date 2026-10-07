@@ -182,8 +182,7 @@ func (w *Window) Middleware() gin.HandlerFunc {
 	}
 }
 
-// Gin 中间件形态：失败锁定（Blocked 即 429；由业务在失败时调 ReportFail）。
-// StartSweeper 同 Window：周期清理过期 fails/blocked（独立审核 T6）。
+// StartSweeper 周期清理过期 fails/blocked（独立审核 T6），同 Window 机制。
 func (l *Lockout) StartSweeper() func() {
 	stop := make(chan struct{})
 	go func() {
@@ -193,23 +192,7 @@ func (l *Lockout) StartSweeper() func() {
 			select {
 			case now := <-t.C:
 				l.mu.Lock()
-				for k, fails := range l.fails {
-					alive := false
-					for _, ts := range fails {
-						if now.Sub(ts) <= l.window {
-							alive = true
-							break
-						}
-					}
-					if !alive {
-						delete(l.fails, k)
-					}
-				}
-				for k, until := range l.blocked {
-					if now.After(until) {
-						delete(l.blocked, k)
-					}
-				}
+				l.sweepLockout(now)
 				l.mu.Unlock()
 			case <-stop:
 				return
@@ -220,6 +203,28 @@ func (l *Lockout) StartSweeper() func() {
 	return func() { once.Do(func() { close(stop) }) }
 }
 
+// sweepLockout 清理过期 fails 与已解禁的 blocked（调用方持锁）。
+func (l *Lockout) sweepLockout(now time.Time) {
+	for k, fails := range l.fails {
+		alive := false
+		for _, ts := range fails {
+			if now.Sub(ts) <= l.window {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			delete(l.fails, k)
+		}
+	}
+	for k, until := range l.blocked {
+		if now.After(until) {
+			delete(l.blocked, k)
+		}
+	}
+}
+
+// Middleware Gin 中间件形态：失败锁定（Blocked 即 429；由业务在失败时调 ReportFail）。
 func (l *Lockout) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if l.Blocked(c.ClientIP()) {

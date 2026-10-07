@@ -27,7 +27,7 @@ func NewEngine(cfg *config.Config, modules Modules, auth AuthMiddleware, authz g
 	}
 	e.Use(requestLogger(), zapRecovery(), securityHeaders(), cors(cfg.CORS.Origins))
 
-	api := e.Group("/api", bodyLimit())
+	api := e.Group("/api", bodyLimit(), bodyDeadline())
 	public := api.Group("")
 	authed := api.Group("")
 	authed.Use(auth(), authz)
@@ -49,15 +49,21 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
+// uploadPrefixes 上传/部署类路由前缀（bodyLimit 放宽上限、bodyDeadline
+// 放宽读取期限共用）。按 FullPath 前缀匹配，覆盖各环境段（:id 参数化路径）。
+var uploadPrefixes = []string{
+	"/api/server-files/",  // SFTP 上传（handler 限 100MB）
+	"/api/server-compose", // compose 部署（yaml+伴随配置）
+}
+
 // bodyLimit 全局请求体上限兜底（v0.12.3 独立审核 T2）：路由层各自有业务
 // 校验（binding max / io.LimitReader），但缺全局兜底——畸形大请求会先被
-// 整体读入。默认 2MB；上传/部署类路由单独放宽。按 FullPath 前缀匹配，
-// 覆盖各环境段（:id 参数化路径）。
+// 整体读入。默认 2MB；上传/部署类路由单独放宽。
 func bodyLimit() gin.HandlerFunc {
 	const def = 2 << 20 // 2MB
 	exempt := map[string]int64{
-		"/api/server-files/":  110 << 20, // SFTP 上传（handler 限 100MB）
-		"/api/server-compose": 16 << 20,  // compose 部署（yaml+伴随配置）
+		"/api/server-files/":  110 << 20,
+		"/api/server-compose": 16 << 20,
 	}
 	return func(c *gin.Context) {
 		var max int64 = def
@@ -80,6 +86,41 @@ func bodyLimit() gin.HandlerFunc {
 		}
 		// chunked（无 Content-Length）场景在读侧强制封顶
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
+		c.Next()
+	}
+}
+
+// bodyDeadline 请求体读取期限（v0.12.14 独立审核 N3）：http.Server 只设了
+// ReadHeaderTimeout（SSE/WebSocket 长连接不能全局 ReadTimeout），普通请求
+// 的 body 因此无期限——慢速 body 可长期占用连接与 goroutine。分层设期限：
+// 普通 JSON API 30s、上传/compose 10 分钟。仅对带 body 的请求生效——GET
+// 无 body 的 SSE 与终端 WebSocket（升级请求无 body）天然豁免。
+func bodyDeadline() gin.HandlerFunc {
+	return bodyDeadlineWith(30*time.Second, 10*time.Minute)
+}
+
+func bodyDeadlineWith(def, upload time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		hasBody := c.Request.Body != nil &&
+			(c.Request.ContentLength > 0 || len(c.Request.TransferEncoding) > 0)
+		if !hasBody {
+			c.Next()
+			return
+		}
+		deadline := def
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		for _, prefix := range uploadPrefixes {
+			if strings.HasPrefix(path, prefix) {
+				deadline = upload
+				break
+			}
+		}
+		// ResponseController 把期限落到底层连接；handler 返回后 server
+		// 会按 IdleTimeout 重置，不影响该连接后续请求
+		_ = http.NewResponseController(c.Writer).SetReadDeadline(time.Now().Add(deadline))
 		c.Next()
 	}
 }

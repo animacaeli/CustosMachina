@@ -8,6 +8,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/pkg/logger"
+	"github.com/custos-machina/backend/internal/pkg/ratelimit"
 )
 
 //go:generate go run github.com/google/wire/cmd/wire
@@ -57,6 +58,7 @@ func main() {
 	}
 	// 显式执行关键收尾（os.Exit 不跑 defer）
 	cleanup()
+	ratelimit.StopAll() // 限速器清扫 goroutine 统一回收（v0.12.7 T6 接线补齐）
 	logger.Sync()
 	if serveFailed {
 		os.Exit(1)
