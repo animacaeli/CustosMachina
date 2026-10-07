@@ -208,6 +208,7 @@ onBeforeUnmount(() => {
   <template v-if="visible">
     <!-- 悬浮球：自绘 SVG 机器人（渐变 + 呼吸；回答时眼睛扫描动画） -->
     <button
+      aria-label="AI 助手"
       class="ai-fab group fixed bottom-6 right-6 z-[1000] flex h-14 w-14 items-center justify-center rounded-full border border-white/25 bg-[rgb(30 41 59)] shadow-lg transition-transform duration-200 hover:-translate-y-1"
       :class="open ? 'scale-95' : 'ai-breathing'"
       title="AI 助手"

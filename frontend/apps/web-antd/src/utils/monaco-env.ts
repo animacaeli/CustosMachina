@@ -8,8 +8,10 @@
  *   根入口 'monaco-editor' 会注册全部语言（ts/css/html worker 因此进产物、
  *   6.8MB ts.worker 即由此而来）；
  * - 项目实际语言在此显式注册（v0.8.2 教训：contribution 须显式 import，
- *   惰性挂载会崩）：json（语言服务）+ shell/python/ini（基础高亮），
- *   yaml 由 monaco-yaml 的 configureMonacoYaml 自带注册；
+ *   惰性挂载会崩）：json（语言服务）+ shell/python/ini/sql（基础高亮；
+ *   v0.12.15 复核 §八.5——sql 用于告警模板/策略的 PromQL 查询编辑，
+ *   遗漏注册时 Monaco 静默降级纯文本），yaml 由 monaco-yaml 的
+ *   configureMonacoYaml 自带注册；
  * - json worker 路由补齐：此前一律回落 editor.worker，JSON 语言服务
  *   （诊断/补全/JSONC 容忍项）从不生效——「不报注释错误」实为诊断缺席。
  */
@@ -21,10 +23,11 @@ import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 // oxlint-disable-next-line import/default
 import yamlWorker from 'monaco-yaml/yaml.worker?worker';
 
-// 基础高亮语言（配置文件按钮组实际使用的面）：显式注册，防惰性挂载
+// 基础高亮语言（实际使用的面）：显式注册，防惰性挂载
 import 'monaco-editor/languages/definitions/ini/register';
 import 'monaco-editor/languages/definitions/python/register';
 import 'monaco-editor/languages/definitions/shell/register';
+import 'monaco-editor/languages/definitions/sql/register';
 
 const YamlWorkerCtor = yamlWorker as unknown as new () => Worker;
 const JsonWorkerCtor = jsonWorker as unknown as new () => Worker;
