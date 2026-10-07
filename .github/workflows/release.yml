@@ -16,15 +16,21 @@ env:
 
 jobs:
   consistency:
-    # 发版纪律前置校验（v0.12.15 独立复核 R3）：status.md 是「唯一真相源」，
-    # tag 推送时校验其版本号与 tag 一致——防止发版文档滞后（此前停在旧版本）
+    # 发版纪律前置门禁（v0.12.15 独立复核 R3；v0.12.16 独立复核 R2 补依赖）：
+    # status.md 是「唯一真相源」，tag 推送时校验其版本号与 tag 一致。
+    # images needs 本 job——不一致时镜像推送/公开/GitHub Release 全部阻断
+    #（此前 jobs 并行，本 job 失败只红 workflow、拦不住产物）。
+    # workflow_dispatch（无 tag）时脚本自行成功退出，避免 needs 被 skip 连坐
     name: 发版一致性校验（tag ↔ status.md 版本）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: 校验
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
+          if [[ ! "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "非 tag 触发（workflow_dispatch），跳过校验"
+            exit 0
+          fi
           TAG="${GITHUB_REF#refs/tags/}"
           VER=$(grep -m1 -oE 'v0\.[0-9]+\.[0-9]+' docs/status.md || true)
           echo "tag=$TAG status.md=$VER"
@@ -34,6 +40,7 @@ jobs:
           fi
 
   images:
+    needs: consistency
     name: 构建并推送镜像
     runs-on: ubuntu-latest
     strategy:
