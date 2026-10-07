@@ -149,7 +149,7 @@ async function onDelete(sk: AiSkill) {
       v-model:open="open"
       :title="editingId ? '编辑技能' : '新建技能'"
       :confirm-loading="saving"
-      :width="720"
+      width="min(100vw, 720px)"
       @ok="submit"
     >
       <a-form layout="vertical" style="padding-top: 0.5rem">

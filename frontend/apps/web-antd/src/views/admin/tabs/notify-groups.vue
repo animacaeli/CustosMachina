@@ -205,6 +205,7 @@ async function saveOpsGroup() {
       :data-source="list"
       :loading="loading"
       :pagination="false"
+      :scroll="{ x: 'max-content' }"
       row-key="id"
       size="middle"
     >

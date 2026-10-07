@@ -7,9 +7,10 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { usePreferences } from '@vben/preferences';
 
-// 按需入口：不含 css/html/ts language contributions——避免拉入
-// 6.9MB ts.worker / 1MB css.worker 等未使用 worker（独立审核 T11）
-import * as monaco from 'monaco-editor';
+// 精确入口（v0.12.15 落实注释声称）：根入口会注册全部语言、把未使用的
+// ts/css/html worker 拉进产物；语言由 monaco-env.ts 显式注册
+// oxlint-disable-next-line import/default
+import * as monaco from 'monaco-editor/editor/editor.api';
 
 import { ensureMonacoEnv } from '#/utils/monaco-env';
 

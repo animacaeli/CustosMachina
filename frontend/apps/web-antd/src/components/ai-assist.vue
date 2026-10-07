@@ -10,6 +10,7 @@ import { computed, ref } from 'vue';
 import { message } from 'ant-design-vue';
 
 import { assistApi } from '#/api/chat';
+import { extractErrMsg } from '#/utils/extract-err';
 
 const props = withDefaults(
   defineProps<{
@@ -89,10 +90,8 @@ async function generate() {
       question: question.value,
       ...props.context,
     });
-  } catch (error: any) {
-    message.error(
-      error?.response?.data?.message ?? error?.message ?? '生成失败',
-    );
+  } catch (error) {
+    message.error(extractErrMsg(error, '生成失败'));
   } finally {
     loading.value = false;
   }

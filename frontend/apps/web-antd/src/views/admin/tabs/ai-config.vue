@@ -133,6 +133,7 @@ const usageCols = [
         :data-source="usages"
         :loading="loading"
         :pagination="false"
+        :scroll="{ x: 'max-content' }"
         row-key="id"
         size="small"
       >

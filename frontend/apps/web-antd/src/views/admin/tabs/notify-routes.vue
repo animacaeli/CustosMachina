@@ -185,6 +185,7 @@ async function test(r: NotifyRule) {
       :data-source="list"
       :loading="loading"
       :pagination="false"
+      :scroll="{ x: 'max-content' }"
       row-key="id"
       size="small"
     >

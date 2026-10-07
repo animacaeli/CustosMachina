@@ -1,9 +1,12 @@
 <script lang="ts" setup>
+import type { Component } from 'vue';
+
 import type { HomeSummary, ReadinessItem } from '#/api/home';
 
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { Activity, FileCog, Rocket, Server } from '@vben/icons';
 import { useUserStore } from '@vben/stores';
 
 import { getHomeSummaryApi, getReadinessApi } from '#/api/home';
@@ -140,29 +143,35 @@ const isAdmin = computed(() => {
   return roles.includes('superadmin') || roles.includes('admin');
 });
 
-// 功能卡（可点击直达；能力均已在 v0.12.0 交付）
-const FEATURES = [
+// 功能卡（router-link 直达 + Lucide SVG 图标——独立审核 N10：div@click
+// 键盘/读屏不可达，emoji 跨平台外观不一致）
+const FEATURES: Array<{
+  desc: string;
+  icon: Component;
+  path: string;
+  title: string;
+}> = [
   {
     desc: '纳管主机、容器、compose 与 k3s 集群，终端与文件管理',
-    icon: '🖥️',
+    icon: Server,
     path: '/resources/servers',
     title: '资源管理',
   },
   {
     desc: '项目三环境发布：蓝绿切流 / 灰度策略 / 测试槽位',
-    icon: '🚀',
+    icon: Rocket,
     path: '/envs/prod',
     title: '环境与发布',
   },
   {
     desc: 'O2 告警闭环 + 五源上下文 AI 诊断 + 统一通知路由',
-    icon: '🧠',
+    icon: Activity,
     path: '/resources/observ-alerts',
     title: '观测与告警',
   },
   {
     desc: '配置文件版本化下发 / 拉取 API / 定时任务沙箱执行',
-    icon: '⚙️',
+    icon: FileCog,
     path: '/configs/files',
     title: '配置与任务',
   },
@@ -173,51 +182,10 @@ const TODO = [
   { key: '/system/role', title: '角色权限' },
 ];
 
-// --- 超管首登引导 ---
-const ONBOARD_KEY = 'custos-admin-onboarded';
-const showOnboard = ref(false);
-
-const STEPS = [
-  {
-    description:
-      '头像下拉 → 管理后台 → 登录配置：选择企业微信/钉钉/飞书并填入凭证，团队成员即可扫码登录（JIT 注册为访客）。',
-    title: '配置 IM 扫码登录',
-  },
-  {
-    description:
-      '管理后台 → 会话设置：指定 Redis（登出/踢下线与重启不丢会话）；单实例可跳过（内存模式）。',
-    title: '设置 Redis（可选）',
-  },
-  {
-    description:
-      '管理后台 → 会话设置：按安全需求调整 access / refresh 有效期（秒）。',
-    title: '调整 token 有效期',
-  },
-  {
-    description:
-      '系统管理 → 用户管理：调整扫码进来的成员角色（默认访客）；角色权限页可细化各角色的 API 访问矩阵。',
-    title: '管理用户与角色',
-  },
-];
-
 onMounted(() => {
   loadSummary();
   loadReadiness();
-  const isSuper = (userStore.userInfo?.roles ?? []).includes('superadmin');
-  if (isSuper && !localStorage.getItem(ONBOARD_KEY)) {
-    showOnboard.value = true;
-    localStorage.setItem(ONBOARD_KEY, '1');
-  }
 });
-
-function goAdmin() {
-  showOnboard.value = false;
-  router.push({ path: '/admin' });
-}
-
-function goFeature(path: string) {
-  router.push(path);
-}
 </script>
 
 <template>
@@ -264,11 +232,11 @@ function goFeature(path: string) {
           </a-button>
         </template>
         <div v-if="readinessOpen" class="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <div
+          <router-link
             v-for="item in readiness"
             :key="item.key"
-            class="cursor-pointer rounded border border-border p-2 text-xs hover:border-primary"
-            @click="router.push(readinessLink[item.key] ?? '/admin')"
+            :to="readinessLink[item.key] ?? '/admin'"
+            class="block rounded border border-border p-2 text-xs hover:border-primary"
           >
             <span v-if="item.status === 'ok'" class="text-green-500">✓</span>
             <span v-else-if="!item.optional" class="text-red-500">✗</span>
@@ -277,7 +245,7 @@ function goFeature(path: string) {
             <span v-if="item.optional" class="text-muted-foreground">
               （可选）
             </span>
-          </div>
+          </router-link>
         </div>
       </a-card>
     </div>
@@ -289,11 +257,11 @@ function goFeature(path: string) {
           <a-button size="small" @click="loadSummary">刷新</a-button>
         </template>
         <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-          <div
+          <router-link
             v-for="card in statCards"
             :key="card.label"
-            class="cursor-pointer rounded border border-border p-3 transition-colors hover:border-primary"
-            @click="card.link && router.push(card.link)"
+            :to="card.link ?? '/home'"
+            class="block rounded border border-border p-3 transition-colors hover:border-primary"
           >
             <div class="text-muted-foreground text-xs">{{ card.label }}</div>
             <div
@@ -305,7 +273,7 @@ function goFeature(path: string) {
             <div class="text-muted-foreground mt-1 text-xs">
               {{ card.hint }}
             </div>
-          </div>
+          </router-link>
         </div>
         <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div>
@@ -353,17 +321,14 @@ function goFeature(path: string) {
     </div>
 
     <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <!-- hoverable + 点击直达：功能已全部交付，卡片不再是纯展示 -->
-      <a-card
-        v-for="f in FEATURES"
-        :key="f.title"
-        hoverable
-        @click="goFeature(f.path)"
-      >
-        <div class="text-2xl">{{ f.icon }}</div>
-        <div class="mt-2 font-medium">{{ f.title }}</div>
-        <p class="text-muted-foreground mt-1 text-xs">{{ f.desc }}</p>
-      </a-card>
+      <!-- router-link 语义化导航（独立审核 N10）；hoverable 视觉保留 -->
+      <router-link v-for="f in FEATURES" :key="f.title" :to="f.path">
+        <a-card hoverable>
+          <component :is="f.icon" class="text-primary size-7" />
+          <div class="mt-2 font-medium">{{ f.title }}</div>
+          <p class="text-muted-foreground mt-1 text-xs">{{ f.desc }}</p>
+        </a-card>
+      </router-link>
     </div>
 
     <!-- 间距放外层 div：a-card 上的工具类会被 antd 样式层覆盖 -->
@@ -395,29 +360,5 @@ function goFeature(path: string) {
         </p>
       </a-card>
     </div>
-
-    <!-- 超管首登引导 -->
-    <a-modal
-      v-model:open="showOnboard"
-      :footer="null"
-      title="欢迎使用 CustosMachina 🎉"
-      width="560px"
-    >
-      <a-steps
-        :current="-1"
-        :items="
-          STEPS.map((s, i) => ({
-            description: s.description,
-            title: `${i + 1}. ${s.title}`,
-          }))
-        "
-        direction="vertical"
-        size="small"
-      />
-      <div class="flex justify-end gap-2 pt-2">
-        <a-button @click="showOnboard = false">稍后配置</a-button>
-        <a-button type="primary" @click="goAdmin">进入管理后台</a-button>
-      </div>
-    </a-modal>
   </div>
 </template>

@@ -178,6 +178,7 @@ async function testRender() {
       :data-source="list"
       :loading="loading"
       :pagination="false"
+      :scroll="{ x: 'max-content' }"
       row-key="id"
       size="small"
     >
@@ -201,7 +202,7 @@ async function testRender() {
     <a-drawer
       v-model:open="formOpen"
       :title="editingId ? '编辑告警模板' : '新建告警模板'"
-      width="760"
+      width="min(100vw, 760px)"
     >
       <a-form layout="vertical" class="flex flex-col gap-1">
         <div class="grid grid-cols-2 gap-3">

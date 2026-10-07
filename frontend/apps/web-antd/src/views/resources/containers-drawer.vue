@@ -241,7 +241,7 @@ const logsText = ref('');
 const logsView = computed(() => {
   const t = logsText.value;
   return t.length > 64_000
-    ? `…（已省略 ${t.length - 64_000} 字节）\n${t.slice(-64_000)}`
+    ? `…（已省略 ${t.length - 64_000} 字符）\n${t.slice(-64_000)}`
     : t;
 });
 const logsLoading = ref(false);
