@@ -17,7 +17,7 @@ import Session from './tabs/session.vue';
 defineOptions({ name: 'AdminConsole' });
 
 // 四域分组（独立审核 U1）：11 个平铺 tab 收敛为二级导航，URL 带 section 可深链
-const SECTIONS = [
+const SECTIONS_RAW = [
   {
     key: 'identity',
     label: '身份与安全',
@@ -53,9 +53,21 @@ const SECTIONS = [
       { key: 'mcp', label: 'MCP 接入' },
     ],
   },
-] as const;
+];
 
-const allTabs = computed(() => SECTIONS.flatMap((sec) => sec.tabs));
+interface AdminTab {
+  key: string;
+  label: string;
+}
+interface AdminSection {
+  key: string;
+  label: string;
+  tabs: AdminTab[];
+}
+
+const SECTIONS: AdminSection[] = SECTIONS_RAW;
+
+const allTabs = computed<AdminTab[]>(() => SECTIONS.flatMap((sec) => sec.tabs));
 const activeTab = ref<string>(initTab());
 
 const route = useRoute();
@@ -128,7 +140,7 @@ function onTabChange(key: number | string) {
           v-for="sec in SECTIONS"
           :key="sec.key"
           class="cursor-pointer"
-          @click="onTabChange(sec.tabs[0].key)"
+          @click="onTabChange(sec.tabs[0]?.key ?? activeTab)"
         >
           {{ sec.label }}（{{ sec.tabs.length }}）
         </a>
