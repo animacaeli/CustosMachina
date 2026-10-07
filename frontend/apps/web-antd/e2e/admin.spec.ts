@@ -1,6 +1,5 @@
-import { expect, test } from '@playwright/test';
-
 import { ensureAdmin, login } from './auth';
+import { expect, test } from './fixtures';
 import { createProject } from './helpers';
 
 test.beforeAll(async () => {

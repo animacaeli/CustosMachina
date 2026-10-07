@@ -1,6 +1,5 @@
-import { expect, test } from '@playwright/test';
-
-import { ensureAdmin, ensureOpsUser, login, loginAs } from './auth';
+import { ensureAdmin, ensureOpsUser, ensureUser, login, loginAs } from './auth';
+import { expect, test } from './fixtures';
 
 test.beforeAll(async () => {
   await ensureAdmin();
@@ -51,4 +50,19 @@ test('ops 角色首页态势/就绪度可读（复核 §7.1 回归：种子 v27�
   const summary = await resp;
   expect(summary.status()).toBe(200);
   await expect(page.getByText('运维态势')).toBeVisible();
+});
+
+test('guest 角色首页态势被拒 403（独立复核 R2：权限拒绝面——防止种子误放开）', async ({
+  page,
+}) => {
+  const uid = await ensureUser('e2e-guest', 'guest');
+  await loginAs(page, uid, 'e2e-guest');
+  const resp = page.waitForResponse((r) =>
+    r.url().includes('/api/home/summary'),
+  );
+  await page.goto('/home');
+  const summary = await resp;
+  // guest 不在 home 种子面（扫码即得角色，与 v26 收权方向一致）——
+  // 若未来种子误放开 guest，本用例红
+  expect(summary.status()).toBe(403);
 });

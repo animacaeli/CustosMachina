@@ -67,8 +67,11 @@ export function signE2EToken(uid: number, name: string, adm = false): string {
   return `${header}.${payload}.${sig}`;
 }
 
-/** 超管建 ops 用户（幂等：已存在时复用），返回用户 id */
-export async function ensureOpsUser(): Promise<number> {
+/** 超管建指定角色用户（幂等：已存在时复用），返回用户 id */
+export async function ensureUser(
+  username: string,
+  roles: string,
+): Promise<number> {
   const ctx = await request.newContext({ baseURL: API_BASE });
   const loginRes = await ctx.post('/api/auth/login', {
     data: { password: ADMIN.password, username: ADMIN.username },
@@ -84,19 +87,24 @@ export async function ensureOpsUser(): Promise<number> {
   const { data: users } = (await list.json()) as {
     data: Array<{ id: number; username: string }>;
   };
-  const existing = users.find((u) => u.username === 'e2e-ops');
+  const existing = users.find((u) => u.username === username);
   if (existing) {
     await ctx.dispose();
     return existing.id;
   }
   const res = await ctx.post('/api/users', {
-    data: { displayName: 'E2E Ops', roles: 'ops', username: 'e2e-ops' },
+    data: { displayName: username, roles, username },
     headers: { Authorization: `Bearer ${loginData.accessToken}` },
   });
-  if (!res.ok()) throw new Error(`创建 ops 用户失败: ${res.status()}`);
+  if (!res.ok()) throw new Error(`创建用户 ${username} 失败: ${res.status()}`);
   const { data: created } = (await res.json()) as { data: { id: number } };
   await ctx.dispose();
   return created.id;
+}
+
+/** 超管建 ops 用户（首页可读回归用） */
+export async function ensureOpsUser(): Promise<number> {
+  return ensureUser('e2e-ops', 'ops');
 }
 
 /** 注入非超管登录态：沿用 beforeEach 的超管会话拿 storage key，替换 token 后重载 */
