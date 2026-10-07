@@ -67,24 +67,45 @@ interface AdminSection {
 
 const SECTIONS: AdminSection[] = SECTIONS_RAW;
 
-const allTabs = computed<AdminTab[]>(() => SECTIONS.flatMap((sec) => sec.tabs));
-const activeTab = ref<string>(initTab());
-
 const route = useRoute();
 const router = useRouter();
 
-function initTab(): string {
-  const q = route.query.tab;
-  if (typeof q === 'string' && allTabs.value.some((t) => t.key === q)) {
-    return q;
-  }
-  return 'im';
+const activeSection = ref<string>(initSection());
+const activeTab = ref<string>(initTab());
+
+function initSection(): string {
+  const q = route.query.section;
+  const hit = SECTIONS.find((sec) => sec.key === q);
+  return hit ? hit.key : SECTIONS[0]!.key;
 }
 
-// 切 tab 同步 URL（深链/刷新保持位置）
+function initTab(): string {
+  const sec =
+    SECTIONS.find((s) => s.key === activeSection.value) ?? SECTIONS[0]!;
+  const q = route.query.tab;
+  if (typeof q === 'string' && sec.tabs.some((t) => t.key === q)) {
+    return q;
+  }
+  return sec.tabs[0]!.key;
+}
+
+const sectionTabs = computed<AdminTab[]>(
+  () =>
+    (SECTIONS.find((s) => s.key === activeSection.value) ?? SECTIONS[0]!).tabs,
+);
+
+function onSectionChange(key: string) {
+  activeSection.value = key;
+  const first = sectionTabs.value[0]!.key;
+  activeTab.value = first;
+  router.replace({ query: { ...route.query, section: key, tab: first } });
+}
+
 function onTabChange(key: number | string) {
   activeTab.value = String(key);
-  router.replace({ query: { ...route.query, tab: String(key) } });
+  router.replace({
+    query: { ...route.query, section: activeSection.value, tab: String(key) },
+  });
 }
 </script>
 
@@ -97,53 +118,94 @@ function onTabChange(key: number | string) {
           平台级配置（登录 / 通知 / AI / CI / 集群与各类接入凭证）
         </span>
       </template>
-      <a-tabs v-model:active-key="activeTab" @change="onTabChange">
-        <a-tab-pane key="im" tab="登录配置">
-          <ImConfig />
-        </a-tab-pane>
-        <a-tab-pane key="session" tab="会话设置">
-          <Session />
-        </a-tab-pane>
-        <a-tab-pane key="notify" tab="通知群聊">
-          <NotifyGroups />
-        </a-tab-pane>
-        <a-tab-pane key="notify-routes" tab="通知路由">
-          <NotifyRoutes />
-        </a-tab-pane>
-        <a-tab-pane key="alert-templates" tab="告警模板">
-          <AlertTemplates />
-        </a-tab-pane>
-        <a-tab-pane key="ai" tab="AI 中转层">
-          <AiConfig />
-        </a-tab-pane>
-        <a-tab-pane key="mcp" tab="MCP 接入">
-          <McpTokens />
-        </a-tab-pane>
-        <a-tab-pane key="pull-tokens" tab="配置拉取">
-          <PullTokens />
-        </a-tab-pane>
-        <a-tab-pane key="skills" tab="AI 技能">
-          <AiSkills />
-        </a-tab-pane>
-        <a-tab-pane key="k3s" tab="k3s 集群">
-          <K3sClusters />
-        </a-tab-pane>
-        <a-tab-pane key="ci" tab="CI / 镜像仓库">
-          <CiConfig />
-        </a-tab-pane>
-      </a-tabs>
-      <div
-        class="border-t border-border mt-2 pt-2 flex flex-wrap gap-2 text-xs"
-      >
-        <span class="text-muted-foreground">分组：</span>
-        <a
-          v-for="sec in SECTIONS"
-          :key="sec.key"
-          class="cursor-pointer"
-          @click="onTabChange(sec.tabs[0]?.key ?? activeTab)"
+      <div class="flex flex-col gap-3 lg:flex-row">
+        <a-menu
+          :selected-keys="[activeSection]"
+          class="lg:w-44!"
+          mode="inline"
+          @click="
+            (info: { key: number | string }) =>
+              onSectionChange(String(info.key))
+          "
         >
-          {{ sec.label }}（{{ sec.tabs.length }}）
-        </a>
+          <a-menu-item v-for="sec in SECTIONS" :key="sec.key">
+            {{ sec.label }}
+            <span class="text-muted-foreground ml-1 text-xs">
+              {{ sec.tabs.length }}
+            </span>
+          </a-menu-item>
+        </a-menu>
+        <a-tabs
+          :active-key="activeTab"
+          class="min-w-0 flex-1"
+          @change="onTabChange"
+        >
+          <a-tab-pane
+            key="im"
+            v-if="activeSection === 'identity'"
+            tab="登录配置"
+          >
+            <ImConfig />
+          </a-tab-pane>
+          <a-tab-pane
+            key="session"
+            v-if="activeSection === 'identity'"
+            tab="会话设置"
+          >
+            <Session />
+          </a-tab-pane>
+          <a-tab-pane
+            key="notify"
+            v-if="activeSection === 'notify'"
+            tab="通知群聊"
+          >
+            <NotifyGroups />
+          </a-tab-pane>
+          <a-tab-pane
+            key="notify-routes"
+            v-if="activeSection === 'notify'"
+            tab="通知路由"
+          >
+            <NotifyRoutes />
+          </a-tab-pane>
+          <a-tab-pane
+            key="alert-templates"
+            v-if="activeSection === 'notify'"
+            tab="告警模板"
+          >
+            <AlertTemplates />
+          </a-tab-pane>
+          <a-tab-pane key="ai" v-if="activeSection === 'ai'" tab="AI 中转层">
+            <AiConfig />
+          </a-tab-pane>
+          <a-tab-pane key="mcp" v-if="activeSection === 'ai'" tab="MCP 接入">
+            <McpTokens />
+          </a-tab-pane>
+          <a-tab-pane
+            key="pull-tokens"
+            v-if="activeSection === 'delivery'"
+            tab="配置拉取"
+          >
+            <PullTokens />
+          </a-tab-pane>
+          <a-tab-pane key="skills" v-if="activeSection === 'ai'" tab="AI 技能">
+            <AiSkills />
+          </a-tab-pane>
+          <a-tab-pane
+            key="k3s"
+            v-if="activeSection === 'delivery'"
+            tab="k3s 集群"
+          >
+            <K3sClusters />
+          </a-tab-pane>
+          <a-tab-pane
+            key="ci"
+            v-if="activeSection === 'delivery'"
+            tab="CI / 镜像仓库"
+          >
+            <CiConfig />
+          </a-tab-pane>
+        </a-tabs>
       </div>
     </a-card>
   </div>
