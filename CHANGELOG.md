@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.12.6 (2026-10-07)
+
+生产 502 事故根因修复：跳级升级迁移断裂（v0.9.x 存量库直升 v0.12.3 启动即炸）。
+
+### 根因与修复
+
+- **根因**：生产库停留在 v0.9.x（无版本表、无 v0.10+ 引入的表），直升 v0.12.3 时增量迁移从 0001 全部重放——`0005` 对从未建过的 `ai_conversations` 表做 `ALTER ... ADD COLUMN`，`no such table` 启动失败；叠加单镜像后端进程无人守护（v0.12.5 已修），表现为持续 502
+- **修复（两层）**：①存量库存在待应用迁移时，版本迁移执行后追加**全量模型补齐**（AutoMigrate）——跳级缺失的表/列按当前模型补出，此类问题一次根治（此前同类已两次咬人：N7 两张表）；②0004/0005/0007 的 `ALTER ADD COLUMN` 改带 `HasTable`/`HasColumn` 守卫的 Go 钩子（SQLite 无 `IF NOT EXISTS`，补齐先行后裸 ALTER 会报 duplicate column / no such table）
+- **顺序关键（迭代中发现的第二层问题）**：改名类迁移（0006 key→skey）必须先于模型补齐——否则 AutoMigrate 会把改名目标当成缺列补一个无主键的普通列，`UpsertSetting` 全线崩。最终顺序：版本迁移（守卫式）→ 模型补齐；稳态启动（无待应用项）不跑补齐
+- **验证**：v0.9.1 真二进制造库 → 当前版升级，本地无菌房完整复现事故（修复前逐字节同款报错）→ 修复后 healthz 200、0001~0010 全应用、`platform_settings.skey` 为主键且数据保留、`ai_conversations` 建出、稳态二启正常；v0.11.1 时代库路径无回归
+- 回归测试：`TestJumpUpgradeFromPreMigrationEra` 与 `TestJumpUpgradeExistingTableMissingColumn`
+
 ## v0.12.5 (2026-10-07)
 
 生产 502 事故响应：单镜像后端进程加守护。
