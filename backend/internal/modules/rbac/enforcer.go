@@ -350,7 +350,6 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		oldVersion = setting.Value
 	}
-	changed := false
 	// 先收集表中完全无策略的角色，再整角色补种（避免种一条后误判"已有策略"）
 	roleNeedsSeed := map[string]bool{}
 	entryLevelSeed := map[string]bool{} // v2 残缺角色：逐条补齐
@@ -435,26 +434,32 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 			entryLevelSeed[p[0]] = true
 		}
 		// v26→v27：/home summary+readiness 对 admin/ops/dev 都是新资源点
-		// （v0.12.14 复核 §7.1：v0.12.8 上线时漏种）
-		if len(ps) > 0 && oldVersion == "26" {
+		// （v0.12.14 复核 §7.1：v0.12.8 上线时漏种）。数值比较防跳级漏补
+		//（v0.12.15 复核 §八.1-B：精确匹配 "26" 时，"24"/"25" 库直升不仅
+		// 漏种且版本号永不推进——deNarrowPolicies 同款教训，对齐其模式）；
+		// 解析失败=极旧部署照补
+		if v, perr := strconv.Atoi(oldVersion); len(ps) > 0 && (perr != nil || v < 27) {
 			entryLevelSeed[p[0]] = true
 		}
 	}
 	// v26→v27：存量自定义角色补 /home 基础读集（customBaseRoutes 同步新增）。
 	// 自定义角色的 home 条目在 v27 之前不存在，无「复活人为删改」风险；
-	// guest 是内置角色不在 defaultPolicies 迁移面，不补。
-	for _, sub := range customRoleSubjects(e) {
-		for _, obj := range []string{"/home/summary", "/home/readiness"} {
-			if has, _ := e.HasPolicy(sub, obj, "GET"); !has {
-				if _, err := e.AddPolicy(sub, obj, "GET"); err != nil {
-					return changed, err
+	// guest 是内置角色不在 defaultPolicies 迁移面，不补。版本 gate 同上
+	//（数值比较）：v27+ 的库再升级时不再重放本块——未来管理员删除自定义
+	// 角色的 home 条目不会被后续种子版本复活
+	if v, perr := strconv.Atoi(oldVersion); perr != nil || v < 27 {
+		for _, sub := range customRoleSubjects(e) {
+			for _, obj := range []string{"/home/summary", "/home/readiness"} {
+				if has, _ := e.HasPolicy(sub, obj, "GET"); !has {
+					if _, err := e.AddPolicy(sub, obj, "GET"); err != nil {
+						return false, err
+					}
 				}
-				changed = true
 			}
 		}
 	}
 	// ---- 版本收权（deNarrowPolicies，包级函数可单测）----
-	changed = deNarrowPolicies(e, oldVersion) || changed
+	deNarrowPolicies(e, oldVersion)
 
 	for _, p := range defaultPolicies {
 		if !roleNeedsSeed[p[0]] && !entryLevelSeed[p[0]] {
@@ -462,12 +467,15 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
 			if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
-				return changed, err
+				return false, err
 			}
-			changed = true
 		}
 	}
-	return changed, nil
+	// 返回 true = 需要推进版本号（调用方据此写回 setting）。走到这里说明
+	// 库版本低于当前种子——即使本轮无策略变更（条目人工加过/收权 no-op），
+	// 也必须推进，否则每次启动重复跑迁移且版本永久卡死（v0.12.15 复核
+	// §八.1-B 场景 C 的另一半根因）
+	return true, nil
 }
 
 // deNarrowPolicies 版本收权（v25 起）：数值比较防字典序漏版（"9" > "25"）；
