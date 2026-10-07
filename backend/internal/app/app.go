@@ -24,6 +24,7 @@ import (
 	"github.com/custos-machina/backend/internal/modules/configs"
 	cronmod "github.com/custos-machina/backend/internal/modules/cron"
 	"github.com/custos-machina/backend/internal/modules/health"
+	"github.com/custos-machina/backend/internal/modules/home"
 	"github.com/custos-machina/backend/internal/modules/identity"
 	k3smod "github.com/custos-machina/backend/internal/modules/k3s"
 	mcpmod "github.com/custos-machina/backend/internal/modules/mcp"
@@ -246,7 +247,7 @@ func ProvideModules(
 	// 桥接（P6 M4，建议卡定调）：NL→操作建议——白名单三件套只生成建议卡
 	// （校验对象真实存在 + 跳转路由），AI 不执行任何变更
 	aiChatSvc.ActionSource = &chatActionBridge{db: db, res: resSvc}
-	return server.Modules{health, auth, setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH, ai.NewAssistHandler(assistSvc), k3smod.NewHandler(k3sSvc)}
+	return server.Modules{health, auth, home.NewHandler(db), setup, identity, rbac, resources, notify, projects, ciMod, releaseMod, canaryMod, slotsMod, cronH, observH, backupH, configsH, certsH, aiH, aiChatH, mcpH, ai.NewAssistHandler(assistSvc), k3smod.NewHandler(k3sSvc)}
 }
 
 // infraSet 基础设施：配置、JWT、数据库。

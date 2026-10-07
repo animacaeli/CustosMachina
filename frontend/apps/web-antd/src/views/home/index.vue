@@ -1,14 +1,96 @@
 <script lang="ts" setup>
+import type { HomeSummary } from '#/api/home';
+
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useUserStore } from '@vben/stores';
+
+import { getHomeSummaryApi } from '#/api/home';
 
 defineOptions({ name: 'Home' });
 
 const router = useRouter();
 const userStore = useUserStore();
 const displayName = computed(() => userStore.userInfo?.realName ?? '');
+
+// 运维态势（独立审核第 2 批：登录后第一眼回答"现在是否健康、哪里需要处理"）
+const summary = ref<HomeSummary | null>(null);
+const summaryLoading = ref(false);
+
+async function loadSummary() {
+  summaryLoading.value = true;
+  try {
+    summary.value = await getHomeSummaryApi();
+  } catch {
+    // 拦截器已提示；态势区显示占位
+  } finally {
+    summaryLoading.value = false;
+  }
+}
+
+interface StatCard {
+  danger: boolean;
+  hint: string;
+  label: string;
+  link?: string;
+  value: () => number;
+}
+
+const statCards = computed<StatCard[]>(() => [
+  {
+    label: '未处理告警',
+    value: () => summary.value?.alerts.open ?? 0,
+    danger: (summary.value?.alerts.critical ?? 0) > 0,
+    hint: `严重 ${summary.value?.alerts.critical ?? 0}`,
+    link: '/resources/observ-events',
+  },
+  {
+    label: '不可达主机(1h)',
+    value: () => summary.value?.servers.unreachable1h ?? 0,
+    danger: (summary.value?.servers.unreachable1h ?? 0) > 0,
+    hint: '近 1 小时事件去重',
+    link: '/resources/servers',
+  },
+  {
+    label: '失败发布(7d)',
+    value: () => summary.value?.releases.failed7d ?? 0,
+    danger: (summary.value?.releases.failed7d ?? 0) > 0,
+    hint: '含超时',
+    link: '/projects',
+  },
+  {
+    label: '失败任务(7d)',
+    value: () => summary.value?.jobs.failed7d ?? 0,
+    danger: (summary.value?.jobs.failed7d ?? 0) > 0,
+    hint: '定时任务含超时',
+    link: '/cron/jobs',
+  },
+  {
+    label: '证书 14d 到期',
+    value: () => summary.value?.certs.expiring14d ?? 0,
+    danger: (summary.value?.certs.expiring14d ?? 0) > 0,
+    hint: '即将到期数',
+    link: '/system/certs',
+  },
+]);
+
+const levelText: Record<string, string> = {
+  critical: '严重',
+  info: '信息',
+  warn: '警告',
+};
+const levelColor: Record<string, string> = {
+  critical: 'red',
+  info: 'blue',
+  warn: 'orange',
+};
+const relStatusColor: Record<string, string> = {
+  failed: 'error',
+  running: 'processing',
+  success: 'success',
+  timeout: 'warning',
+};
 const isAdmin = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
   return roles.includes('superadmin') || roles.includes('admin');
@@ -75,6 +157,7 @@ const STEPS = [
 ];
 
 onMounted(() => {
+  loadSummary();
   const isSuper = (userStore.userInfo?.roles ?? []).includes('superadmin');
   if (isSuper && !localStorage.getItem(ONBOARD_KEY)) {
     showOnboard.value = true;
@@ -107,6 +190,76 @@ function goFeature(path: string) {
         <img alt="logo" class="h-14 w-14" src="/logo.svg" />
       </div>
     </a-card>
+
+    <!-- 运维态势：五个数字 + 待处理事项 + 最近变更 -->
+    <div class="mt-4">
+      <a-card :loading="summaryLoading" title="运维态势">
+        <template #extra>
+          <a-button size="small" @click="loadSummary">刷新</a-button>
+        </template>
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <div
+            v-for="card in statCards"
+            :key="card.label"
+            class="cursor-pointer rounded border border-border p-3 transition-colors hover:border-primary"
+            @click="card.link && router.push(card.link)"
+          >
+            <div class="text-muted-foreground text-xs">{{ card.label }}</div>
+            <div
+              class="mt-1 text-2xl font-semibold"
+              :class="card.danger ? 'text-red-500' : ''"
+            >
+              {{ card.value() }}
+            </div>
+            <div class="text-muted-foreground mt-1 text-xs">
+              {{ card.hint }}
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <div class="mb-2 text-sm font-medium">待处理告警</div>
+            <a-list
+              :data-source="summary?.alerts.items ?? []"
+              size="small"
+              :locale="{ emptyText: '无未处理告警' }"
+            >
+              <template #renderItem="{ item }">
+                <a-list-item>
+                  <a-tag :color="levelColor[item.level] ?? 'default'">
+                    {{ levelText[item.level] ?? item.level }}
+                  </a-tag>
+                  <span class="mr-2">{{ item.title }}</span>
+                  <span class="text-muted-foreground ml-auto text-xs">
+                    {{ new Date(item.createdAt).toLocaleString() }}
+                  </span>
+                </a-list-item>
+              </template>
+            </a-list>
+          </div>
+          <div>
+            <div class="mb-2 text-sm font-medium">最近发布</div>
+            <a-list
+              :data-source="summary?.releases.recent ?? []"
+              size="small"
+              :locale="{ emptyText: '暂无发布记录' }"
+            >
+              <template #renderItem="{ item }">
+                <a-list-item>
+                  <a-badge
+                    :status="relStatusColor[item.status] ?? 'default'"
+                    :text="`${item.project ?? '—'} · ${item.envType} · ${item.tag}`"
+                  />
+                  <span class="text-muted-foreground ml-auto text-xs">
+                    {{ new Date(item.createdAt).toLocaleString() }}
+                  </span>
+                </a-list-item>
+              </template>
+            </a-list>
+          </div>
+        </div>
+      </a-card>
+    </div>
 
     <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       <!-- hoverable + 点击直达：功能已全部交付，卡片不再是纯展示 -->
