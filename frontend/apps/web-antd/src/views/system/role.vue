@@ -39,6 +39,27 @@ const roles = ref<RoleRow[]>([]);
 const catalog = ref<ActionDef[]>([]);
 const projects = ref<ProjectItem[]>([]);
 
+// 高危权限摘要（独立审核 U4：表格回答"能做什么高危的事"，全量明细进抽屉）
+const HIGH_RISK: Record<string, string> = {
+  'release.publish.prod': 'prod 发布',
+  'release.rollback': '回滚',
+  'config.reveal': '密钥查看',
+  'terminal.access': '终端',
+  'cron.trigger': '手动执行',
+};
+const detailOpen = ref(false);
+const detailRole = ref<null | RoleRow>(null);
+
+function openDetail(role: RoleRow) {
+  detailRole.value = role;
+  detailOpen.value = true;
+}
+
+function detailActions(role: null | RoleRow): ActionDef[] {
+  if (!role) return [];
+  return catalog.value.filter((d) => role.actions.includes(d.key));
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -213,14 +234,22 @@ async function save() {
             <span v-else class="text-gray-400">—</span>
           </template>
         </a-table-column>
-        <a-table-column title="动作集">
+        <a-table-column title="动作集（高危摘要）" :width="240">
           <template #default="{ record }">
-            <a-tag v-for="a in record.actions" :key="a" color="cyan">
-              {{ a }}
+            <span class="mr-1">{{ record.actions.length }} 项</span>
+            <a-tag
+              v-for="hr in Object.keys(HIGH_RISK).filter((k) =>
+                record.actions.includes(k),
+              )"
+              :key="hr"
+              color="red"
+              class="mr-1"
+            >
+              {{ HIGH_RISK[hr] }}
             </a-tag>
-            <span v-if="record.actions.length === 0" class="text-gray-400">
-              （无动作）
-            </span>
+            <a-button size="small" type="link" @click="openDetail(record)">
+              详情
+            </a-button>
           </template>
         </a-table-column>
         <a-table-column title="项目范围" :width="140">
@@ -361,4 +390,41 @@ async function save() {
       </div>
     </a-modal>
   </div>
+
+  <!-- 权限详情抽屉：动作按类别分组 + 路由策略全量 -->
+  <a-drawer
+    v-model:open="detailOpen"
+    :title="`权限详情：${detailRole?.name ?? ''}`"
+    :width="520"
+  >
+    <div v-if="detailRole">
+      <h4 class="mb-2">动作（{{ detailRole.actions.length }}）</h4>
+      <div
+        v-for="cat in [
+          ...new Set(detailActions(detailRole).map((d) => d.category)),
+        ]"
+        :key="cat"
+        class="mb-2"
+      >
+        <div class="text-muted-foreground mb-1 text-xs">{{ cat }}</div>
+        <a-tag
+          v-for="d in detailActions(detailRole).filter(
+            (x) => x.category === cat,
+          )"
+          :key="d.key"
+          color="cyan"
+        >
+          {{ d.key }}
+          <span class="text-xs">（{{ d.desc }}）</span>
+        </a-tag>
+      </div>
+      <a-divider />
+      <h4 class="mb-2">路由策略（{{ detailRole.policies.length }}）</h4>
+      <div class="max-h-72 overflow-auto rounded bg-muted p-2 text-xs">
+        <div v-for="p in detailRole.policies" :key="`${p.path}-${p.act}`">
+          {{ p.path }} <span class="text-muted-foreground">{{ p.act }}</span>
+        </div>
+      </div>
+    </div>
+  </a-drawer>
 </template>

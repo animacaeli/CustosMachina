@@ -91,7 +91,11 @@ function goEnv(env: 'canary' | 'prod' | 'test') {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
-            <div class="font-medium">{{ record.name }}</div>
+            <div class="font-medium">
+              <a @click="router.push(`/projects/${record.id}`)">{{
+                record.name
+              }}</a>
+            </div>
             <div class="text-muted-foreground text-xs">
               {{ record.repoPath }}
             </div>
