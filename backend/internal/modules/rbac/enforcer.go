@@ -258,11 +258,19 @@ var defaultPolicies = [][]string{
 	{"ops", "/observ/alert-events", "GET|POST"},
 	{"dev", "/observ/alert-events", "GET"},
 	{"admin", "/notify/records", "GET"},
+	// v27：首页运维态势/就绪度（v0.12.8~v0.12.10 上线）——登录后第一屏，
+	// admin/ops/dev 可读；guest 不给（扫码即得的角色，与 v26 收权方向一致）
+	{"admin", "/home/summary", "GET"},
+	{"admin", "/home/readiness", "GET"},
+	{"ops", "/home/summary", "GET"},
+	{"ops", "/home/readiness", "GET"},
+	{"dev", "/home/summary", "GET"},
+	{"dev", "/home/readiness", "GET"},
 }
 
 // policySeedVersion 策略种子版本：新增角色/矩阵调整时 +1，
 // 已有部署按版本一次性补种（角色在表中无任何策略时才补），不会复活人为删改。
-const policySeedVersion = "26" // v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
+const policySeedVersion = "27" // v27：首页 /home summary+readiness admin/ops/dev 可读（v0.12.14 复核 §7.1——上线时漏种，非超管登录首屏 403）；v20：自定义角色 CRUD（P7-M1）；v19：终端审计 server-terminals + terminal-acls（P6-M6 堡垒机） // v15：MCP 接入凭证（P6 M2，admin）+ /ai/chat dev 放行（M1 遗漏补调——对话会话归属本人，dev 可用）；v14：告警模板化（R1）；v13：ai 资源点（P5 M6）；v12：certs（M5）；v11：config-files（M4）；v10：observ 告警（M3）
 
 // NewEnforcer 构建 casbin enforcer。
 // 首次启动（表全空）种入全部默认矩阵；后续仅当种子版本升级时，
@@ -426,6 +434,24 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		if len(ps) > 0 && oldVersion == "23" {
 			entryLevelSeed[p[0]] = true
 		}
+		// v26→v27：/home summary+readiness 对 admin/ops/dev 都是新资源点
+		// （v0.12.14 复核 §7.1：v0.12.8 上线时漏种）
+		if len(ps) > 0 && oldVersion == "26" {
+			entryLevelSeed[p[0]] = true
+		}
+	}
+	// v26→v27：存量自定义角色补 /home 基础读集（customBaseRoutes 同步新增）。
+	// 自定义角色的 home 条目在 v27 之前不存在，无「复活人为删改」风险；
+	// guest 是内置角色不在 defaultPolicies 迁移面，不补。
+	for _, sub := range customRoleSubjects(e) {
+		for _, obj := range []string{"/home/summary", "/home/readiness"} {
+			if has, _ := e.HasPolicy(sub, obj, "GET"); !has {
+				if _, err := e.AddPolicy(sub, obj, "GET"); err != nil {
+					return changed, err
+				}
+				changed = true
+			}
+		}
 	}
 	// ---- 版本收权（deNarrowPolicies，包级函数可单测）----
 	changed = deNarrowPolicies(e, oldVersion) || changed
@@ -472,4 +498,25 @@ func deNarrowPolicies(e *casbin.SyncedEnforcer, oldVersion string) bool {
 		}
 	}
 	return changed
+}
+
+// customRoleSubjects casbin 策略表中的自定义角色名（内置角色之外）。
+// 自定义角色由 customBaseRoutes 自动附加基础读集，存量角色靠种子迁移补新面。
+func customRoleSubjects(e *casbin.SyncedEnforcer) []string {
+	builtin := map[string]bool{}
+	for _, r := range identity.BuiltinRoles {
+		builtin[r] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	policies, _ := e.GetPolicy()
+	for _, p := range policies {
+		sub := p[0]
+		if builtin[sub] || seen[sub] {
+			continue
+		}
+		seen[sub] = true
+		out = append(out, sub)
+	}
+	return out
 }

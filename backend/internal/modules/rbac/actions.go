@@ -53,6 +53,8 @@ var publishRoutes = []Policy{
 // customBaseRoutes 自定义角色自动附加的基础读集：保证页面可渲染的只读面。
 // 未授予的写操作仍被 casbin 拒（菜单可见但 API 403 是 M1 已知边界，见设计文档 §六）。
 var customBaseRoutes = []Policy{
+	{Path: "/home/summary", Act: "GET"},
+	{Path: "/home/readiness", Act: "GET"},
 	{Path: "/projects", Act: "GET"},
 	{Path: "/projects/*", Act: "GET"},
 	{Path: "/config-files", Act: "GET"},
