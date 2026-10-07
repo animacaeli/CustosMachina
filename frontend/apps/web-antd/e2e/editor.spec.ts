@@ -24,8 +24,6 @@ test('脚本编辑器加载且无页面错误（Monaco editor.api 重构回归�
   await expect(page.locator('.monaco-editor').first()).toBeVisible({
     timeout: 10_000,
   });
-  await expect(
-    page.locator('.monaco-editor textarea').first(),
-  ).toBeVisible();
+  await expect(page.locator('.monaco-editor textarea').first()).toBeVisible();
   expect(pageErrors, '编辑器加载不应产生页面错误').toEqual([]);
 });
