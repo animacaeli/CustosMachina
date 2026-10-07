@@ -6,6 +6,11 @@ export default defineConfig(async () => {
   return {
     application: {},
     vite: {
+      build: {
+        // chunk 预算（独立审核 T11）：单 chunk 超 1.2MB 构建告警——
+        // monaco ts/css/html worker 是已知大块（运行时只 fetch yaml+json）
+        chunkSizeWarningLimit: 1200,
+      },
       resolve: {
         alias: {
           // monaco-worker-manager 以带 .js 的子路径引 editor worker，

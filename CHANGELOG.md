@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.12.14 (2026-10-07)
+
+独立审核第 3 批全部完成：E2E 扩链路 / app.go 拆分 / Monaco chunk 预算 / provider 扩展契约。
+
+### E2E 扩链路（4→8 条主链路）
+
+- 新增 4 条：项目创建+表格行可见（v0.12.2 N1 回归）、正式环境发布按钮可达（v0.12.1 确认层级）、角色页高危摘要列（v0.12.12 U4）、配置中心列表可达（reveal 权限前置）——每条对应一次历史修复，回归防线成形
+
+### 大文件拆分（T9）
+
+- `app.go` 1055→323 行：跨模块桥接层（alertContextBridge / chatContextBridge / toolsBridge / chatActionBridge 约 750 行）整体搬移到 `bridge.go`——装配根只留 init/ProvideDB/ProvideModules/seedSkills
+- `configs/files.vue` 1218 行：整体搬移因深度闭包不可行（多轮尝试后回退），标记为下一版本渐进拆分（状态页如实记录）
+
+### Monaco bundle 预算（T11）
+
+- `chunkSizeWarningLimit: 1200`——单 JS chunk 超 1.2MB 构建告警。当前超限的 ts.worker（6.9MB）为已知大块：MonacoEnvironment 按 label 路由，运行时只 fetch yaml+json 两个 worker，其余 worker chunk 存在于产物但浏览器不加载——影响构建产物体积而非运行时性能。worker external 对 Vite worker 机制无效，完整裁剪需按需入口（monaco-editor/esm/vs/editor/editor.api 缺类型声明，待上游修复）
+
+### Provider 扩展契约（P4）
+
+- **`docs/providers/README.md`**：六类扩展点能力矩阵（CI 引擎/Git 托管/通知渠道/DNS/观测/配置中心）、CIProvider+GitProvider 接口签名与关键行为说明、通知渠道添加四步指南、向前兼容规则（未知枚举跳过/接口嵌入默认实现）、注册方式（编译期 init）、不做清单
+- **`ci/provider_contract_test.go`**：CIProvider 契约测试套件——新引擎适配器跑一遍即验证 Name 合法性/接口满足；Status/Log 行为由各引擎 fake server 测试覆盖
+
 ## v0.12.13 (2026-10-07)
 
 独立审核第 3 批启动：主链路 E2E（Q1 最大质量短板）。

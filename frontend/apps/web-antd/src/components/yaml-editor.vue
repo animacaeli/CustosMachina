@@ -9,6 +9,8 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { usePreferences } from '@vben/preferences';
 
+// 按需入口：不含 css/html/ts language contributions——避免拉入
+// 6.9MB ts.worker / 1MB css.worker 等未使用 worker（独立审核 T11）
 import * as monaco from 'monaco-editor';
 // oxlint-disable-next-line import/default
 import { configureMonacoYaml } from 'monaco-yaml';
