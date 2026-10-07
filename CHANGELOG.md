@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.12.16 (2026-10-07)
+
+v0.12.15 双报告复核（第三轮逐提交复核 + 独立复核）的补丁批：并发竞态修复 + 跳级升级根治 + 回归盲区补测。对照 `reverify-report-v0.12.4-15.md` §八 / `reverify-report-v0.12.15-independent.md` R1~R3。
+
+### 并发（P1，独立复核 R1 / 复核 §八.3）
+
+- **notify `EnqueueBusiness`/`Stop` send-close 竞态互斥化**：`stopMu` RWMutex——读锁内完成 stopping 检查+非阻塞发送、写锁内完成置位+close，close 时不可能有并发发送者。旧实现（v0.12.15 引入的 atomic.Bool 检查）存在 TOCTOU 窗口：检查通过后、发送前 Stop 完成 close，命中即 `send on closed channel` panic（停机时在途 webhook 请求可触发进程 panic；`-race` 检测不到此类时序错误）。回归测试：50 轮 × 8 goroutine 循环入队与 Stop 真并发压力
+
+### 升级路径（P2，复核 §八.1）
+
+- **casbin 种子跳级漏种与版本卡死根治**：v27 补种分支由精确匹配 "26" 改为数值比较（对齐 `deNarrowPolicies` 既有模式）——v0.12.1("24")/v0.12.2("25") 直升的部署此前既漏种 home（非超管首屏继续 403）且版本号永不推进；`migrateSeedVersion` 返回值语义明确为「需要推进版本号」，无策略变更也推进。自定义角色补种加版本 gate（v27+ 不再重放，人为删除不复活）。22/24/25 跳级与 v27+ 不复活用例补齐
+
+### 编辑器回归（P3，复核 §八.5/§八.6）
+
+- **sql 语言注册遗漏修复**：editor.api 精确入口重构时未注册 sql，告警模板/策略的三处 PromQL 编辑静默降级纯文本
+- **editor E2E 加 tokenization 断言**（mtk 高亮 span）：原断言只检测装配崩溃/白屏，对静默降级不敏感——正是 sql 回归漏检的原因
+
+### E2E 门禁（P2/P3，独立复核 R2）
+
+- **pageerror 全局门禁**（fixtures page 覆写）：每用例默认断言无未捕获页面错误
+- **guest 403 拒绝用例**：与 ops 200 构成权限双向判据，防种子误放开
+- **发布取消无副作用断言**：关闭发布抽屉期间不发出任何 `/api/releases` POST
+- **去除 force:true**：真实遮挡查明——创建项目后产品自动打开详情抽屉（引导配置部署目标的既有行为），force 一直在掩盖其对表格按钮的拦截；helper 显式关闭后正常点击。顺带修两类脆弱点：antd 抽屉/Modal 关闭后 DOM 残留（断言须 `:visible`）、两字按钮全角空格（行内定位）
+
+### 文档与门禁（P2/P3，独立复核 R3 / 复核 §八.7/§八.8）
+
+- providers/README 四处失实纠正（删误入的 Telegram 渠道、`observ.ObservBackend`/`certs.DNSProvider` 符号修正、常量位置 model.go→channels.go）
+- status.md 测试口径核准（vitest 67 文件/457 条、E2E 5 spec/11 条）+ 浏览器兼容如实（Chromium 持续验证，Firefox/Safari 手工范围）
+- **release CI 新增一致性门禁**：tag 推送时校验 status.md 版本与 tag 一致
+- `SetReadDeadline` 失败记 debug（自定义 Writer 环境期限静默失效可见化）+ h2 边界注释；audit 例外条目 module 一致性校验；AI 悬浮球 aria-label
+
+### 未做（维护期第三批）
+
+R4 大文件拆分（`bridge.go` 749 行 / `configs/files.vue` 1218 行）、R5 移动端宽表列表卡重排、R7 Vben Form slot 迁移——工程量大且独立复核亦归为后续批次，不阻塞本补丁。
+
 ## v0.12.15 (2026-10-07)
 
 双报告（逐提交复核 + 独立审核 v0.12.14）合并整改：供应链清零 + 契约纠偏 + 可靠性收口 + 权限修复。对照 `reverify-report-v0.12.4-14.md` §九 合并裁定。
