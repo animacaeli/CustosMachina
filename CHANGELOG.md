@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.12.18 (2026-10-08)
+
+v0.12.17 双报告复核（第五轮逐提交复核 + 独立复核）补丁：RBAC 种子迁移根治——历史 entryLevelSeed 全量补齐语义彻底移除。对照 `reverify-report-v0.12.4-17.md` §十 / `reverify-report-v0.12.17-independent.md` R1。
+
+### RBAC 升级授权边界（P1，独立复核 R1：seed 3–23 历史分支仍复活已删权限）
+
+- **种子迁移改显式 delta 体系**：`enforcer_seed_versions.go` 对 196 条默认策略逐条标注引入种子版本（git 考古：v3~v27 共 25 个 bump 提交的 defaultPolicies 逐版本集合 diff）；`migrateSeedVersion` 重构为三层语义——①精确 delta（只补「引入版本 > 库版本」的条目，取代 v2~v24 全部历史 entryLevelSeed 角色级全量补齐分支，净删约 100 行）；②角色首种（完全无策略的角色整角色种入，覆盖 v2 残缺 bug）；③deNarrow 收权保持
+- **升级不复活**自此对全部历史版本成立（v0.12.17 修复仅覆盖 seed 24–26）：独立复核实证 seed 23 删除 ops `/certs` 后升级复活；现全版本矩阵测试锁定
+- 非法/缺失 seed：只补 home 基础面并告警，不以「极旧部署」名义全量恢复；降级二进制（库版本高于种子）不迁移不降写
+- 取舍：当年 v6 部署的部分条目缺失（v7 时代曾靠全量补齐修复）delta 不自动补——宁可少补（界面可加）不可多补（复活）
+- 测试：表完备性（与 defaultPolicies 互为充要，漏标即红）/ **seed 2–26 全版本矩阵 25 档**（新条目直达、人为删除不复活、幂等）/ 非法 seed 兜底 / RemovePolicy 断言加固（第五轮复核观察项）
+
+### 未做（后续批次）
+
+R2 发布确认/敏感 reveal E2E、R3 移动端记录布局、R4 顶栏图标可访问名称、R5 大文件拆分、R6 Vben Form slot 迁移、R7 console.error 治理（独立报告 P2/P3 项均维持维护期批次划分）。
+
 ## v0.12.17 (2026-10-07)
 
 v0.12.16 双报告复核（第四轮逐提交复核 + 独立复核）补丁：两项 P1（RBAC 升级复活已删权限、发布门禁无效）+ 断言检测力修复。对照 `reverify-report-v0.12.4-16.md` §九 / `reverify-report-v0.12.16-independent.md` R1/R2/R3/R9。
