@@ -27,12 +27,11 @@ test('发布走确认抽屉：点击打开发布面板、取消不产生发布�
 }) => {
   const name = `e2e-rel-${Date.now()}`;
   await createProject(page, name);
-  // 悬浮球为全局浮层（非发布链路组成），盖住表格末行按钮——隐藏后
-  // 以正常点击验收按钮可点性（独立复核第一批建议：不以 force 绕过遮挡）
-  await page.addStyleTag({ content: '.ai-fab { display: none !important; }' });
-  // 发布按钮（primary）点击 → 发布抽屉（确认层级：发布必须经抽屉确认，v0.12.1）。
-  // 行内定位：表格每行都有「发 布」（antd 两字按钮带全角空格），全局
-  // .first() 会在多项目行间歧义
+  // 发布按钮（primary）正常点击 → 发布抽屉（确认层级：发布必须经抽屉
+  // 确认，v0.12.1）。行内定位：表格每行都有「发 布」（antd 两字按钮带
+  // 全角空格），全局 .first() 会在多项目行间歧义。不隐藏悬浮球、不
+  // force——此前对按钮的真实遮挡者是创建项目后自动弹出的详情抽屉
+  // （helper 已关闭）；E2E 不得修改被测 UI（v0.12.16 独立复核 R3）
   await page
     .locator('tr', { hasText: name })
     .getByRole('button', { name: '发 布' })

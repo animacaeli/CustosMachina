@@ -25,20 +25,24 @@ test('脚本编辑器加载且 shell tokenization 生效（editor.api 重构回�
   });
   await expect(page.locator('.monaco-editor textarea').first()).toBeVisible();
 
-  // tokenization 生效判据：敲入 shell 代码后 .view-lines 内出现 mtk*
-  // 高亮 span（未注册语言渲染纯文本，无 mtk 分段——静默降级盲区的检测）
-  // textarea 是 Monaco 隐藏 IME 辅助元素（readonly aria-hidden，点击不稳）——
-  // 点击 .view-lines 主体聚焦后键盘输入
+  // tokenization 生效判据：敲入 shell 代码后 .view-lines 内出现**多类**
+  // mtk 高亮 span。检测力说明（v0.12.16 复核 P3-N1 反例实证）：未注册
+  // 语言 Monaco 仍产出基础行容器 span（mtk1 单类，纯文本渲染），故
+  // 「count > 0」两态恒真无检测力；注册生效时同一输入实测产出 7 类
+  // mtk class——断言 distinct class ≥ 2 才能区分两态（未注册=1 类必红）
   await page.locator('.monaco-editor .view-lines').first().click();
   await page.keyboard.type('if [ -f /etc/hosts ]; then echo ok; fi');
   await expect
     .poll(
       async () =>
-        page.locator('.monaco-editor .view-lines span[class*="mtk"]').count(),
+        await page
+          .locator('.monaco-editor .view-lines span[class*="mtk"]')
+          .evaluateAll((els) => new Set(els.map((el) => el.className)).size),
       {
-        message: 'shell 高亮 span 应出现（语言注册回归时为 0）',
+        message:
+          'shell 高亮应产出 ≥2 类 mtk token class（未注册时仅 1 类纯文本，断言必红）',
         timeout: 10_000,
       },
     )
-    .toBeGreaterThan(0);
+    .toBeGreaterThanOrEqual(2);
 });
