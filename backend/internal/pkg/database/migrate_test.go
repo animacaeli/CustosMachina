@@ -67,15 +67,15 @@ func TestMigrateExistingDBSkipsAutoMigrate(t *testing.T) {
 	if err := Migrate(db, []any{&migTestModel{}}); err != nil {
 		t.Fatalf("存量库迁移失败: %v", err)
 	}
-	if !db.Migrator().HasColumn("builds", "log_tail") {
-		t.Fatal("0004 应为存量 builds 表加 log_tail 列")
+	// v0.12.6 语义变更：0004/0005 的加列改 app 层 Go 钩子（本包测不到，
+	// 见 internal/app 跳级/补列回归）；存量库存在待应用迁移时执行模型补齐
+	//（跳级升级自愈）——缺失的模型表会被建出，变更仍以版本化迁移为准
+	if !db.Migrator().HasTable(&migTestModel{}) {
+		t.Fatal("存在待应用迁移时，模型补齐应建出缺失表（跳级自愈）")
 	}
-	if !db.Migrator().HasColumn("ai_conversations", "compact_text") {
-		t.Fatal("0005 应为存量 ai_conversations 表加 compact_text 列")
-	}
-	// 存量库不走 AutoMigrate：新模型表不应被建
-	if db.Migrator().HasTable(&migTestModel{}) {
-		t.Fatal("存量库不应自动建新模型表（变更须走版本化迁移）")
+	// 稳态：全部应用后再跑 Migrate 不再补齐/不报错
+	if err := Migrate(db, []any{&migTestModel{}}); err != nil {
+		t.Fatalf("稳态迁移失败: %v", err)
 	}
 }
 

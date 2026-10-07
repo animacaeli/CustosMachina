@@ -58,6 +58,37 @@ func init() {
 		}
 		return nil
 	})
+	// 0004/0005/0007：ALTER-ADD-COLUMN 改守卫式 Go 钩——跳级升级时
+	// Migrate 先全量 AutoMigrate（列已由当前模型带上），裸 ALTER 会报
+	// duplicate column / no such table（2026-10-07 生产事故：v0.9.x 老库
+	// 直升 v0.12.3，0005 对从未建过的 ai_conversations 做 ALTER）。
+	// SQLite 无 ADD COLUMN IF NOT EXISTS，只能代码层守卫。
+	addColIfMissing := func(tbl any, field, column string) func(*gorm.DB) error {
+		return func(db *gorm.DB) error {
+			m := db.Migrator()
+			// 表不存在（跳级升级）直接跳过——由 Migrate 末尾的模型补齐
+			// 按当前模型整体建出，列随之带上
+			if !m.HasTable(tbl) || m.HasColumn(tbl, field) {
+				return nil
+			}
+			return m.AddColumn(tbl, field)
+		}
+	}
+	database.RegisterGoHook("0004", addColIfMissing(&ci.Build{}, "LogTail", "log_tail"))
+	database.RegisterGoHook("0005", func(db *gorm.DB) error {
+		m := db.Migrator()
+		if m.HasTable("ai_conversations") && !m.HasColumn("ai_conversations", "compact_text") {
+			if err := db.Exec("ALTER TABLE ai_conversations ADD COLUMN compact_text TEXT").Error; err != nil {
+				return err
+			}
+		}
+		if m.HasTable("ai_conversations") && !m.HasColumn("ai_conversations", "compact_after_id") {
+			return db.Exec("ALTER TABLE ai_conversations ADD COLUMN compact_after_id INTEGER NOT NULL DEFAULT 0").Error
+		}
+		return nil
+	})
+	database.RegisterGoHook("0007", addColIfMissing(&projects.EnvTarget{}, "ClusterID", "cluster_id"))
+
 	// 0009/0010：v0.12.1~v0.12.2 新表补存量库迁移（复核 N7——新库走
 	// AutoMigrate 无感，存量库增量路径不跑 AutoMigrate，只认 SQL+钩子）
 	database.RegisterGoHook("0009", func(db *gorm.DB) error {
@@ -69,6 +100,9 @@ func init() {
 	// 0008：gitee webhook 密码存量明文哈希化（sha256 纯计算无密钥依赖；
 	// 幂等：已是 64-hex 哈希形态则跳过）
 	database.RegisterGoHook("0008", func(db *gorm.DB) error {
+		if !db.Migrator().HasTable("ci_global_config") {
+			return nil // 跳级升级无此表：由模型补齐建出，无存量可迁移
+		}
 		var row struct {
 			ID           uint
 			GiteeWebhook string
@@ -83,8 +117,8 @@ func init() {
 	})
 }
 
-// ProvideDB 打开数据库并迁移全部模块的模型（模型清单随模块在此登记）。
-func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
+// ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。
+func ProvideDBModelList() []any {
 	models := identity.Models()
 	models = append(models, rbac.Models()...)
 	models = append(models, resources.Models()...)
@@ -104,7 +138,12 @@ func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
 	models = append(models, slots.Models()...)
 	models = append(models, cronmod.Models()...)
 	models = append(models, k3smod.Models()...)
-	db, err := database.Open(&cfg.Database, models)
+	return models
+}
+
+// ProvideDB 打开数据库并迁移全部模块的模型。
+func ProvideDB(cfg *config.Config) (*gorm.DB, func(), error) {
+	db, err := database.Open(&cfg.Database, ProvideDBModelList())
 	if err != nil {
 		return nil, nil, err
 	}

@@ -164,7 +164,19 @@ func Migrate(db *gorm.DB, models []any) error {
 		return nil
 	}
 
-	// 存量库：执行未应用的迁移（每版本一个事务）
+	// 存量库：先执行未应用的迁移（每版本一个事务），再做模型补齐。
+	// 顺序关键（2026-10-07 生产事故两次迭代得出）：改名/变形类迁移
+	//（如 0006 key→skey）必须先于 AutoMigrate——否则 AutoMigrate 会把
+	// 改名目标当成缺失列补一个无约束的普通列，改名逻辑被永久跳过；
+	// 而加列类迁移的 Go 钩子全部带 HasTable 守卫（表不存在即跳过），
+	// 由随后的补齐按当前模型整体建出。稳态启动（无待应用项）不跑补齐。
+	pending := false
+	for _, f := range files {
+		if !applied[f.Version] {
+			pending = true
+			break
+		}
+	}
 	for _, f := range files {
 		if applied[f.Version] {
 			continue
@@ -184,6 +196,14 @@ func Migrate(db *gorm.DB, models []any) error {
 		})
 		if err != nil {
 			return err
+		}
+	}
+	// 模型补齐（跳级升级自愈）：老库从未见过中间版本引入的表/列
+	// （如 v0.9.x 库没有 ai_conversations），版本化迁移只覆盖显式登记的
+	// 变更——存在待应用迁移时全量 AutoMigrate 补齐缺失部分。
+	if pending && len(models) > 0 {
+		if err := db.AutoMigrate(models...); err != nil {
+			return fmt.Errorf("升级模型补齐失败: %w", err)
 		}
 	}
 	return nil
