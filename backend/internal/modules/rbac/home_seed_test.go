@@ -161,9 +161,10 @@ func TestUpgradeDoesNotResurrectDeletedPermissions(t *testing.T) {
 			svc := newTestEnforcer(t)
 			db, e := svc.db, svc.enforcer
 			// 管理员经产品界面删除 ops 的证书权限（defaultPolicies 中存在
-			// 的默认条目，非本次新增）
-			if _, err := e.RemovePolicy("ops", "/certs", "GET|POST|PUT|DELETE"); err != nil {
-				t.Fatal(err)
+			// 的默认条目，非本次新增）——删除必须真实生效，否则测试假绿
+			ok, err := e.RemovePolicy("ops", "/certs", "GET|POST|PUT|DELETE")
+			if err != nil || !ok {
+				t.Fatalf("删除 /certs 未生效（ok=%v err=%v）——前提不成立", ok, err)
 			}
 			for _, obj := range []string{"/home/summary", "/home/readiness"} {
 				for _, sub := range []string{"admin", "ops", "dev"} {

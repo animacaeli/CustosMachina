@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/pkg/logger"
 )
 
 const modelText = `
@@ -339,8 +340,13 @@ func EnforceAny(e *casbin.SyncedEnforcer, roles []string, obj, act string) (bool
 	return false, nil
 }
 
-// migrateSeedVersion 种子版本升级时为"表中无任何策略"的角色补种默认矩阵。
-// v2 存在"只种首条"的 bug（admin 角色残留 1 条），v3 对 admin 做条目级补齐。
+// migrateSeedVersion 种子版本升级迁移。三层语义（v0.12.17 独立复核 R1
+// 根治后）：①精确 delta——只补「引入版本 > 库版本」的默认条目，升级绝不
+// 复活管理员人为删除的权限（取代历史的 entryLevelSeed 角色级全量补齐）；
+// ②角色首种——表中完全无策略的角色整角色种入默认矩阵（首次初始化等价）；
+// ③收权——deNarrowPolicies 按版本收窄（移除旧形态仅当其真实存在）。
+// 非法/缺失的版本值：只补 home 基础面并告警，绝不以「极旧部署」名义
+// 全量恢复权限；高于当前种子的版本（降级二进制）不迁移不降写。
 func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 	oldVersion := ""
 	var setting identity.PlatformSetting
@@ -350,102 +356,38 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 		oldVersion = setting.Value
 	}
-	// 先收集表中完全无策略的角色，再整角色补种（避免种一条后误判"已有策略"）
-	roleNeedsSeed := map[string]bool{}
-	entryLevelSeed := map[string]bool{} // v2 残缺角色：逐条补齐
-	for _, p := range defaultPolicies {
-		if roleNeedsSeed[p[0]] {
-			continue
-		}
-		ps, _ := e.GetFilteredPolicy(0, p[0])
-		roleNeedsSeed[p[0]] = len(ps) == 0
-		if len(ps) > 0 && p[0] == "admin" && oldVersion == "2" {
-			entryLevelSeed[p[0]] = true // v2 bug 残留，按条目补齐
-		}
-		// v3→v4：servers/server-groups 是新资源点，admin/ops 已有其他策略，
-		// 需逐条补齐（HasPolicy 去重，不覆盖人为调整过的旧条目）
-		if len(ps) > 0 && (p[0] == "admin" || p[0] == "ops") && oldVersion == "3" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v4→v5：projects/notify-groups 对 admin（新增）与 ops/dev（只读）都是新资源点
-		if len(ps) > 0 && oldVersion == "4" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v5/v6→v7：cron 增量资源点在 v6 下发的部署里只对部分角色生效过，
-		// observ/server-files 对 ops/dev（以及 admin 的 cron 写权限）都需逐条补齐
-		if len(ps) > 0 && (oldVersion == "5" || oldVersion == "6") {
-			entryLevelSeed[p[0]] = true
-		}
-		// v7→v8：notify-rules 对 admin 是新资源点
-		if len(ps) > 0 && oldVersion == "7" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v8→v9：backup-jobs 对 admin/ops 都是新资源点
-		if len(ps) > 0 && oldVersion == "8" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v9→v10：observ/alerts、observ/o2-settings 对 admin/ops 都是新资源点
-		if len(ps) > 0 && oldVersion == "9" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v10→v11：config-files 对 admin/ops/dev 都是新资源点
-		if len(ps) > 0 && oldVersion == "10" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v11→v12：certs 对 admin/ops 是新资源点
-		if len(ps) > 0 && oldVersion == "11" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v12→v13：ai 对 admin 是新资源点
-		if len(ps) > 0 && oldVersion == "12" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v13~v16→v17：告警模板/ai 资源点/mcp tokens/ai skills/config-pull-tokens
-		// 对 admin 都是新资源点（v14~v16 历史上未逐版本登记升级条目，按范围补齐）
-		if len(ps) > 0 && p[0] == "admin" && oldVersion >= "13" && oldVersion < "17" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v17→v18：config-kv 对 admin/ops/dev 都是新资源点
-		if len(ps) > 0 && oldVersion == "17" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v18→v19：server-terminals/terminal-acls 对 admin 是新资源点
-		if len(ps) > 0 && p[0] == "admin" && oldVersion == "18" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v19→v20：自定义角色 CRUD 路由对 admin 是新资源点
-		if len(ps) > 0 && p[0] == "admin" && oldVersion == "19" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v20→v21：业务告警凭证管理对 admin 是新资源点
-		if len(ps) > 0 && p[0] == "admin" && oldVersion == "20" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v21→v22：/ai/assist 对 admin/ops/dev 都是新资源点
-		if len(ps) > 0 && oldVersion == "21" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v22→v23：k3s-clusters 对 admin 是新资源点
-		if len(ps) > 0 && p[0] == "admin" && oldVersion == "22" {
-			entryLevelSeed[p[0]] = true
-		}
-		// v23→v24：alert-events 对 admin/ops/dev、notify/records 对 admin 都是新资源点
-		if len(ps) > 0 && oldVersion == "23" {
-			entryLevelSeed[p[0]] = true
-		}
-		// 注意：v27 的 home 补种不走 entryLevelSeed（见下方精确补种块）——
-		// entryLevelSeed 是角色级全量补齐，会把管理员通过产品界面删除的
-		// 内置角色权限一并恢复（role.vue 允许编辑内置角色矩阵，v0.12.16
-		// 独立复核 R1）
+	oldN, perr := strconv.Atoi(oldVersion)
+	if perr == nil && oldN > seedVersionNum() {
+		// 高于当前种子：降级运行的二进制——不迁移、不降写版本号
+		logger.Warnf("[rbac] 种子版本 %q 高于当前二进制 %q（降级运行？），跳过迁移", oldVersion, policySeedVersion)
+		return false, nil
 	}
-	// v26→v27：/home 精确补种（v0.12.14 复核 §7.1：v0.12.8 上线时漏种）。
-	// 内置角色 admin/ops/dev 与存量自定义角色都只精确补 home 两条 GET，
-	// 不做角色级全量补齐——升级不得改变管理员主动调整的权限面。
-	// 数值比较防跳级漏补（v0.12.15 复核 §八.1-B：精确匹配 "26" 时
-	// "24"/"25" 库直升漏种且版本永不推进）；解析失败=极旧部署照补；
-	// v27+ 的库不再重放——未来管理员删除 home 条目不会被后续升级复活。
-	// guest 不补（扫码即得角色，与 v26 收权方向一致）
-	if v, perr := strconv.Atoi(oldVersion); perr != nil || v < 27 {
+	knownSeed := perr == nil
+	if !knownSeed {
+		logger.Warnf("[rbac] 种子版本缺失或不可解析 %q——仅补 home 基础面，不执行全量补种", oldVersion)
+	}
+
+	// ① 精确 delta：引入版本 > 库版本的条目直达（含 v27 的 home 六条——
+	// admin/ops/dev 在 defaultPolicies 内走本表；自定义角色见下方特例块）
+	if knownSeed {
+		for _, p := range defaultPolicies {
+			if policyIntroducedAt[policyKey{p[0], p[1], p[2]}] <= oldN {
+				continue // 库版本已知时已有此面或管理员主动删除——不补
+			}
+			if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
+				if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
+
+	// ①' v27 home 特例：自定义角色不在 defaultPolicies（customBaseRoutes
+	// 动态附加），同样只精确补两条——home 条目在 v27 前不存在，无复活面；
+	// v27+ 的库不再重放。guest 不补（扫码即得角色，与 v26 收权方向一致）。
+	// 非法 seed（knownSeed=false）时内置三角色也走本块补 home（delta 块
+	// 不执行，基础可用性兜底）
+	if !knownSeed || oldN < 27 {
 		for _, sub := range append(customRoleSubjects(e), "admin", "ops", "dev") {
 			for _, obj := range []string{"/home/summary", "/home/readiness"} {
 				if has, _ := e.HasPolicy(sub, obj, "GET"); !has {
@@ -456,12 +398,20 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 			}
 		}
 	}
-	// ---- 版本收权（deNarrowPolicies，包级函数可单测）----
-	deNarrowPolicies(e, oldVersion)
 
+	// ② 角色首种：表中完全无策略的角色整角色种入（先收集再种，避免种
+	// 一条后误判"已有策略"）。覆盖 v2「只种首条」bug 残留与从未种过的角色
+	roleNeedsSeed := map[string]bool{}
 	for _, p := range defaultPolicies {
-		if !roleNeedsSeed[p[0]] && !entryLevelSeed[p[0]] {
-			continue // 该角色已有策略（含管理员调整过），不覆盖
+		if roleNeedsSeed[p[0]] {
+			continue
+		}
+		ps, _ := e.GetFilteredPolicy(0, p[0])
+		roleNeedsSeed[p[0]] = len(ps) == 0
+	}
+	for _, p := range defaultPolicies {
+		if !roleNeedsSeed[p[0]] {
+			continue
 		}
 		if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
 			if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
@@ -469,11 +419,24 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 			}
 		}
 	}
+
+	// ③ 收权（v25/v26，仅当旧条目真实存在才替换——不复活人为删除）
+	deNarrowPolicies(e, oldVersion)
+
 	// 返回 true = 需要推进版本号（调用方据此写回 setting）。走到这里说明
 	// 库版本低于当前种子——即使本轮无策略变更（条目人工加过/收权 no-op），
 	// 也必须推进，否则每次启动重复跑迁移且版本永久卡死（v0.12.15 复核
 	// §八.1-B 场景 C 的另一半根因）
 	return true, nil
+}
+
+// seedVersionNum 当前种子版本的整数形态（迁移用；版本号单调递增）。
+func seedVersionNum() int {
+	n, err := strconv.Atoi(policySeedVersion)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // deNarrowPolicies 版本收权（v25 起）：数值比较防字典序漏版（"9" > "25"）；

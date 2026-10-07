@@ -1,0 +1,243 @@
+// enforcer_seed_versions.go 每条默认策略的引入种子版本。
+//
+// 数据来源：git 考古——对历次 policySeedVersion bump（v3 c1c64ed ~ v27
+// 7fb82a8 共 25 个提交）时点的 defaultPolicies 做逐版本集合 diff，条目
+// 首次进入默认矩阵的版本即其引入版本（含矩阵重排：旧形态条目移出后，
+// 现形态条目按进入时点计——对旧库而言现形态即「升级应得的新面」）。
+//
+// 用途：migrateSeedVersion 的精确 delta 补种——只补「引入版本 > 库版本」
+// 的条目。这取代了历史上按版本触发的 entryLevelSeed 角色级全量补齐
+// （该语义会把管理员人为删除的默认权限在升级后静默恢复——v0.12.16
+// 独立复核 R1 定 P1；v0.12.17 独立复核确认 seed 3~23 历史分支同样复活）。
+//
+// 完备性锁定：TestPolicyVersionTableConsistency 断言本表与 defaultPolicies
+// 逐条互为充要——新增默认策略必须同步标注引入版本，否则测试红。
+package rbac
+
+// policyKey casbin 策略三元组（sub/obj/act）。
+type policyKey = [3]string
+
+// policyIntroducedAt 默认策略条目 → 引入种子版本。
+var policyIntroducedAt = map[policyKey]int{
+	// v2 引入
+	{"dev", "/alerts", "GET"}:              2,
+	{"dev", "/alerts/*", "GET"}:            2,
+	{"dev", "/services", "GET"}:            2,
+	{"dev", "/services/*", "GET"}:          2,
+	{"guest", "/services", "GET"}:          2,
+	{"guest", "/services/*", "GET"}:        2,
+	{"ops", "/alerts", "GET"}:              2,
+	{"ops", "/alerts/*", "GET|PUT"}:        2,
+	{"ops", "/config/*", "GET|PUT"}:        2,
+	{"ops", "/services", "GET|POST|PUT"}:   2,
+	{"ops", "/services/*", "GET|POST|PUT"}: 2,
+	// v3 引入
+	{"admin", "/im-configs", "GET"}:            3,
+	{"admin", "/im-configs/*", "GET|PUT|POST"}: 3,
+	{"admin", "/roles", "GET"}:                 3,
+	{"admin", "/roles/*", "GET|PUT"}:           3,
+	{"admin", "/settings/*", "GET|PUT"}:        3,
+	{"admin", "/users", "GET|POST"}:            3,
+	{"admin", "/users/*", "GET|PUT"}:           3,
+	// v4 引入
+	{"admin", "/auth/tickets", "POST"}:                 4,
+	{"admin", "/server-compose", "POST"}:               4,
+	{"admin", "/server-compose/*", "GET|PUT"}:          4,
+	{"admin", "/server-compose/*", "POST"}:             4,
+	{"admin", "/server-container-stats", "GET"}:        4,
+	{"admin", "/server-container-stats/*", "GET"}:      4,
+	{"admin", "/server-containers", "GET|POST"}:        4,
+	{"admin", "/server-containers/*", "GET|POST"}:      4,
+	{"admin", "/server-env", "GET"}:                    4,
+	{"admin", "/server-env-guide", "GET"}:              4,
+	{"admin", "/server-env-guide/*", "GET"}:            4,
+	{"admin", "/server-env/*", "GET"}:                  4,
+	{"admin", "/server-events/*", "GET"}:               4,
+	{"admin", "/server-groups", "GET|POST|PUT|DELETE"}: 4,
+	{"admin", "/server-groups/*", "GET|PUT|DELETE"}:    4,
+	{"admin", "/server-metrics", "GET"}:                4,
+	{"admin", "/server-metrics/*", "GET"}:              4,
+	{"admin", "/servers", "GET|POST|PUT|DELETE"}:       4,
+	{"admin", "/servers/*", "GET|PUT|DELETE|POST"}:     4,
+	{"admin", "/servers/*/terminal", "GET"}:            4,
+	{"dev", "/auth/tickets", "POST"}:                   4,
+	{"dev", "/server-container-stats", "GET"}:          4,
+	{"dev", "/server-container-stats/*", "GET"}:        4,
+	{"dev", "/server-containers", "GET"}:               4,
+	{"dev", "/server-containers/*", "GET"}:             4,
+	{"dev", "/server-env", "GET"}:                      4,
+	{"dev", "/server-env/*", "GET"}:                    4,
+	{"dev", "/server-events/*", "GET"}:                 4,
+	{"dev", "/server-groups", "GET"}:                   4,
+	{"dev", "/server-metrics", "GET"}:                  4,
+	{"dev", "/server-metrics/*", "GET"}:                4,
+	{"dev", "/servers", "GET"}:                         4,
+	{"dev", "/servers/*", "GET"}:                       4,
+	{"ops", "/auth/tickets", "POST"}:                   4,
+	{"ops", "/server-compose", "POST"}:                 4,
+	{"ops", "/server-compose/*", "GET|PUT"}:            4,
+	{"ops", "/server-compose/*", "POST"}:               4,
+	{"ops", "/server-container-stats", "GET"}:          4,
+	{"ops", "/server-container-stats/*", "GET"}:        4,
+	{"ops", "/server-containers", "GET|POST"}:          4,
+	{"ops", "/server-containers/*", "GET|POST"}:        4,
+	{"ops", "/server-env", "GET"}:                      4,
+	{"ops", "/server-env-guide", "GET"}:                4,
+	{"ops", "/server-env-guide/*", "GET"}:              4,
+	{"ops", "/server-env/*", "GET"}:                    4,
+	{"ops", "/server-events/*", "GET"}:                 4,
+	{"ops", "/server-groups", "GET|POST|PUT|DELETE"}:   4,
+	{"ops", "/server-groups/*", "GET|PUT|DELETE"}:      4,
+	{"ops", "/server-metrics", "GET"}:                  4,
+	{"ops", "/server-metrics/*", "GET"}:                4,
+	{"ops", "/servers", "GET|POST|PUT|DELETE"}:         4,
+	{"ops", "/servers/*", "GET|PUT|DELETE|POST"}:       4,
+	// v5 引入
+	{"admin", "/notify-groups", "GET|POST|PUT|DELETE"}:   5,
+	{"admin", "/notify-groups/*", "GET|PUT|DELETE|POST"}: 5,
+	{"admin", "/notify-settings", "GET|PUT"}:             5,
+	{"admin", "/notify-settings/*", "GET|PUT"}:           5,
+	{"admin", "/projects", "GET|POST|PUT|DELETE"}:        5,
+	{"admin", "/projects/*", "GET|PUT|DELETE"}:           5,
+	{"dev", "/projects", "GET"}:                          5,
+	{"dev", "/projects/*", "GET"}:                        5,
+	{"ops", "/projects", "GET"}:                          5,
+	{"ops", "/projects/*", "GET"}:                        5,
+	// v6 引入
+	{"admin", "/builds", "GET"}:                            6,
+	{"admin", "/canary-policies", "GET|POST|PUT|DELETE"}:   6,
+	{"admin", "/canary-policies/*", "GET|POST|PUT|DELETE"}: 6,
+	{"admin", "/ci", "GET|PUT"}:                            6,
+	{"admin", "/ci/*", "GET|PUT"}:                          6,
+	{"admin", "/registries", "GET|POST|PUT|DELETE"}:        6,
+	{"admin", "/registries/*", "GET|PUT|DELETE"}:           6,
+	{"admin", "/releases", "GET|POST"}:                     6,
+	{"admin", "/releases/*", "POST"}:                       6,
+	{"admin", "/slots", "GET|POST"}:                        6,
+	{"admin", "/slots/*", "GET|POST"}:                      6,
+	{"dev", "/builds", "GET"}:                              6,
+	{"dev", "/cron-jobs", "GET"}:                           6,
+	{"dev", "/cron-runs", "GET"}:                           6,
+	{"dev", "/cron-scripts", "GET"}:                        6,
+	{"dev", "/project-branches", "GET"}:                    6,
+	{"dev", "/project-branches/*", "GET"}:                  6,
+	{"dev", "/releases", "GET"}:                            6,
+	{"dev", "/slots", "GET|POST"}:                          6,
+	{"dev", "/slots/*", "GET|POST"}:                        6,
+	{"ops", "/builds", "GET"}:                              6,
+	{"ops", "/canary-policies", "GET|POST|PUT|DELETE"}:     6,
+	{"ops", "/canary-policies/*", "GET|POST|PUT|DELETE"}:   6,
+	{"ops", "/cron-jobs", "GET"}:                           6,
+	{"ops", "/cron-runs", "GET"}:                           6,
+	{"ops", "/cron-scripts", "GET"}:                        6,
+	{"ops", "/project-branches", "GET"}:                    6,
+	{"ops", "/project-branches/*", "GET"}:                  6,
+	{"ops", "/releases", "GET"}:                            6,
+	{"ops", "/slots", "GET|POST"}:                          6,
+	{"ops", "/slots/*", "GET|POST"}:                        6,
+	// v7 引入
+	{"admin", "/cron-jobs", "GET|POST|PUT|DELETE"}:    7,
+	{"admin", "/cron-jobs/*", "GET|POST|PUT|DELETE"}:  7,
+	{"admin", "/cron-scripts", "GET|POST|PUT|DELETE"}: 7,
+	{"admin", "/cron-scripts/*", "GET|PUT|DELETE"}:    7,
+	{"admin", "/observ", "GET|POST|PUT"}:              7,
+	{"admin", "/observ/*", "GET|POST|PUT"}:            7,
+	{"admin", "/server-files", "GET|POST"}:            7,
+	{"admin", "/server-files/*", "GET|POST"}:          7,
+	{"dev", "/observ", "GET"}:                         7,
+	{"dev", "/observ/*", "GET"}:                       7,
+	{"dev", "/server-files", "GET"}:                   7,
+	{"dev", "/server-files/*", "GET"}:                 7,
+	{"ops", "/observ", "GET|POST|PUT"}:                7,
+	{"ops", "/observ/*", "GET|POST|PUT"}:              7,
+	{"ops", "/server-files", "GET|POST"}:              7,
+	{"ops", "/server-files/*", "GET|POST"}:            7,
+	// v8 引入
+	{"admin", "/notify-rules", "GET|POST|PUT|DELETE"}:   8,
+	{"admin", "/notify-rules/*", "GET|PUT|DELETE|POST"}: 8,
+	// v9 引入
+	{"admin", "/backup-jobs", "GET|POST|PUT|DELETE"}:   9,
+	{"admin", "/backup-jobs/*", "GET|PUT|DELETE|POST"}: 9,
+	{"ops", "/backup-jobs", "GET"}:                     9,
+	{"ops", "/backup-jobs/*", "GET|POST"}:              9,
+	// v10 引入
+	{"admin", "/observ/alerts", "GET|POST|PUT|DELETE"}:   10,
+	{"admin", "/observ/alerts/*", "GET|PUT|DELETE|POST"}: 10,
+	{"admin", "/observ/o2-settings", "GET|PUT"}:          10,
+	{"ops", "/observ/alerts", "GET|POST|PUT|DELETE"}:     10,
+	{"ops", "/observ/alerts/*", "GET|PUT|DELETE|POST"}:   10,
+	{"ops", "/observ/o2-settings", "GET|PUT"}:            10,
+	// v11 引入
+	{"admin", "/config-files", "GET|POST|PUT|DELETE"}:   11,
+	{"admin", "/config-files/*", "GET|PUT|DELETE|POST"}: 11,
+	{"dev", "/config-files", "GET"}:                     11,
+	{"dev", "/config-files/*", "GET"}:                   11,
+	{"ops", "/config-files", "GET|POST|PUT|DELETE"}:     11,
+	{"ops", "/config-files/*", "GET|PUT|DELETE|POST"}:   11,
+	// v12 引入
+	{"admin", "/certs", "GET|POST|PUT|DELETE"}:   12,
+	{"admin", "/certs/*", "GET|PUT|DELETE|POST"}: 12,
+	{"ops", "/certs", "GET|POST|PUT|DELETE"}:     12,
+	{"ops", "/certs/*", "GET|PUT|DELETE|POST"}:   12,
+	// v13 引入
+	{"admin", "/ai", "GET|PUT|POST"}: 13,
+	// v14 引入
+	{"admin", "/observ/alert-templates", "GET|POST|PUT|DELETE"}:   14,
+	{"admin", "/observ/alert-templates/*", "GET|PUT|DELETE|POST"}: 14,
+	{"dev", "/observ/alert-templates", "GET"}:                     14,
+	{"dev", "/observ/alert-templates/*", "GET|POST"}:              14,
+	{"dev", "/observ/alerts", "GET|POST"}:                         14,
+	{"ops", "/observ/alert-templates", "GET"}:                     14,
+	{"ops", "/observ/alert-templates/*", "GET|POST"}:              14,
+	// v15 引入
+	{"admin", "/mcp/tokens", "GET|POST"}:         15,
+	{"admin", "/mcp/tokens/*", "POST"}:           15,
+	{"dev", "/ai/chat", "GET|POST"}:              15,
+	{"dev", "/ai/chat/*", "GET|POST|PUT|DELETE"}: 15,
+	// v16 引入
+	{"admin", "/ai/*", "GET|PUT|POST|DELETE"}: 16,
+	{"dev", "/ai/skills", "GET"}:              16,
+	// v17 引入
+	{"admin", "/config-pull-tokens", "GET|POST|PUT"}: 17,
+	{"admin", "/config-pull-tokens/*", "PUT"}:        17,
+	// v19 引入
+	{"admin", "/config-kv", "GET|POST|PUT"}:       19,
+	{"admin", "/config-kv/*", "GET|POST|PUT"}:     19,
+	{"admin", "/rbac/terminal-acls", "GET|PUT"}:   19,
+	{"admin", "/rbac/terminal-acls/*", "GET|PUT"}: 19,
+	{"admin", "/server-terminals", "GET"}:         19,
+	{"admin", "/server-terminals/*", "GET"}:       19,
+	{"ops", "/config-kv", "GET|POST|PUT"}:         19,
+	{"ops", "/config-kv/*", "GET|POST|PUT"}:       19,
+	// v20 引入
+	{"admin", "/roles", "POST"}:        20,
+	{"admin", "/roles/*", "DELETE"}:    20,
+	{"admin", "/roles/actions", "GET"}: 20,
+	// v21 引入
+	{"admin", "/notify-business-tokens", "GET|POST"}: 21,
+	{"admin", "/notify-business-tokens/*", "PUT"}:    21,
+	// v22 引入
+	{"admin", "/ai/assist", "POST"}: 22,
+	{"dev", "/ai/assist", "POST"}:   22,
+	{"ops", "/ai/assist", "POST"}:   22,
+	// v23 引入
+	{"admin", "/k3s-clusters", "GET|POST|DELETE"}: 23,
+	{"admin", "/k3s-clusters/*", "PUT|POST"}:      23,
+	// v24 引入
+	{"admin", "/notify/records", "GET"}:           24,
+	{"admin", "/observ/alert-events", "GET|POST"}: 24,
+	{"dev", "/observ/alert-events", "GET"}:        24,
+	{"ops", "/observ/alert-events", "GET|POST"}:   24,
+	// v25 引入
+	{"dev", "/observ/alerts/*", "GET|POST"}: 25,
+	// v26 引入
+	{"guest", "/slots", "GET"}:   26,
+	{"guest", "/slots/*", "GET"}: 26,
+	// v27 引入
+	{"admin", "/home/readiness", "GET"}: 27,
+	{"admin", "/home/summary", "GET"}:   27,
+	{"dev", "/home/readiness", "GET"}:   27,
+	{"dev", "/home/summary", "GET"}:     27,
+	{"ops", "/home/readiness", "GET"}:   27,
+	{"ops", "/home/summary", "GET"}:     27,
+}
