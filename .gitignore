@@ -19,4 +19,6 @@ frontend**/.vite/
 .env.local
 deploy/.env
 .vscode
-.idea
+.ideae2e-server
+.idea/
+test-results/

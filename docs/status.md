@@ -19,7 +19,7 @@ k3s 载体全链路（真机 spike 通过，生产双轨并行中）、AI functi
 
 - 单实例假设（调度 / 限速 / 互斥均为进程内），多实例需重构
 - 凭据加密为字段级 AAD 绑定：行级互换仍可解、仅对新密文生效、新密文旧二进制解不开（回滚约束，见 SECURITY.md）
-- 前端业务测试仅 3 个文件（utils/composable 层），无 E2E——独立审核 Q1，最大质量短板
+- 前端业务测试 5 个文件（单测 3 + E2E 2 spec/4 条主链路）——Q1 首批落地，发布确认/配置 reveal/角色可见性等链路待补
 
 ## 明确不做
 
@@ -29,7 +29,7 @@ k3s 载体全链路（真机 spike 通过，生产双轨并行中）、AI functi
 
 1. **第 1 批 默认安全**：✅ 已完成（v0.12.4~v0.12.7：HTTP 超时 / body 上限 / 500 脱敏 / AgileConfig TLS / 安全响应头 / 限速清扫 / 通知有界投递 / 主密钥策略统一）；供应链扫描（govulncheck 已在 CI；npm audit 受 npmmirror 限制待换官方源）
 2. **第 2 批 核心体验（✅ 全部完成）**：首页运维态势化（✅ v0.12.8：五状态卡 + 待处理告警 + 最近发布）、系统就绪度（✅ v0.12.10：/home/readiness 七项检查 + 首页常驻可折叠面板）、管理后台四域分组（✅ v0.12.7 首步：分组锚点 + tab 深链）、项目详情聚合（✅ v0.12.11：/projects/:id 三环境卡片 + 环境深链）
-3. **第 3 批 可维护性**：大文件拆分（app.go / configs/files.vue 等）、Playwright 主链路 E2E、Monaco 裁剪与 bundle 预算、provider 扩展契约文档
+3. **第 3 批 可维护性**：Playwright 主链路 E2E（✅ v0.12.13 首批 4 条 + CI job，登录/态势/就绪度/导航/项目页）、大文件拆分（app.go / configs/files.vue 等）、Playwright 主链路 E2E、Monaco 裁剪与 bundle 预算、provider 扩展契约文档
 
 ## 兼容矩阵
 

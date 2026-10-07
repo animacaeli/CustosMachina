@@ -93,6 +93,52 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
 
+  e2e:
+    name: 主链路 E2E（Playwright）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend/apps/web-antd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      - name: 构建后端 E2E 二进制
+        run: go build -o e2e-server ./cmd/server
+        working-directory: backend
+
+      - name: 安装 Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: 运行 E2E
+        run: npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/apps/web-antd/test-results
+          retention-days: 7
+
   codeql:
     name: CodeQL 安全扫描
     runs-on: ubuntu-latest

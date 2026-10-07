@@ -58,5 +58,8 @@
     "vue": "catalog:",
     "vue-router": "catalog:",
     "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:"
   }
 }

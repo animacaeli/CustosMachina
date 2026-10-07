@@ -56,6 +56,7 @@ catalog:
   '@jspm/generator': ^2.16.3
   '@lucide/vue': ^1.34.0
   '@manypkg/get-packages': ^3.1.0
+  '@playwright/test': ^1.63.0
   '@pnpm/workspace.read-manifest': ^1000.3.1
   '@stylistic/stylelint-plugin': ^5.2.1
   '@tailwindcss/typography': ^0.5.20
