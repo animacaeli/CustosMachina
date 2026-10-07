@@ -30,10 +30,25 @@ verifyDepsBeforeRun: false
 minimumReleaseAge: 0
 
 overrides:
+  # --- 供应链钉版（v0.12.15 独立审核 N1）：官方 registry audit 的
+  # critical/high 传递依赖钉到修复版；例外与依据见 pnpm-audit-allowlist.json ---
   '@ast-grep/napi': 'catalog:'
   '@ctrl/tinycolor': 'catalog:'
+  brace-expansion@2: ^2.1.7
   clsx: 'catalog:'
+  dompurify: ^3.4.16
+  fast-uri: ^3.1.8
+  glob@10: ^10.5.0
+  js-yaml@4: ^4.3.2
   pinia: 'catalog:'
+  postcss-selector-parser: ^7.1.6
+  prosemirror-view: ^1.42.3
+  qs: ^6.16.0
+  seroval: ^1.6.3
+  source-map-js: ^1.2.2
+  svgo@<5: ^4.1.0
+  tinypool: ^2.1.2
+  undici@<8: ^7.29.1
   vue: 'catalog:'
 
 catalog:
@@ -64,18 +79,18 @@ catalog:
   '@tanstack/store': ^0.11.0
   '@tanstack/vue-form': ^1.33.2
   '@tanstack/vue-store': ^0.11.0
-  '@tiptap/core': ^3.30.3
-  '@tiptap/extension-document': ^3.30.3
-  '@tiptap/extension-highlight': ^3.30.3
-  '@tiptap/extension-image': ^3.30.3
-  '@tiptap/extension-link': ^3.30.3
-  '@tiptap/extension-placeholder': ^3.30.3
-  '@tiptap/extension-text-align': ^3.30.3
-  '@tiptap/extension-text-style': ^3.30.3
-  '@tiptap/extension-underline': ^3.30.3
-  '@tiptap/pm': ^3.30.3
-  '@tiptap/starter-kit': ^3.30.3
-  '@tiptap/vue-3': ^3.30.3
+  '@tiptap/core': ^3.30.5
+  '@tiptap/extension-document': ^3.30.5
+  '@tiptap/extension-highlight': ^3.30.5
+  '@tiptap/extension-image': ^3.30.5
+  '@tiptap/extension-link': ^3.30.5
+  '@tiptap/extension-placeholder': ^3.30.5
+  '@tiptap/extension-text-align': ^3.30.5
+  '@tiptap/extension-text-style': ^3.30.5
+  '@tiptap/extension-underline': ^3.30.5
+  '@tiptap/pm': ^3.30.5
+  '@tiptap/starter-kit': ^3.30.5
+  '@tiptap/vue-3': ^3.30.5
   '@tsdown/css': ^0.22.14
   '@types/archiver': ^8.0.0
   '@types/html-minifier-terser': ^7.0.2
@@ -100,7 +115,7 @@ catalog:
   ant-design-vue: ^4.2.6
   archiver: ^8.0.0
   asciinema-player: ^3.17.0
-  axios: ^1.18.1
+  axios: ^1.20.0
   axios-mock-adapter: ^2.1.0
   cac: ^7.0.0
   chalk: ^5.6.2
@@ -116,7 +131,7 @@ catalog:
   czg: ^1.14.0
   dayjs: ^1.11.21
   defu: ^6.1.7
-  dompurify: ^3
+  dompurify: ^3.4.16
   dotenv: ^17.4.2
   echarts: ^6.1.0
   es-toolkit: ^1.51.0
@@ -193,7 +208,7 @@ catalog:
   vite-plugin-pwa: ^1.3.0
   vite-plugin-vue-devtools: ^8.1.5
   vitest: ^4.1.11
-  vue: 3.5.41
+  vue: 3.5.42
   vue-eslint-parser: ^10.4.1
   vue-i18n: ^11.4.10
   vue-json-pretty: ^2.6.0

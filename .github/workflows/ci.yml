@@ -78,6 +78,9 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      - name: 供应链审计（官方 registry，critical/high 门禁）
+        run: node scripts/pnpm-audit-gate.mjs
+
       - name: Lint
         run: pnpm lint
 
@@ -92,6 +95,9 @@ jobs:
         run: pnpm build:antd
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+
+      - name: 体积预算门禁（gzip 总量 + worker 禁入清单）
+        run: node scripts/check-bundle-size.mjs
 
   e2e:
     name: 主链路 E2E（Playwright）

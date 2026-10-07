@@ -1,0 +1,18 @@
+{
+  "allowlist": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "module": "braces",
+      "severity": "high",
+      "reason": "修复版未发布（registry 最新 3.0.3 < 3.0.4）；仅 lint 工具链（stylelint>fast-glob），不进浏览器产物",
+      "expires": "2027-01-07"
+    },
+    {
+      "id": "GHSA-86w9-cpqp-85rv",
+      "module": "node-forge",
+      "severity": "high",
+      "reason": "修复版未发布（registry 最新 1.4.0 < 1.4.1）；仅 dev server 链（vite-config>nitropack>listhen），不进浏览器产物",
+      "expires": "2027-01-07"
+    }
+  ]
+}

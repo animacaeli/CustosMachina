@@ -19,6 +19,8 @@ frontend**/.vite/
 .env.local
 deploy/.env
 .vscode
-.ideae2e-server
 .idea/
 test-results/
+
+# --- e2e 本地构建产物（Playwright webServer 的后端二进制，~100MB） ---
+frontend/apps/web-antd/e2e-server
