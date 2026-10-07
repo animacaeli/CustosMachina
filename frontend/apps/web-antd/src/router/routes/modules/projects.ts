@@ -15,6 +15,17 @@ const routes: RouteRecordRaw[] = [
     path: '/projects',
     children: [
       {
+        name: 'ProjectDetail',
+        path: ':id',
+        component: () => import('#/views/projects/detail.vue'),
+        meta: {
+          hideInMenu: true,
+          icon: 'lucide:folder-kanban',
+          authority: ['superadmin', 'admin', 'ops', 'dev'],
+          title: '项目详情',
+        },
+      },
+      {
         name: 'ProjectsList',
         path: '',
         component: () => import('#/views/projects/index.vue'),
