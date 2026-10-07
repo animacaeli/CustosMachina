@@ -1,5 +1,6 @@
 <script lang="ts" setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 
 import AiConfig from './tabs/ai-config.vue';
 import AiSkills from './tabs/ai-skills.vue';
@@ -15,7 +16,64 @@ import Session from './tabs/session.vue';
 
 defineOptions({ name: 'AdminConsole' });
 
-const activeTab = ref('im');
+// 四域分组（独立审核 U1）：11 个平铺 tab 收敛为二级导航，URL 带 section 可深链
+const SECTIONS = [
+  {
+    key: 'identity',
+    label: '身份与安全',
+    tabs: [
+      { key: 'im', label: '登录配置' },
+      { key: 'session', label: '会话设置' },
+    ],
+  },
+  {
+    key: 'notify',
+    label: '通知与告警',
+    tabs: [
+      { key: 'notify', label: '通知群聊' },
+      { key: 'notify-routes', label: '通知路由' },
+      { key: 'alert-templates', label: '告警模板' },
+    ],
+  },
+  {
+    key: 'delivery',
+    label: '交付与基础设施',
+    tabs: [
+      { key: 'ci', label: 'CI / 镜像仓库' },
+      { key: 'k3s', label: 'k3s 集群' },
+      { key: 'pull-tokens', label: '配置拉取' },
+    ],
+  },
+  {
+    key: 'ai',
+    label: 'AI',
+    tabs: [
+      { key: 'ai', label: '中转层' },
+      { key: 'skills', label: '技能' },
+      { key: 'mcp', label: 'MCP 接入' },
+    ],
+  },
+] as const;
+
+const allTabs = computed(() => SECTIONS.flatMap((sec) => sec.tabs));
+const activeTab = ref<string>(initTab());
+
+const route = useRoute();
+const router = useRouter();
+
+function initTab(): string {
+  const q = route.query.tab;
+  if (typeof q === 'string' && allTabs.value.some((t) => t.key === q)) {
+    return q;
+  }
+  return 'im';
+}
+
+// 切 tab 同步 URL（深链/刷新保持位置）
+function onTabChange(key: number | string) {
+  activeTab.value = String(key);
+  router.replace({ query: { ...route.query, tab: String(key) } });
+}
 </script>
 
 <template>
@@ -27,7 +85,7 @@ const activeTab = ref('im');
           平台级配置（登录 / 通知 / AI / CI / 集群与各类接入凭证）
         </span>
       </template>
-      <a-tabs v-model:active-key="activeTab">
+      <a-tabs v-model:active-key="activeTab" @change="onTabChange">
         <a-tab-pane key="im" tab="登录配置">
           <ImConfig />
         </a-tab-pane>
@@ -62,6 +120,19 @@ const activeTab = ref('im');
           <CiConfig />
         </a-tab-pane>
       </a-tabs>
+      <div
+        class="border-t border-border mt-2 pt-2 flex flex-wrap gap-2 text-xs"
+      >
+        <span class="text-muted-foreground">分组：</span>
+        <a
+          v-for="sec in SECTIONS"
+          :key="sec.key"
+          class="cursor-pointer"
+          @click="onTabChange(sec.tabs[0].key)"
+        >
+          {{ sec.label }}（{{ sec.tabs.length }}）
+        </a>
+      </div>
     </a-card>
   </div>
 </template>
