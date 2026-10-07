@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -42,9 +45,12 @@ type Service struct {
 	stopSweeper func()
 
 	// 业务告警有界投递（独立审核 T7）：固定 worker + 满载拒绝——
-	// 每请求裸 go 在突发告警时会放大下游阻塞且停机时不可控
-	bizCh  chan bizEvent
-	bizCap int
+	// 每请求裸 go 在突发告警时会放大下游阻塞且停机时不可控。
+	// 停机语义（独立审核 N4）：拒绝新入队 → 关队列 → 限时等在途投递排空
+	bizCh    chan bizEvent
+	stopOnce sync.Once
+	bizWG    sync.WaitGroup
+	stopping atomic.Bool
 }
 
 type bizEvent struct {
@@ -54,6 +60,9 @@ type bizEvent struct {
 const (
 	bizWorkers = 4
 	bizQueue   = 256
+	// bizDrainTimeout 停机排空上限：正常 webhook 投递秒级，5s 覆盖在途
+	// 任务收尾；超时放弃（进程退出优先，未投递事件已入 notify_records 留痕）
+	bizDrainTimeout = 5 * time.Second
 )
 
 func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
@@ -67,7 +76,9 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 // startBizWorkers 固定 worker 消费投递队列（recover 保护）。
 func (s *Service) startBizWorkers() {
 	for range make([]struct{}, bizWorkers) {
+		s.bizWG.Add(1)
 		jobs.GoSafe("notify:biz-worker", func() {
+			defer s.bizWG.Done()
 			for ev := range s.bizCh {
 				s.NotifyEvent(context.Background(), ev.source, ev.level, ev.dedupKey, ev.title, ev.detail)
 			}
@@ -75,8 +86,11 @@ func (s *Service) startBizWorkers() {
 	}
 }
 
-// EnqueueBusiness 业务告警入队（满载返回 false，调用方回 429）。
+// EnqueueBusiness 业务告警入队（满载或停机中返回 false，调用方回 429）。
 func (s *Service) EnqueueBusiness(level, dedupKey, title, detail string) bool {
+	if s.stopping.Load() {
+		return false
+	}
 	select {
 	case s.bizCh <- bizEvent{source: SourceBusiness, level: level, dedupKey: dedupKey, title: title, detail: detail}:
 		return true
@@ -92,11 +106,26 @@ func NewServiceWithCleanup(db *gorm.DB, cipher *crypto.Cipher) (*Service, func()
 	return s, s.Stop, nil
 }
 
-// Stop 停止聚合清扫 goroutine（进程关停时由 cleanup 链调用）。
+// Stop 停止聚合清扫并排空投递队列（进程关停时由 cleanup 链调用，
+// 先于 DB 关闭——wire cleanup 逆序保证）。
 func (s *Service) Stop() {
-	if s.stopSweeper != nil {
-		s.stopSweeper()
-	}
+	s.stopOnce.Do(func() {
+		s.stopping.Store(true)
+		if s.stopSweeper != nil {
+			s.stopSweeper()
+		}
+		close(s.bizCh) // worker for-range 排空在途事件后退出
+		done := make(chan struct{})
+		go func() {
+			s.bizWG.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(bizDrainTimeout):
+			// 在途投递超时（下游 webhook 挂死）——放弃等待，进程退出
+		}
+	})
 }
 
 // SendRecordPage 投递记录分页（排障用：为什么企微没收到通知）。

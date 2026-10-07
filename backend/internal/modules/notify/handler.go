@@ -82,7 +82,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 
 func (h *Handler) businessAlert(c *gin.Context) {
 	if !h.bizLimiter.Allow(c.ClientIP()) {
-		c.JSON(429, gin.H{"code": 429, "message": "请求过于频繁，请稍后重试"})
+		httpx.Fail(c, http.StatusTooManyRequests, 429, "请求过于频繁，请稍后重试")
 		return
 	}
 	tok := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
@@ -106,7 +106,7 @@ func (h *Handler) businessAlert(c *gin.Context) {
 	// 投递异步化：webhook 投递可达秒级（企微 API 慢），同步会把业务侧响应拖到
 	// 3s+——入口受理即返回，脱离 request ctx 投递（只发消息，无半完成态）
 	if !h.svc.EnqueueBusiness(in.Level, dedupKey, title, detail) {
-		c.JSON(http.StatusTooManyRequests, gin.H{"code": 429, "message": "投递队列已满，请稍后重试"})
+		httpx.Fail(c, http.StatusTooManyRequests, 429, "投递队列已满或正在停机，请稍后重试")
 		return
 	}
 	httpx.OK(c, gin.H{"accepted": true})
