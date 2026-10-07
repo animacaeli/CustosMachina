@@ -1,24 +1,7 @@
-import type { Page } from '@playwright/test';
-
 import { expect, test } from '@playwright/test';
 
 import { ensureAdmin, login } from './auth';
-
-/** 项目链路：创建→表格行出现（详情/发布交互依赖嵌套 tab 布局，交互留人工验收） */
-async function createProject(page: Page, name: string) {
-  await page.goto('/envs/prod');
-  await page.getByRole('button', { name: '新增项目' }).click();
-  await page.getByPlaceholder('如 custos-machina').fill(name);
-  await page
-    .getByPlaceholder('https://gitea.internal/org/repo')
-    .fill('https://gitea.example.com/org/demo.git');
-  await page.getByPlaceholder('org/repo').nth(1).fill('org/demo');
-  await page.locator('.ant-modal-footer .ant-btn-primary').click();
-  await expect(page.getByText('创建成功').first()).toBeVisible({
-    timeout: 10_000,
-  });
-  await page.waitForSelector('.ant-modal', { state: 'hidden', timeout: 5000 });
-}
+import { createProject } from './helpers';
 
 test.beforeAll(async () => {
   await ensureAdmin();
@@ -40,13 +23,22 @@ test('项目创建成功且表格行含名称/仓库路径（v0.12.2 回归）',
   await expect(page.getByText('org/demo').first()).toBeVisible();
 });
 
-test('正式环境发布按钮为 danger（v0.12.1 确认层级回归——按钮存在性）', async ({
+test('发布走确认抽屉：点击打开发布面板、取消不发布（v0.12.14 加深——原用例名不符实）', async ({
   page,
 }) => {
   const name = `e2e-rel-${Date.now()}`;
   await createProject(page, name);
-  // 环境操作列应有"发布"按钮（primary/danger）——仅验证可达
-  await expect(
-    page.getByRole('button', { name: /发\s*布/ }).first(),
-  ).toBeVisible({ timeout: 5000 });
+  // 发布按钮（primary）点击 → 发布抽屉（确认层级：发布必须经抽屉确认，v0.12.1）。
+  // force：右下角 AI 助手悬浮球盖住最后一行按钮（已知布局，不影响真实用户滚动）
+  await page
+    .getByRole('button', { name: /发\s*布/ })
+    .first()
+    .click({
+      force: true,
+    });
+  const drawer = page.locator('.ant-drawer-content');
+  await expect(drawer).toBeVisible({ timeout: 5000 });
+  // 关闭抽屉 = 取消，不产生发布动作
+  await page.locator('.ant-drawer-close').first().click();
+  await expect(drawer).toBeHidden({ timeout: 5000 });
 });

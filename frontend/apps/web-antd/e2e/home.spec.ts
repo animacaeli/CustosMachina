@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { ensureAdmin, login } from './auth';
+import { ensureAdmin, ensureOpsUser, login, loginAs } from './auth';
 
 test.beforeAll(async () => {
   await ensureAdmin();
@@ -35,4 +35,20 @@ test('就绪度面板默认展开且检查项可见（超管+缺失项语义）'
   });
   await expect(page.getByText('主机 / 集群').first()).toBeVisible();
   await expect(page.getByText(/项必配/).first()).toBeVisible();
+});
+
+test('ops 角色首页态势/就绪度可读（复核 §7.1 回归：种子 v27——非超管 403）', async ({
+  page,
+}) => {
+  const uid = await ensureOpsUser();
+  await loginAs(page, uid, 'E2E Ops');
+  // 直击裁决链：summary/readiness 必须回 200（回归时非超管全 403，
+  // 此前 E2E 仅超管登录恰好绕过——所有现存门禁都覆盖不到）
+  const resp = page.waitForResponse((r) =>
+    r.url().includes('/api/home/summary'),
+  );
+  await page.goto('/home');
+  const summary = await resp;
+  expect(summary.status()).toBe(200);
+  await expect(page.getByText('运维态势')).toBeVisible();
 });

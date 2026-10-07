@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { ensureAdmin, login } from './auth';
+import { createProject } from './helpers';
 
 test.beforeAll(async () => {
   await ensureAdmin();
@@ -23,7 +24,17 @@ test('管理后台四域导航与域内 tab（v0.12.9 回归）', async ({ page 
   await expect(page.getByText('通知群聊').first()).toBeVisible();
 });
 
-test('项目总览页加载（v0.12.1/v0.12.11 回归）', async ({ page }) => {
+test('项目总览 → 详情页三环境聚合深链（v0.12.11 回归，v0.12.14 加深）', async ({
+  page,
+}) => {
+  const name = `e2e-detail-${Date.now()}`;
+  await createProject(page, name);
   await page.goto('/projects');
-  await expect(page.getByText('项目总览').first()).toBeVisible();
+  // 项目名是行内链接 → /projects/:id 详情页（v0.12.11 卖点，此前无 E2E 覆盖）
+  await page.getByRole('link', { name }).first().click();
+  await expect(page).toHaveURL(/\/projects\/\d+/, { timeout: 10_000 });
+  // 三环境聚合卡片 + 环境深链入口
+  await expect(page.getByText(/进入.*环境/).first()).toBeVisible({
+    timeout: 10_000,
+  });
 });
