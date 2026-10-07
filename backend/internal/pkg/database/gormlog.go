@@ -39,16 +39,31 @@ func (gormLogger) Trace(_ context.Context, begin time.Time, fc func() (string, i
 	routeSQLLog(err, time.Since(begin), rows, sql)
 }
 
-// routeSQLLog 按结果分级（纯函数便于测试）：错误→Error、慢查询→Warn、
-// 其余→Info。record not found 是正常业务分支，降为 Info。
-func routeSQLLog(err error, elapsed time.Duration, rows int64, sql string) {
-	ms := float64(elapsed.Microseconds()) / 1000
+// routeSQLLog 按结果分级：错误→Error、慢查询→Warn、其余→Info。
+// record not found 是正常业务分支，降为 Debug。分级判定收敛在
+// sqlLogLevel（纯函数），测试直接绑实现断言（v0.12.4 复核：测试内
+// 复刻闭包是弱断言——实现改了测试照样绿）。
+func sqlLogLevel(err error, elapsed time.Duration) string {
 	switch {
 	case err != nil && !errors.Is(err, logger.ErrRecordNotFound):
-		applog.Errorf("[gorm] SQL 失败: %v | %.1fms | rows=%d | %s", err, ms, rows, sql)
+		return "error"
 	case err != nil: // ErrRecordNotFound：业务分支
-		applog.Debugf("[gorm] miss | %.1fms | %s", ms, sql)
+		return "miss"
 	case elapsed > slowSQLMs*time.Millisecond:
+		return "warn"
+	default:
+		return "info"
+	}
+}
+
+func routeSQLLog(err error, elapsed time.Duration, rows int64, sql string) {
+	ms := float64(elapsed.Microseconds()) / 1000
+	switch sqlLogLevel(err, elapsed) {
+	case "error":
+		applog.Errorf("[gorm] SQL 失败: %v | %.1fms | rows=%d | %s", err, ms, rows, sql)
+	case "miss":
+		applog.Debugf("[gorm] miss | %.1fms | %s", ms, sql)
+	case "warn":
 		applog.Warnf("[gorm] slow %.1fms | rows=%d | %s", ms, rows, sql)
 	default:
 		applog.Infof("[gorm] %.1fms | rows=%d | %s", ms, rows, sql)

@@ -8,8 +8,10 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// routeSQLLog 是分级路由的纯函数——此处测「分类正确」；级别到 zap 的落点
-// 由 gormLogger.Trace 直接调用 applog.* 保证（编译期绑定，无字符串嗅探）。
+// routeSQLLog 的分级判定收敛在 sqlLogLevel（实现侧纯函数）——测试直接
+// 绑实现断言（v0.12.4 复核：测试内复刻闭包是弱断言——实现改了测试
+// 照样绿）；级别到 zap 的落点由 routeSQLLog 直接调用 applog.* 保证
+// （编译期绑定，无字符串嗅探）。
 // v0.12.3 复核的教训：上一版把分流写在 gorm 永不调用的 Write 方法上。
 func TestRouteSQLLogClassification(t *testing.T) {
 	cases := []struct {
@@ -21,23 +23,12 @@ func TestRouteSQLLogClassification(t *testing.T) {
 		{"真实错误", errors.New("syntax error"), time.Millisecond, "error"},
 		{"record not found", logger.ErrRecordNotFound, time.Millisecond, "miss"},
 		{"慢查询", nil, 250 * time.Millisecond, "warn"},
+		{"慢查询边界（等于阈值不算慢）", nil, 200 * time.Millisecond, "info"},
 		{"正常", nil, time.Millisecond, "info"},
 	}
-	classify := func(err error, el time.Duration) string {
-		switch {
-		case err != nil && !errors.Is(err, logger.ErrRecordNotFound):
-			return "error"
-		case err != nil:
-			return "miss"
-		case el > slowSQLMs*time.Millisecond:
-			return "warn"
-		default:
-			return "info"
-		}
-	}
 	for _, tc := range cases {
-		if got := classify(tc.err, tc.elapsed); got != tc.want {
-			t.Errorf("%s: 分类=%s want %s", tc.name, got, tc.want)
+		if got := sqlLogLevel(tc.err, tc.elapsed); got != tc.want {
+			t.Errorf("%s: sqlLogLevel=%s want %s", tc.name, got, tc.want)
 		}
 	}
 	// routeSQLLog 本身不 panic（各分支真实执行一遍）

@@ -5,30 +5,18 @@ import (
 )
 
 /**
- * CIProvider 契约测试套件（独立审核第 3 批 P4）。
- * 新引擎适配器须通过本套件全部断言——保证 Poller/日志/AI 工具链
- * 对所有引擎的行为一致。用法：在你的 provider_test.go 里调
- * `RunCIProviderContract(t, myProvider, fixture)`。
+ * CIProvider 通用契约套件（独立审核第 3 批 P4；v0.12.15 纠偏——注释与
+ * 签名对齐真实接口：CIProvider 只有 Name/Status/Log，平台只读 CI 状态，
+ * 构建由仓库 webhook 驱动，没有 TriggerBuild/PollStatus）。
+ * 本套件断言 Name 契约（通用可测部分）；Status/Log 的行为契约需要真实
+ * BuildRef 与 fake server，由各引擎自己的测试覆盖（参考 TestJenkinsStatusAndLog、
+ * gitea_test.go、gitee_test.go）——新引擎适配器必须提供同等的 fake-server
+ * 行为测试。用法：provider_test.go 里调 `RunCIProviderContract(t, myProvider)`。
  */
 
-// ContractFixture 契约测试的固定数据（各引擎的模拟环境）。
-type ContractFixture struct {
-	// TriggerBuild 应成功触发的 repoPath/branch/tag
-	RepoPath string
-	Branch   string
-	Tag      string
-	// Verify 的期望结果（true = 凭证可用）
-	VerifyShouldPass bool
-}
-
-// RunCIProviderContract 断言 CIProvider 的行为契约。
-// 契约项：
-//  1. Name() 非空且不含空格（做 webhook 路径段与 DB 枚举值）
-//  2. Verify 返回 nil 或非 nil error（不 panic）
-//  3. TriggerBuild 返回的 BuildRef.ExternalID 非空（Poller 依赖）
-//  4. PollStatus 返回终态或进行中（不返回空字符串状态）
-//  5. Log 返回字符串（可为空——Jenkins 不可达时降级）
-func RunCIProviderContract(t *testing.T, p CIProvider, fx ContractFixture) {
+// RunCIProviderContract 断言 CIProvider 的通用契约：
+//  1. Name() 非空且不含空格/路径分隔符——Name 用作 DB 枚举值与 webhook 路径段
+func RunCIProviderContract(t *testing.T, p CIProvider) {
 	t.Helper()
 
 	t.Run("name", func(t *testing.T) {
@@ -42,16 +30,10 @@ func RunCIProviderContract(t *testing.T, p CIProvider, fx ContractFixture) {
 			}
 		}
 	})
-
-	// Status 与 Log 契约由具体引擎测试跑（需真实 BuildRef——
-	// 本套件验证接口满足 + Name 合法；引擎行为用 fake server 各自测）
-
 }
 
 // 内置 gitea 引擎跑一遍契约（真实环境不可达时 Skip——至少验证套件自身可运行）。
 func TestBuiltinGiteaContract(t *testing.T) {
 	p := newGiteaClient("http://localhost:0", "", "")
-	RunCIProviderContract(t, p, ContractFixture{
-		RepoPath: "org/demo", Branch: "main", Tag: "v0.0.0",
-	})
+	RunCIProviderContract(t, p)
 }
