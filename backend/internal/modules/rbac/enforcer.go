@@ -340,11 +340,14 @@ func EnforceAny(e *casbin.SyncedEnforcer, roles []string, obj, act string) (bool
 	return false, nil
 }
 
-// migrateSeedVersion 种子版本升级迁移。三层语义（v0.12.17 独立复核 R1
-// 根治后）：①精确 delta——只补「引入版本 > 库版本」的默认条目，升级绝不
-// 复活管理员人为删除的权限（取代历史的 entryLevelSeed 角色级全量补齐）；
-// ②角色首种——表中完全无策略的角色整角色种入默认矩阵（首次初始化等价）；
-// ③收权——deNarrowPolicies 按版本收窄（移除旧形态仅当其真实存在）。
+// migrateSeedVersion 种子版本升级迁移。三层语义（v0.12.19 独立复核 R1/R2
+// 补丁后）：①精确 delta——只补「引入版本 > 库版本」的默认条目；其中
+// 替换产生的新形态按替换语义分流（见 policyReplacements），升级绝不
+// 复活管理员人为删除的权限；②替换/废弃——历史宽形态收窄与纯废弃，
+// 旧形态真实存在才替换（防复活），含废弃形态的库升级后不残留旧权限；
+// ③不再有「角色首种」——管理员清空某内置角色全部策略是合法配置
+// （role.vue 支持编辑内置角色矩阵），迁移不得据此恢复默认矩阵（独立
+// 复核 R2：策略数 0 无法区分「从未初始化」与「主动清空」，取不复活）。
 // 非法/缺失的版本值：只补 home 基础面并告警，绝不以「极旧部署」名义
 // 全量恢复权限；高于当前种子的版本（降级二进制）不迁移不降写。
 func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
@@ -368,11 +371,19 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 	}
 
 	// ① 精确 delta：引入版本 > 库版本的条目直达（含 v27 的 home 六条——
-	// admin/ops/dev 在 defaultPolicies 内走本表；自定义角色见下方特例块）
+	// admin/ops/dev 在 defaultPolicies 内走本表；自定义角色见下方特例块）。
+	// 替换产生的新形态分流：库版本早于旧形态引入（从未有过该资源）时按
+	// 普通新资源点补入；库经历过旧形态时代则跳过——由下方替换块按
+	// 「旧形态在才换新」的防复活语义控制（否则 seed 18 库删除过宽形态的
+	// 角色会被新形态变相复活，v0.12.19 独立复核 R1）
 	if knownSeed {
 		for _, p := range defaultPolicies {
-			if policyIntroducedAt[policyKey{p[0], p[1], p[2]}] <= oldN {
+			pk := policyKey{p[0], p[1], p[2]}
+			if policyIntroducedAt[pk] <= oldN {
 				continue // 库版本已知时已有此面或管理员主动删除——不补
+			}
+			if oldVer, replaced := replacementNewKeys[pk]; replaced && oldN >= oldVer {
+				continue // 替换新形态：库经历过旧形态时代——走替换块
 			}
 			if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
 				if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
@@ -399,29 +410,14 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 		}
 	}
 
-	// ② 角色首种：表中完全无策略的角色整角色种入（先收集再种，避免种
-	// 一条后误判"已有策略"）。覆盖 v2「只种首条」bug 残留与从未种过的角色
-	roleNeedsSeed := map[string]bool{}
-	for _, p := range defaultPolicies {
-		if roleNeedsSeed[p[0]] {
-			continue
-		}
-		ps, _ := e.GetFilteredPolicy(0, p[0])
-		roleNeedsSeed[p[0]] = len(ps) == 0
+	// ② 替换/废弃：替换版本晚于库版本的记录逐条执行——旧形态真实存在
+	// 才移除并补新形态（管理员删除过旧形态则新形态不补，不复活）；纯废弃
+	// 只移除旧形态。极旧/非法 seed 传 0（收权方向安全，全部执行）
+	denN := 0
+	if knownSeed {
+		denN = oldN
 	}
-	for _, p := range defaultPolicies {
-		if !roleNeedsSeed[p[0]] {
-			continue
-		}
-		if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
-			if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
-				return false, err
-			}
-		}
-	}
-
-	// ③ 收权（v25/v26，仅当旧条目真实存在才替换——不复活人为删除）
-	deNarrowPolicies(e, oldVersion)
+	applyReplacements(e, denN)
 
 	// 返回 true = 需要推进版本号（调用方据此写回 setting）。走到这里说明
 	// 库版本低于当前种子——即使本轮无策略变更（条目人工加过/收权 no-op），
@@ -439,32 +435,26 @@ func seedVersionNum() int {
 	return n
 }
 
-// deNarrowPolicies 版本收权（v25 起）：数值比较防字典序漏版（"9" > "25"）；
-// 仅当确实移除了旧条目才补新——不复活管理员人为删除的策略。返回是否有变更。
-// 包级函数（非闭包）以便直接单测——空转测试的教训（v0.12.3 复核）。
-func deNarrowPolicies(e *casbin.SyncedEnforcer, oldVersion string) bool {
-	if v, err := strconv.Atoi(oldVersion); err == nil && v >= 26 {
-		return false // 已收过权（版本可解析且不小于 26）；解析失败=极旧部署，照收
-	}
-	replace := func(sub, obj, oldAct, newAct string) bool {
-		removed, _ := e.RemovePolicy(sub, obj, oldAct)
-		if !removed {
-			return false // 旧条目不存在（人为删改或从未有过）——不动
-		}
-		if has, _ := e.HasPolicy(sub, obj, newAct); !has {
-			_, _ = e.AddPolicy(sub, obj, newAct)
-		}
-		return true
-	}
+// applyReplacements 按库版本执行历史形态替换/废弃（包级函数可单测——
+// 空转测试的教训，v0.12.3 复核）。仅当 r.ver > oldN（替换晚于库版本）
+// 才执行；旧形态真实存在才移除并补新——不复活管理员人为删除的策略。
+// 返回是否有变更。
+func applyReplacements(e *casbin.SyncedEnforcer, oldN int) bool {
 	changed := false
-	for _, r := range [][4]string{
-		{"dev", "/observ/alerts/*", "GET|DELETE|POST", "GET|POST"}, // v25
-		{"guest", "/slots", "GET|POST", "GET"},                     // v26
-		{"guest", "/slots/*", "GET|POST", "GET"},                   // v26
-	} {
-		if replace(r[0], r[1], r[2], r[3]) {
-			changed = true
+	for _, r := range policyReplacements {
+		if r.ver <= oldN {
+			continue // 替换不晚于库版本——该库已是新形态（或当年已处理）
 		}
+		removed, _ := e.RemovePolicy(r.old[0], r.old[1], r.old[2])
+		if !removed {
+			continue // 旧形态不存在（人为删改或从未有过）——不动
+		}
+		if r.new != nil {
+			if has, _ := e.HasPolicy(r.new[0], r.new[1], r.new[2]); !has {
+				_, _ = e.AddPolicy(r.new[0], r.new[1], r.new[2])
+			}
+		}
+		changed = true
 	}
 	return changed
 }

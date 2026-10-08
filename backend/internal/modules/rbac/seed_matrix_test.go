@@ -50,7 +50,10 @@ func TestSeedUpgradeMatrix(t *testing.T) {
 			svc := newTestEnforcer(t)
 			db, e := svc.db, svc.enforcer
 
-			// 构造 vN 库：移除所有「引入版本 > n」的条目（vN 库不认识它们）
+			// 构造 vN 库（历史形态感知）：①移除所有「引入版本 > n」的条目
+			//（vN 库不认识它们）；②替换记录中 n ∈ [oldVer, ver) 的——该年代
+			// 库的真实形态是旧形态，种入之（真实 v15 库有 /ai/* 旧 act、
+			// 真实 v18 库有 config-kv 宽形态——升级后应由替换块收窄）
 			for _, p := range defaultPolicies {
 				if policyIntroducedAt[policyKey{p[0], p[1], p[2]}] > n {
 					if _, err := e.RemovePolicy(p[0], p[1], p[2]); err != nil {
@@ -58,6 +61,14 @@ func TestSeedUpgradeMatrix(t *testing.T) {
 					}
 				}
 			}
+			for _, r := range policyReplacements {
+				if n >= r.oldVer && n < r.ver {
+					if _, err := e.AddPolicy(r.old[0], r.old[1], r.old[2]); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			// 旧形态不应在升级后残留（替换块收窄）——断言在下方 ① 处一并做
 			// 人为删除：ops 一条引入版本 ≤ n 的既有条目（vN 库上管理员主动收权）
 			var deleted [3]string
 			for _, p := range defaultPolicies {
@@ -89,6 +100,14 @@ func TestSeedUpgradeMatrix(t *testing.T) {
 					if has, _ := e.HasPolicy(p[0], p[1], p[2]); !has {
 						t.Errorf("v%d 升级后新条目 %v 应被补齐（引入版本 %d > %d）",
 							n, p, policyIntroducedAt[policyKey{p[0], p[1], p[2]}], n)
+					}
+				}
+			}
+			// ①' 废弃形态不残留：适用替换的旧形态升级后必须消失（收权）
+			for _, r := range policyReplacements {
+				if n >= r.oldVer && n < r.ver {
+					if has, _ := e.HasPolicy(r.old[0], r.old[1], r.old[2]); has {
+						t.Errorf("v%d 升级后废弃形态 %v 仍残留（应被替换/移除）", n, r.old)
 					}
 				}
 			}

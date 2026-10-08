@@ -241,3 +241,49 @@ var policyIntroducedAt = map[policyKey]int{
 	{"ops", "/home/readiness", "GET"}:   27,
 	{"ops", "/home/summary", "GET"}:     27,
 }
+
+// policyReplacement 历史上默认策略的一次形态替换或废弃（v0.12.19 独立
+// 复核 R1：引入版本表只表达 add，真实历史还有 replace/remove——config-kv
+// v18 宽形态在 seed 18 期间（ecf3afa）收窄、admin /ai/* v16 act 扩张、
+// v25/v26 收权）。语义：
+//   - oldVer：旧形态的引入版本。库版本 < oldVer → 库从未有过旧形态，
+//     新形态按普通 delta add 直达（全新资源点）；
+//   - 库版本 ≥ oldVer：替换语义——旧形态真实存在才移除并补新形态
+//     （管理员删除过旧形态则新形态不补，绝不复活）；new 为 nil = 纯废弃。
+var policyReplacements = []policyReplacement{
+	// v16：admin /ai/* act 扩张（GET|PUT|POST → +DELETE）
+	{ver: 16, oldVer: 15, old: policyKey{"admin", "/ai/*", "GET|PUT|POST"}, new: &policyKey{"admin", "/ai/*", "GET|PUT|POST|DELETE"}},
+	// v19：config-kv 收窄（ecf3afa，seed 18 期间宽形态收为 admin/ops 窄形态、
+	// dev 两条纯废弃）——v18 宽库升级后 admin/ops 不得残留 DELETE 面
+	{ver: 19, oldVer: 18, old: policyKey{"admin", "/config-kv", "GET|POST|PUT|DELETE"}, new: &policyKey{"admin", "/config-kv", "GET|POST|PUT"}},
+	{ver: 19, oldVer: 18, old: policyKey{"admin", "/config-kv/*", "GET|POST|PUT|DELETE"}, new: &policyKey{"admin", "/config-kv/*", "GET|POST|PUT"}},
+	{ver: 19, oldVer: 18, old: policyKey{"ops", "/config-kv", "GET|POST|PUT|DELETE"}, new: &policyKey{"ops", "/config-kv", "GET|POST|PUT"}},
+	{ver: 19, oldVer: 18, old: policyKey{"ops", "/config-kv/*", "GET|POST|PUT|DELETE"}, new: &policyKey{"ops", "/config-kv/*", "GET|POST|PUT"}},
+	{ver: 19, oldVer: 18, old: policyKey{"dev", "/config-kv", "GET"}, new: nil},
+	{ver: 19, oldVer: 18, old: policyKey{"dev", "/config-kv/*", "GET"}, new: nil},
+	// v25：dev 告警收权（原 deNarrowPolicies 数据并入统一机制）
+	{ver: 25, oldVer: 24, old: policyKey{"dev", "/observ/alerts/*", "GET|DELETE|POST"}, new: &policyKey{"dev", "/observ/alerts/*", "GET|POST"}},
+	// v26：guest slots 收权
+	{ver: 26, oldVer: 25, old: policyKey{"guest", "/slots", "GET|POST"}, new: &policyKey{"guest", "/slots", "GET"}},
+	{ver: 26, oldVer: 25, old: policyKey{"guest", "/slots/*", "GET|POST"}, new: &policyKey{"guest", "/slots/*", "GET"}},
+}
+
+// policyReplacement 一次历史形态替换。
+type policyReplacement struct {
+	ver    int        // 替换发生的种子版本
+	oldVer int        // 旧形态的引入版本（库版本低于它时新形态按 add 直达）
+	old    policyKey  // 废弃形态
+	new    *policyKey // 新形态；nil = 纯废弃
+}
+
+// replacementNewKeys 新形态 → 其旧形态引入版本。delta add 循环据此分流：
+// 库版本 ≥ 旧形态引入版本的新形态跳过普通 add（由替换语义控制补入）。
+var replacementNewKeys = map[policyKey]int{}
+
+func init() {
+	for _, r := range policyReplacements {
+		if r.new != nil {
+			replacementNewKeys[*r.new] = r.oldVer
+		}
+	}
+}
