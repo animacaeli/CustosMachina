@@ -221,13 +221,18 @@ func TestGuestLosesSlotsWrite(t *testing.T) {
 // applyReplacements 直测（v0.12.12 收权回归；deNarrow 数据并入后语义
 // 不变）：①人为删除旧条目后执行替换不得复活；②存量旧形态库替换生效；
 // ③已是新形态的库（r.ver <= oldN）幂等跳过；④纯废弃只移除。
+// v0.12.19 复核 P1-C 后签名为 (bool, error)——各场景同步断言无错误。
 func TestReplacementDoesNotResurrectDeleted(t *testing.T) {
 	svc := newTestEnforcer(t)
 	e := svc.enforcer
 	// 场景①：管理员删除 dev 的告警旧形态（连旧带新都删），从 v24 升级收权不得复活
 	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|DELETE|POST")
 	_, _ = e.RemovePolicy("dev", "/observ/alerts/*", "GET|POST")
-	if changed := applyReplacements(e, 24); changed {
+	changed, err := applyReplacements(e, 24)
+	if err != nil {
+		t.Fatalf("替换不应报错: %v", err)
+	}
+	if changed {
 		t.Error("旧条目已不存在时应为 no-op（changed=false）")
 	}
 	if has, _ := e.HasPolicy("dev", "/observ/alerts/*", "GET|POST"); has {
@@ -240,7 +245,11 @@ func TestReplacementDoesNotResurrectDeleted(t *testing.T) {
 	if _, err := e2.AddPolicy("dev", "/observ/alerts/*", "GET|DELETE|POST"); err != nil {
 		t.Fatal(err)
 	}
-	if !applyReplacements(e2, 24) {
+	changed, err = applyReplacements(e2, 24)
+	if err != nil {
+		t.Fatalf("替换不应报错: %v", err)
+	}
+	if !changed {
 		t.Error("移除旧条目应返回 changed=true")
 	}
 	if has, _ := e2.HasPolicy("dev", "/observ/alerts/*", "GET|DELETE|POST"); has {
@@ -251,12 +260,20 @@ func TestReplacementDoesNotResurrectDeleted(t *testing.T) {
 	}
 
 	// 场景③：v25+ 的库（r.ver <= oldN）→ 跳过（幂等）
-	if applyReplacements(e2, 26) {
+	changed, err = applyReplacements(e2, 26)
+	if err != nil {
+		t.Fatalf("替换不应报错: %v", err)
+	}
+	if changed {
 		t.Error("替换版本不晚于库版本应直接跳过（changed=false）")
 	}
 	// 场景④：纯废弃（config-kv dev GET）只移除不补
-	e2.AddPolicy("dev", "/config-kv", "GET")
-	applyReplacements(e2, 18)
+	if _, err := e2.AddPolicy("dev", "/config-kv", "GET"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyReplacements(e2, 18); err != nil {
+		t.Fatalf("替换不应报错: %v", err)
+	}
 	if has, _ := e2.HasPolicy("dev", "/config-kv", "GET"); has {
 		t.Error("纯废弃形态应被移除")
 	}

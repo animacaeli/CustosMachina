@@ -294,17 +294,27 @@ func NewEnforcer(db *gorm.DB) (*casbin.SyncedEnforcer, func(), error) {
 	}
 	seeded := false
 	if existing, _ := e.GetPolicy(); len(existing) == 0 {
-		for _, p := range defaultPolicies {
-			if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
-				return nil, nil, err
+		// 首次初始化判据：表空 且 无 rbac.seed_version 记录（v0.12.19
+		// 复核 P1-B：全表清空是合法配置——依次清空全部内置角色后重启，
+		// 不得据此全量重种 196 条默认权限。seed 已存在则交由迁移路径按
+		// 精确 delta 处理：seed=当前 → 保持清空；旧版本 → 只补新增面）
+		var s identity.PlatformSetting
+		hasSeed := db.Where("skey = ?", "rbac.seed_version").First(&s).Error == nil
+		if !hasSeed {
+			for _, p := range defaultPolicies {
+				if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
+					return nil, nil, err
+				}
 			}
+			seeded = true
 		}
-		seeded = true
 	}
 	if !seeded {
 		migrated, err := migrateSeedVersion(db, e)
 		if err != nil {
-			return nil, nil, err
+			// 迁移失败（如替换持久化错误）：不写版本号——下次启动重试，
+			// 不让半迁移永久化（v0.12.19 复核 P1-C）
+			return nil, nil, fmt.Errorf("种子迁移失败（保留旧版本号待重试）: %w", err)
 		}
 		seeded = migrated
 	}
@@ -412,12 +422,17 @@ func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 
 	// ② 替换/废弃：替换版本晚于库版本的记录逐条执行——旧形态真实存在
 	// 才移除并补新形态（管理员删除过旧形态则新形态不补，不复活）；纯废弃
-	// 只移除旧形态。极旧/非法 seed 传 0（收权方向安全，全部执行）
+	// 只移除旧形态。极旧/非法 seed 传 0（收权方向安全，全部执行；替换
+	// 只影响持有旧形态的库，无中生有的新形态不会出现）。
+	// 持久化错误上抛（P1-C）：失败不推进版本号，下次启动重试——
+	// 吞错会把半迁移永久化（旧宽权限残留或合法新面丢失且不再补）
 	denN := 0
 	if knownSeed {
 		denN = oldN
 	}
-	applyReplacements(e, denN)
+	if _, err := applyReplacements(e, denN); err != nil {
+		return false, fmt.Errorf("策略替换持久化失败: %w", err)
+	}
 
 	// 返回 true = 需要推进版本号（调用方据此写回 setting）。走到这里说明
 	// 库版本低于当前种子——即使本轮无策略变更（条目人工加过/收权 no-op），
@@ -438,25 +453,35 @@ func seedVersionNum() int {
 // applyReplacements 按库版本执行历史形态替换/废弃（包级函数可单测——
 // 空转测试的教训，v0.12.3 复核）。仅当 r.ver > oldN（替换晚于库版本）
 // 才执行；旧形态真实存在才移除并补新——不复活管理员人为删除的策略。
-// 返回是否有变更。
-func applyReplacements(e *casbin.SyncedEnforcer, oldN int) bool {
+// 持久化错误（Remove/Add 落库失败）立即上抛，由调用方决定不推进版本号
+// 以便重试（v0.12.19 复核 P1-C：吞错会使半迁移永久化）。
+func applyReplacements(e *casbin.SyncedEnforcer, oldN int) (bool, error) {
 	changed := false
 	for _, r := range policyReplacements {
 		if r.ver <= oldN {
 			continue // 替换不晚于库版本——该库已是新形态（或当年已处理）
 		}
-		removed, _ := e.RemovePolicy(r.old[0], r.old[1], r.old[2])
+		removed, err := e.RemovePolicy(r.old[0], r.old[1], r.old[2])
+		if err != nil {
+			return changed, fmt.Errorf("移除废弃形态 %v 失败: %w", r.old, err)
+		}
 		if !removed {
 			continue // 旧形态不存在（人为删改或从未有过）——不动
 		}
 		if r.new != nil {
-			if has, _ := e.HasPolicy(r.new[0], r.new[1], r.new[2]); !has {
-				_, _ = e.AddPolicy(r.new[0], r.new[1], r.new[2])
+			has, err := e.HasPolicy(r.new[0], r.new[1], r.new[2])
+			if err != nil {
+				return changed, fmt.Errorf("检查新形态 %v 失败: %w", *r.new, err)
+			}
+			if !has {
+				if _, err := e.AddPolicy(r.new[0], r.new[1], r.new[2]); err != nil {
+					return changed, fmt.Errorf("补入新形态 %v 失败: %w", *r.new, err)
+				}
 			}
 		}
 		changed = true
 	}
-	return changed
+	return changed, nil
 }
 
 // customRoleSubjects casbin 策略表中的自定义角色名（内置角色之外）。

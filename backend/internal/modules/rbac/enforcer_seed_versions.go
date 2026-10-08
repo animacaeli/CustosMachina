@@ -246,13 +246,16 @@ var policyIntroducedAt = map[policyKey]int{
 // 复核 R1：引入版本表只表达 add，真实历史还有 replace/remove——config-kv
 // v18 宽形态在 seed 18 期间（ecf3afa）收窄、admin /ai/* v16 act 扩张、
 // v25/v26 收权）。语义：
-//   - oldVer：旧形态的引入版本。库版本 < oldVer → 库从未有过旧形态，
-//     新形态按普通 delta add 直达（全新资源点）；
+//   - oldVer：旧形态的引入版本（git 实锤值——曾误填 ver-1，致 [真实引入,
+//     ver-1) 窗口内库的防复活失效，v0.12.19 复核 P1-A；由
+//     TestReplacementOldVerAgainstFixtures 自动校验，改值须过该测试）。
+//     库版本 < oldVer → 库从未有过旧形态，新形态按普通 delta add 直达
+//     （全新资源点）；
 //   - 库版本 ≥ oldVer：替换语义——旧形态真实存在才移除并补新形态
 //     （管理员删除过旧形态则新形态不补，绝不复活）；new 为 nil = 纯废弃。
 var policyReplacements = []policyReplacement{
-	// v16：admin /ai/* act 扩张（GET|PUT|POST → +DELETE）
-	{ver: 16, oldVer: 15, old: policyKey{"admin", "/ai/*", "GET|PUT|POST"}, new: &policyKey{"admin", "/ai/*", "GET|PUT|POST|DELETE"}},
+	// v16：admin /ai/* act 扩张（旧形态 v13 引入 c9385f0）
+	{ver: 16, oldVer: 13, old: policyKey{"admin", "/ai/*", "GET|PUT|POST"}, new: &policyKey{"admin", "/ai/*", "GET|PUT|POST|DELETE"}},
 	// v19：config-kv 收窄（ecf3afa，seed 18 期间宽形态收为 admin/ops 窄形态、
 	// dev 两条纯废弃）——v18 宽库升级后 admin/ops 不得残留 DELETE 面
 	{ver: 19, oldVer: 18, old: policyKey{"admin", "/config-kv", "GET|POST|PUT|DELETE"}, new: &policyKey{"admin", "/config-kv", "GET|POST|PUT"}},
@@ -261,11 +264,13 @@ var policyReplacements = []policyReplacement{
 	{ver: 19, oldVer: 18, old: policyKey{"ops", "/config-kv/*", "GET|POST|PUT|DELETE"}, new: &policyKey{"ops", "/config-kv/*", "GET|POST|PUT"}},
 	{ver: 19, oldVer: 18, old: policyKey{"dev", "/config-kv", "GET"}, new: nil},
 	{ver: 19, oldVer: 18, old: policyKey{"dev", "/config-kv/*", "GET"}, new: nil},
-	// v25：dev 告警收权（原 deNarrowPolicies 数据并入统一机制）
-	{ver: 25, oldVer: 24, old: policyKey{"dev", "/observ/alerts/*", "GET|DELETE|POST"}, new: &policyKey{"dev", "/observ/alerts/*", "GET|POST"}},
-	// v26：guest slots 收权
-	{ver: 26, oldVer: 25, old: policyKey{"guest", "/slots", "GET|POST"}, new: &policyKey{"guest", "/slots", "GET"}},
-	{ver: 26, oldVer: 25, old: policyKey{"guest", "/slots/*", "GET|POST"}, new: &policyKey{"guest", "/slots/*", "GET"}},
+	// v25：dev 告警收权（旧形态 v14 引入 e7b6a231；原 deNarrow 数据并入）
+	{ver: 25, oldVer: 14, old: policyKey{"dev", "/observ/alerts/*", "GET|DELETE|POST"}, new: &policyKey{"dev", "/observ/alerts/*", "GET|POST"}},
+	// v26：guest slots 收权（旧形态 v5 期间增补 6b3d923a——按同版本增补
+	// 标下一 bump 的既有约定标 6；标 5 会令 v5 早期库（e8d21fd 无 slots）
+	// 被误判「经历过旧形态」而丢失新形态直达，复核双向实证）
+	{ver: 26, oldVer: 6, old: policyKey{"guest", "/slots", "GET|POST"}, new: &policyKey{"guest", "/slots", "GET"}},
+	{ver: 26, oldVer: 6, old: policyKey{"guest", "/slots/*", "GET|POST"}, new: &policyKey{"guest", "/slots/*", "GET"}},
 }
 
 // policyReplacement 一次历史形态替换。
