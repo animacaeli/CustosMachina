@@ -234,3 +234,177 @@ func setSeedVersion(t *testing.T, db *gorm.DB, v string) error {
 }
 
 var _ = casbin.SyncedEnforcer{} // 保留 casbin 引用（fixture 类型一致性）
+
+// v0.12.20 复核 P1-1 完整重启回归：add 失败 → 解除故障 → 重建 enforcer →
+// 自动补回新形态 → 版本才推进。旧序「先删后加」在该场景永久丢新形态。
+func TestReplacementAddFailureRecoversAfterRestart(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&identity.PlatformSetting{}, &identity.User{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(Models()...); err != nil {
+		t.Fatal(err)
+	}
+	e1, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 构造 seed 18 宽库：持有 config-kv 宽形态、无窄形态
+	policies, _ := e1.GetPolicy()
+	for _, p := range policies {
+		_, _ = e1.RemovePolicy(p[0], p[1], p[2])
+	}
+	for _, p := range seed18Policies {
+		if _, err := e1.AddPolicy(p[0], p[1], p[2]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, obj := range []string{"/config-kv", "/config-kv/*"} {
+		for _, sub := range []string{"admin", "ops"} {
+			_, _ = e1.RemovePolicy(sub, obj, "GET|POST|PUT") // 去窄形态
+		}
+	}
+	if err := setSeedVersion(t, db, "18"); err != nil {
+		t.Fatal(err)
+	}
+	// 注入 add 故障（只挡窄形态插入；宽形态的删除不受影响）→ 首轮迁移失败
+	if err := db.Exec("CREATE TRIGGER zz_fail_narrow BEFORE INSERT ON casbin_rule " +
+		"WHEN new.v1 LIKE '/config-kv%' AND new.v2 = 'GET|POST|PUT' " +
+		"BEGIN SELECT RAISE(ABORT, 'injected narrow insert failure'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrateSeedVersion(db, e1); err == nil {
+		t.Fatal("首轮迁移应失败（add 故障）")
+	}
+	// 解除故障，重启（新 enforcer 从库重新加载）
+	if err := db.Exec("DROP TRIGGER zz_fail_narrow").Error; err != nil {
+		t.Fatal(err)
+	}
+	e2, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatalf("重启失败: %v", err)
+	}
+	// 新形态自动补回 + 宽形态不残留 + 版本推进
+	for _, obj := range []string{"/config-kv", "/config-kv/*"} {
+		if has, _ := e2.HasPolicy("admin", obj, "GET|POST|PUT"); !has {
+			t.Errorf("重启后新形态 %s 未补回——旧序会永久丢失", obj)
+		}
+		if has, _ := e2.HasPolicy("admin", obj, "GET|POST|PUT|DELETE"); has {
+			t.Errorf("重启后宽形态 %s 仍残留", obj)
+		}
+	}
+	var setting identity.PlatformSetting
+	if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.Value != policySeedVersion {
+		t.Errorf("重启收敛后 seed 应推进到 %s，实际 %q", policySeedVersion, setting.Value)
+	}
+}
+
+// v0.12.20 复核 P1-2：seed 查询故障必须 fail-closed——表空 + 查询错误时
+// 不得写入任何默认策略（旧实现把错误折叠为「不存在」→ 重种 196 条）。
+func TestSeedLookupFailureFailClosed(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&identity.PlatformSetting{}, &identity.User{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(Models()...); err != nil {
+		t.Fatal(err)
+	}
+	// 正常初始化后全清空 + seed=27（P1-B 场景），再令 seed 查询故障
+	e1, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies, _ := e1.GetPolicy()
+	for _, p := range policies {
+		_, _ = e1.RemovePolicy(p[0], p[1], p[2])
+	}
+	if err := db.Exec("ALTER TABLE platform_settings RENAME TO zz_broken_settings").Error; err != nil {
+		t.Fatal(err)
+	}
+	defer db.Exec("ALTER TABLE zz_broken_settings RENAME TO platform_settings")
+	if _, _, err := NewEnforcer(db); err == nil {
+		t.Fatal("seed 查询故障应导致启动失败（fail-closed）")
+	}
+	// casbin 表必须保持为空（未写入任何默认策略）
+	var n int64
+	if err := db.Raw("SELECT COUNT(*) FROM casbin_rule").Scan(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("查询故障期间写入了 %d 条策略——必须 fail-closed 不动策略表", n)
+	}
+	// 恢复后重启：全清空语义保持（P1-B 行为不回归）
+	if err := db.Exec("ALTER TABLE zz_broken_settings RENAME TO platform_settings").Error; err != nil {
+		t.Fatal(err)
+	}
+	e2, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e2.GetPolicy()
+	if len(after) != 0 {
+		t.Fatalf("故障恢复重启后被重种 %d 条——全清空语义被破坏", len(after))
+	}
+}
+
+// 占位 seed 机制的续种闭环（v0.12.20 P1-2 配套）：全新库首种中途失败
+// （种入被阻）→ 重启 → delta(oldN=0) 续种补齐全部默认策略——不残留
+// 「表空但 seed 缺失」的模糊态（那会再次触发全量首种路径）。
+func TestFirstSeedInterruptedResumesOnRestart(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&identity.PlatformSetting{}, &identity.User{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(Models()...); err != nil {
+		t.Fatal(err)
+	}
+	// 先正常初始化（建 casbin 表），再重置为「占位已写、种入被阻」的中断态
+	e0, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies, _ := e0.GetPolicy()
+	for _, p := range policies {
+		_, _ = e0.RemovePolicy(p[0], p[1], p[2])
+	}
+	if err := setSeedVersion(t, db, "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE TRIGGER zz_block_seed BEFORE INSERT ON casbin_rule BEGIN SELECT RAISE(ABORT, 'blocked'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := NewEnforcer(db); err == nil {
+		t.Fatal("种入被阻应报错")
+	}
+	if err := db.Exec("DROP TRIGGER zz_block_seed").Error; err != nil {
+		t.Fatal(err)
+	}
+	// 重启：续种收敛（delta(oldN=0) 补全部缺失 + 版本推进）
+	e, _, err := NewEnforcer(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.GetPolicy()
+	if len(after) != len(defaultPolicies) {
+		t.Fatalf("重启后续种应补齐 %d 条默认策略，实际 %d 条", len(defaultPolicies), len(after))
+	}
+	var setting identity.PlatformSetting
+	if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.Value != policySeedVersion {
+		t.Errorf("续种收敛后版本应推进到 %s，实际 %q", policySeedVersion, setting.Value)
+	}
+}

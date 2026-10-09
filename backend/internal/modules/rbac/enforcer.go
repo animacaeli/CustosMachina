@@ -5,6 +5,7 @@
 package rbac
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -297,16 +298,30 @@ func NewEnforcer(db *gorm.DB) (*casbin.SyncedEnforcer, func(), error) {
 		// 首次初始化判据：表空 且 无 rbac.seed_version 记录（v0.12.19
 		// 复核 P1-B：全表清空是合法配置——依次清空全部内置角色后重启，
 		// 不得据此全量重种 196 条默认权限。seed 已存在则交由迁移路径按
-		// 精确 delta 处理：seed=当前 → 保持清空；旧版本 → 只补新增面）
+		// 精确 delta 处理：seed=当前 → 保持清空；旧版本 → 只补新增面）。
+		// 查询错误严格区分「不存在」与故障（v0.12.20 复核 P1-2：把 DB
+		// 错误折叠为不存在会 fail-open 重种默认矩阵）——任何非 NotFound
+		// 错误立即返回，不写任何默认策略
 		var s identity.PlatformSetting
-		hasSeed := db.Where("skey = ?", "rbac.seed_version").First(&s).Error == nil
-		if !hasSeed {
+		err := db.Where("skey = ?", "rbac.seed_version").First(&s).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			// 首次初始化：先写占位版本 "0"（写失败即返回，未动策略表），
+			// 再全量种入，最后置正式版本。种入中途失败 → 重启时 seed="0"
+			// 已存在 → 迁移路径按 delta(oldN=0) 补全部缺失条目（HasPolicy
+			// 去重）——续种收敛，不残留「表空但 seed 缺失」的模糊态
+			placeholder := identity.PlatformSetting{Key: "rbac.seed_version", Value: "0"}
+			if err := db.Save(&placeholder).Error; err != nil {
+				return nil, nil, fmt.Errorf("写入初始化占位标记失败（未种入任何策略）: %w", err)
+			}
 			for _, p := range defaultPolicies {
 				if _, err := e.AddPolicy(p[0], p[1], p[2]); err != nil {
 					return nil, nil, err
 				}
 			}
 			seeded = true
+		case err != nil:
+			return nil, nil, fmt.Errorf("查询种子版本失败（不执行任何种入）: %w", err)
 		}
 	}
 	if !seeded {
@@ -319,9 +334,15 @@ func NewEnforcer(db *gorm.DB) (*casbin.SyncedEnforcer, func(), error) {
 		seeded = migrated
 	}
 	if seeded {
+		// 读取区分不存在与故障（P1-2）：迁移/首种成功后此处记录必然存在
+		//（首种路径已写占位；迁移路径的记录本就存在）——NotFound 属异常态
 		var setting identity.PlatformSetting
-		if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err != nil {
+		err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
 			setting = identity.PlatformSetting{Key: "rbac.seed_version"}
+		case err != nil:
+			return nil, nil, fmt.Errorf("读取种子版本记录失败: %w", err)
 		}
 		setting.Value = policySeedVersion
 		if err := db.Save(&setting).Error; err != nil {
@@ -363,7 +384,13 @@ func EnforceAny(e *casbin.SyncedEnforcer, roles []string, obj, act string) (bool
 func migrateSeedVersion(db *gorm.DB, e *casbin.SyncedEnforcer) (bool, error) {
 	oldVersion := ""
 	var setting identity.PlatformSetting
-	if err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error; err == nil {
+	err := db.Where("skey = ?", "rbac.seed_version").First(&setting).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// 无记录：极旧部署——knownSeed=false 只补 home 基础面
+	case err != nil:
+		return false, fmt.Errorf("读取种子版本记录失败: %w", err)
+	default:
 		if setting.Value == policySeedVersion {
 			return false, nil
 		}
@@ -452,32 +479,42 @@ func seedVersionNum() int {
 
 // applyReplacements 按库版本执行历史形态替换/废弃（包级函数可单测——
 // 空转测试的教训，v0.12.3 复核）。仅当 r.ver > oldN（替换晚于库版本）
-// 才执行；旧形态真实存在才移除并补新——不复活管理员人为删除的策略。
-// 持久化错误（Remove/Add 落库失败）立即上抛，由调用方决定不推进版本号
-// 以便重试（v0.12.19 复核 P1-C：吞错会使半迁移永久化）。
+// 才执行；旧形态真实存在才处理——不复活管理员人为删除的策略。
+// 执行顺序为「探测旧 → 补新 → 删旧」的可重试序（v0.12.20 复核 P1-1：
+// 旧序「先删后加」在 add 失败时旧形态已持久化删除，重启后 !removed 跳过
+// → 新形态永久丢失且 seed 推进）：
+//   - add 失败：旧形态未动，重试从头收敛；
+//   - remove 失败：新旧并存（宽权限暂留，fail-safe 方向），重试识别
+//     「旧还在、新已有」继续删旧收敛；
+//   - 纯废弃（new=nil）无顺序问题。
+//
+// 持久化错误立即上抛，调用方不推进版本号以便重试。
 func applyReplacements(e *casbin.SyncedEnforcer, oldN int) (bool, error) {
 	changed := false
 	for _, r := range policyReplacements {
 		if r.ver <= oldN {
 			continue // 替换不晚于库版本——该库已是新形态（或当年已处理）
 		}
-		removed, err := e.RemovePolicy(r.old[0], r.old[1], r.old[2])
+		hasOld, err := e.HasPolicy(r.old[0], r.old[1], r.old[2])
 		if err != nil {
-			return changed, fmt.Errorf("移除废弃形态 %v 失败: %w", r.old, err)
+			return changed, fmt.Errorf("探测旧形态 %v 失败: %w", r.old, err)
 		}
-		if !removed {
-			continue // 旧形态不存在（人为删改或从未有过）——不动
+		if !hasOld {
+			continue // 旧形态不存在（人为删改或从未有过）——不动，不复活
 		}
 		if r.new != nil {
-			has, err := e.HasPolicy(r.new[0], r.new[1], r.new[2])
+			hasNew, err := e.HasPolicy(r.new[0], r.new[1], r.new[2])
 			if err != nil {
 				return changed, fmt.Errorf("检查新形态 %v 失败: %w", *r.new, err)
 			}
-			if !has {
+			if !hasNew {
 				if _, err := e.AddPolicy(r.new[0], r.new[1], r.new[2]); err != nil {
-					return changed, fmt.Errorf("补入新形态 %v 失败: %w", *r.new, err)
+					return changed, fmt.Errorf("补入新形态 %v 失败（旧形态未动，重试可收敛）: %w", *r.new, err)
 				}
 			}
+		}
+		if _, err := e.RemovePolicy(r.old[0], r.old[1], r.old[2]); err != nil {
+			return changed, fmt.Errorf("移除废弃形态 %v 失败（新旧并存，重试收敛）: %w", r.old, err)
 		}
 		changed = true
 	}
