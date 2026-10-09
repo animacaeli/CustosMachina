@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.21 (2026-10-09)
+
+Go 工具链安全补丁：CI govulncheck 检出 Go 标准库 9 个可达漏洞（GO-2026-66xx 系列，net/http 相关——上游新公告命中 go1.26.6，非业务代码引入；v0.12.20 镜像构建于旧工具链，本版起镜像不带已知可达漏洞）。
+
+- `go.mod` 工具链 1.26.6 → **1.26.9**（标准库漏洞修复版本）；`golang.org/x/net` v0.59.0 → **v0.60.0**（x/net 公告修复）
+- govulncheck 复跑：可达漏洞清零（余 2 项导入包 / 3 项依赖模块公告均不可达，与既往口径一致）；race 全包绿
+
 ## v0.12.20 (2026-10-08)
 
 v0.12.19/v0.12.20 双报告复核补丁（口径均为只报必修项）：五项 P1——替换表 oldVer 数据错误、全表清空后重启被全量重种、替换持久化错误被吞致半迁移永久化、替换执行顺序不可重试、seed 查询错误 fail-open。对照 `reverify-report-v0.12.19.md`、`reverify-report-v0.12.19-critical-only.md`（P1-A/B/C）与 `reverify-report-v0.12.20.md`、`reverify-report-v0.12.20-critical-only.md`（P1-1/P1-2，两报告交叉复现一致）。

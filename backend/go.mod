@@ -1,6 +1,6 @@
 module github.com/custos-machina/backend
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/casbin/casbin/v2 v2.135.0
@@ -151,7 +151,7 @@ require (
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
