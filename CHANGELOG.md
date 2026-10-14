@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.12.22 (2026-10-15)
+
+体验修复：管理后台内部切换不再裂顶栏页签。`/admin` 内部侧边栏域与域内 tab 以 `router.replace` 改 `section`/`tab` query 实现深链，而 vben 页签栏默认以 fullPath（含 query）作页签唯一标识——每切一次 query 变化即被识别为新页面，顶栏裂出 `/admin?section=...` 页签（点一圈积一排）。
+
+- `AdminConsole` 子路由 meta 加 `fullPathKey: false`，页签按路径归一：切换只原地更新既有页签（右键刷新/复制链接仍取最新 query URL），深链双参与刷新恢复不受影响
+- 生效点必须在子路由：tabbar `addTab` 取最后一级 matched 记录自身的 meta（`use-tabbar.ts`），父级声明对该路径不可见——首版加在父路由上 E2E 实测红后修正，注释已落码
+- E2E 新增回归用例：进入 `/admin` → 切域 → 切域内 tab，断言顶栏「管理后台」页签恒为 1 且 URL query 确在变化（E2E 口径 11 → 12 条）
+- 附带：删除两份已归档的本地复核报告文档（ecbee08）
+
 ## v0.12.21 (2026-10-09)
 
 Go 工具链安全补丁：CI govulncheck 检出 Go 标准库 9 个可达漏洞（GO-2026-66xx 系列，net/http 相关——上游新公告命中 go1.26.6，非业务代码引入；v0.12.20 镜像构建于旧工具链，本版起镜像不带已知可达漏洞）。
