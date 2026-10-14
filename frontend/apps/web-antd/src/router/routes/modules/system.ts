@@ -78,6 +78,9 @@ const routes: RouteRecordRaw[] = [
           hideInMenu: true,
           icon: 'lucide:wrench',
           title: '管理后台',
+          // 生效点必须在子路由：tabbar addTab 取最后一级 matched 记录
+          // 自身的 meta（use-tabbar.ts），父级声明对它不可见
+          fullPathKey: false,
         },
       },
     ],
