@@ -23,9 +23,12 @@ const (
 
 // Project 项目。
 type Project struct {
-	ID          uint   `gorm:"primarykey" json:"id"`
-	Name        string `gorm:"size:64;uniqueIndex;not null" json:"name"`
-	RepoURL     string `gorm:"size:255;not null" json:"repoUrl"`               // 仓库地址（gitea/gitee 等）
+	ID      uint   `gorm:"primarykey" json:"id"`
+	Name    string `gorm:"size:64;uniqueIndex;not null" json:"name"`
+	RepoURL string `gorm:"size:255;not null" json:"repoUrl"`
+	// RegistryID 绑定的镜像仓库（占位符 compose 的镜像推导与发版 docker login 依赖；
+	// v0.12.24 补齐：此前 DB 列与保存 API 均缺（registryFor 的 JOIN 静默吞错返回空）
+	RegistryID  *uint  `gorm:"index" json:"registryId"`                        // 仓库地址（gitea/gitee 等）
 	RepoPath    string `gorm:"size:255;not null" json:"repoPath"`              // org/repo（调 git 托管 API 用）
 	Provider    string `gorm:"size:16;not null;default:gitea" json:"provider"` // git 托管（gitea|gitee，存量默认 gitea；CI 引擎按其映射）
 	CIJob       string `gorm:"size:128" json:"ciJob"`                          // Jenkins job 名（provider=gitee 时必配；gitea 忽略）

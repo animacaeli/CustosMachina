@@ -68,6 +68,8 @@ type SaveProjectInput struct {
 	TestSlotCount       int   `json:"testSlotCount" binding:"omitempty,min=0,max=64"`
 	TrafficCap          int   `json:"trafficCap" binding:"omitempty,min=1,max=100"`
 	SlotGraceDays       int   `json:"slotGraceDays" binding:"omitempty,min=1,max=30"`
+	// RegistryID 绑定镜像仓库（nil=保留原值；0=解绑）——占位符镜像推导依赖
+	RegistryID *uint `json:"registryId"`
 }
 
 // validateNotifyGroups 校验环境→群用途匹配：prod/canary 只能绑【P】群，test 只能绑【dev】群。
@@ -166,6 +168,10 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 	}
 	if in.SlotGraceDays > 0 {
 		p.SlotGraceDays = in.SlotGraceDays
+	}
+	// RegistryID：nil=保留；非 nil 覆盖（0=解绑）
+	if in.RegistryID != nil {
+		p.RegistryID = in.RegistryID
 	}
 	if in.CIToken != "" {
 		enc, err := s.encryptToken(in.CIToken)
