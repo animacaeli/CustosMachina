@@ -296,6 +296,7 @@ func (s *Service) rebuildLoop(first *rebuildReq) {
 }
 
 func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source string) {
+	start := time.Now()
 	serverID, err := s.testTarget(ctx, p.ID)
 	if err != nil {
 		logger.Warnf("[slots] 项目 %d %v", p.ID, err)
@@ -315,10 +316,13 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 		output = err.Error()
 	}
 	// 用 struct 落库：map 方式不会触发 GORM 的 CreatedAt 自动填充（曾出零值时间）
-	// Provider 必须显式带项目值：Build 默认 gitea，漏设则 gitee 项目显示错来源
+	// Provider 必须显式带项目值：Build 默认 gitea，漏设则 gitee 项目显示错来源；
+	// DurationSecs 同理须实测赋值，否则构建/发布抽屉耗时列恒为空/0
+	secs := int(time.Since(start).Seconds())
 	b := ci.Build{
 		ProjectID: p.ID, EnvType: "test", Tag: tag, Builder: slot.OccupiedBy,
 		Provider: p.Provider, Source: "auto", Status: status,
+		DurationSecs: secs,
 	}
 	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
 		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)
@@ -328,7 +332,7 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 		ProjectID: p.ID, EnvType: "test", Tag: tag,
 		ServerID: serverID, Runtime: "compose",
 		ReleaseBy: slot.OccupiedBy, Status: releasemod.ReleaseSuccess,
-		Output: truncate(output, 8000),
+		Output: truncate(output, 8000), DurationSecs: secs,
 	}
 	if status == ci.BuildFailed {
 		rel.Status = releasemod.ReleaseFailed

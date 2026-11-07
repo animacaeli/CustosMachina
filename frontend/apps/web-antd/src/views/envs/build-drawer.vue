@@ -113,19 +113,19 @@ const columns = computed(() => {
   return [{ title: '标签', dataIndex: 'tag' }, ...base];
 });
 
-// ---- 内嵌流水线日志 ----
+// ---- 内嵌部署日志（槽位构建=平台直接部署，日志为部署输出；质检在 Jenkins） ----
 const logOpen = ref(false);
 const logText = ref('');
 const logTitle = ref('');
 const logLoading = ref(false);
 async function openLog(record: Build) {
-  logTitle.value = `${record.tag} 流水线日志`;
+  logTitle.value = `${record.tag} 部署日志`;
   logOpen.value = true;
   logLoading.value = true;
   try {
     logText.value = (await getBuildLogApi(record.id)) || '（无日志）';
   } catch {
-    logText.value = '日志拉取失败（构建可能尚未产生流水线记录）';
+    logText.value = '部署日志拉取失败（部署可能尚未执行完成）';
   } finally {
     logLoading.value = false;
   }
