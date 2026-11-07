@@ -76,20 +76,20 @@ async function loadActiveColor() {
     promotedContainer.value = '';
   }
 
-// 转正：活跃色容器 rename 为稳态 <proj>-prod-1 + conf 恒定名（命名统一批 3）
-async function doPromote() {
-  if (!props.projectId) return;
-  promoting.value = true;
-  try {
-    await promoteReleaseApi(props.projectId);
-    message.success('已转正：容器名与 nginx conf 已切换为稳态名');
-    await loadActiveColor();
-  } catch {
-    // 拦截器已提示
-  } finally {
-    promoting.value = false;
+  // 转正：活跃色容器 rename 为稳态 <proj>-prod-1 + conf 恒定名（命名统一批 3）
+  async function doPromote() {
+    if (!props.projectId) return;
+    promoting.value = true;
+    try {
+      await promoteReleaseApi(props.projectId);
+      message.success('已转正：容器名与 nginx conf 已切换为稳态名');
+      await loadActiveColor();
+    } catch {
+      // 拦截器已提示
+    } finally {
+      promoting.value = false;
+    }
   }
-}
 }
 
 // test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
