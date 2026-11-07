@@ -38,6 +38,7 @@ overrides:
   clsx: 'catalog:'
   dompurify: ^3.4.16
   fast-uri: ^3.1.8
+  follow-redirects@<1.16.2: ^1.16.2
   glob@10: ^10.5.0
   js-yaml@4: ^4.3.2
   pinia: 'catalog:'
