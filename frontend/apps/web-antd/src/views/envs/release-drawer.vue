@@ -120,7 +120,7 @@ function fmtDuration(secs: number) {
   if (secs > 0) {
     return secs >= 60 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${secs}s`;
   }
-  return '<1s'; // 镜像缓存命中时 up -d 亚秒完成
+  return '-'; // 0=未记录（历史槽位记录漏记耗时），不为亚秒部署误导显示 <1s
 }
 
 // ---- 部署日志（CD 输出）----
