@@ -107,6 +107,20 @@ export async function getBuildLogApi(buildId: number) {
   return requestClient.get<string>(`/builds/${buildId}/log`);
 }
 
+/** 增量日志片段（构建中 2s 轮询实时滚动） */
+export interface BuildLogChunk {
+  more: boolean; // 构建仍在途（还有后续）
+  next: number; // 下一轮 start 游标（字节）
+  text: string; // 自 start 起的新增文本
+}
+
+/** 增量拉取构建日志：start=上一轮 next；终态构建一次拉全（more=false） */
+export async function getBuildLogStreamApi(buildId: number, start: number) {
+  return requestClient.get<BuildLogChunk>(`/builds/${buildId}/log/stream`, {
+    params: { start },
+  });
+}
+
 /** 项目分支列表（M5 槽位表单用） */
 export async function getProjectBranchesApi(projectId: number) {
   return requestClient.get<string[]>(`/project-branches/${projectId}`);

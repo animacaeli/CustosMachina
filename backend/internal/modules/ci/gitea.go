@@ -274,6 +274,19 @@ func truncateStr(s string, n int) string {
 	return strx.Truncate(s, n) // rune 安全（v0.12.1 复核）
 }
 
+// LogProgressive gitea 无原生增量端点：全量拉取后按字节游标裁剪。
+// Next 恒为当前全量长度，调用方（handler）按构建状态判定是否继续轮询。
+func (g *giteaClient) LogProgressive(ctx context.Context, ref BuildRef, start int) (LogChunk, error) {
+	full, err := g.Log(ctx, ref)
+	if err != nil {
+		return LogChunk{}, err
+	}
+	if start >= len(full) {
+		return LogChunk{Next: len(full)}, nil
+	}
+	return LogChunk{Text: full[start:], Next: len(full)}, nil
+}
+
 // mapStatus commit status → 平台构建状态。
 func mapStatus(state string) string {
 	switch state {

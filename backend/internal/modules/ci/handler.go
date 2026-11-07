@@ -48,6 +48,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	{
 		builds.GET("", h.listBuilds)
 		builds.GET("/:id/log", h.buildLog)
+		builds.GET("/:id/log/stream", h.buildLogStream)
 	}
 	branches := r.Authed.Group("/project-branches")
 	{
@@ -234,6 +235,25 @@ func (h *Handler) buildLog(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, logs)
+}
+
+// buildLogStream GET /builds/:id/log/stream?start=N 增量日志（前端轮询实时滚动）。
+// 返回 {text, next, more}：more=构建仍在途（还有后续），next=下一轮游标。
+func (h *Handler) buildLogStream(c *gin.Context) {
+	id, ok := httpx.ParamID(c)
+	if !ok {
+		return
+	}
+	start, _ := strconv.Atoi(c.DefaultQuery("start", "0"))
+	if start < 0 {
+		start = 0
+	}
+	text, next, more, err := h.svc.BuildLogProgressive(c.Request.Context(), id, start)
+	if err != nil {
+		httpx.FailUpstream(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"text": text, "next": next, "more": more})
 }
 
 func (h *Handler) branches(c *gin.Context) {

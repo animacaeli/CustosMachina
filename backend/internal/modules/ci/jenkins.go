@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -144,6 +145,43 @@ func (j *jenkinsClient) Status(ctx context.Context, ref BuildRef) (string, error
 	default: // result 为空且非 building：异常态，视为仍在途
 		return BuildPending, nil
 	}
+}
+
+// LogProgressive 增量日志：Jenkins progressiveText 端点原生支持字节游标。
+// 构建尚在排队（locateBuild 未命中）返回空片段，调用方按状态继续轮询。
+func (j *jenkinsClient) LogProgressive(ctx context.Context, ref BuildRef, start int) (LogChunk, error) {
+	jb, err := j.locateBuild(ctx, ref)
+	if err != nil {
+		return LogChunk{}, err
+	}
+	if jb == nil {
+		return LogChunk{Next: start}, nil // 排队中：暂无输出
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/job/%s/%d/logText/progressiveText?start=%d", j.base, ref.Job, jb.Number, start), nil)
+	if err != nil {
+		return LogChunk{}, err
+	}
+	req.SetBasicAuth(j.user, j.token)
+	resp, err := j.http.Do(req)
+	if err != nil {
+		return LogChunk{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return LogChunk{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return LogChunk{}, fmt.Errorf("jenkins progressiveText %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+	}
+	next := start
+	if v := resp.Header.Get("X-Text-Size"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			next = n
+		}
+	}
+	return LogChunk{Text: string(body), Next: next}, nil
 }
 
 // Log 实现 CIProvider：consoleText 全量拉取。

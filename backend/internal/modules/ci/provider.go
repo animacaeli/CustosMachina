@@ -68,6 +68,16 @@ type CIProvider interface {
 	// 不可得（引擎不可达等瞬时错误）返回 error，调用方保留 pending 下轮再试。
 	Status(ctx context.Context, ref BuildRef) (string, error)
 	Log(ctx context.Context, ref BuildRef) (string, error)
+	// LogProgressive 增量日志：start 为上一轮返回的 Next（字节游标）。
+	// 引擎无原生增量端点时（gitea）以全量裁剪模拟——语义一致，代价是每轮传全量。
+	// More 语义不在 provider 层（构建状态由调用方掌握），Text/Next 只描述文本。
+	LogProgressive(ctx context.Context, ref BuildRef, start int) (LogChunk, error)
+}
+
+// LogChunk 增量日志片段。
+type LogChunk struct {
+	Text string // 自 start 起的新增文本
+	Next int    // 下一轮 start 游标（字节；按字节切保证 UTF-8 边界稳定）
 }
 
 // httpClient 共享的超时（各家 API 均为轻量 JSON/console 请求）。

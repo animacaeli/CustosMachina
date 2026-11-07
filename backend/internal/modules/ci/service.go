@@ -669,6 +669,51 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 	return cip.Log(ctx, BuildRef{RepoPath: pv.RepoPath, SHA: b.SHA, Tag: b.Tag, Job: pv.CIJob})
 }
 
+// BuildLogProgressive 构建日志增量拉取（前端 2s 轮询实时滚动）。
+// test 记录（槽位部署输出为平台本地文本）同样按字节游标裁剪，三个环境语义统一；
+// more 按构建记录状态推导（pending/running 时还有后续），provider 层不感知状态。
+func (s *Service) BuildLogProgressive(ctx context.Context, buildID uint, start int) (string, int, bool, error) {
+	var b Build
+	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
+		return "", 0, false, errors.New("构建记录不存在")
+	}
+	more := b.Status == BuildPending || b.Status == BuildRunning
+	if b.EnvType == "test" {
+		var out struct{ Output string }
+		if err := s.db.WithContext(ctx).Table("releases").
+			Select("output").Where("project_id = ? AND tag = ?", b.ProjectID, b.Tag).
+			Order("id DESC").First(&out).Error; err != nil {
+			return "", 0, false, errors.New("该构建没有对应的部署输出记录")
+		}
+		full := "（槽位部署输出，无独立流水线）\n" + out.Output
+		if start >= len(full) {
+			return "", len(full), false, nil
+		}
+		return full[start:], len(full), false, nil
+	}
+	if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
+		return "", 0, false, errors.New("该记录无关联提交（手动重放的测试数据）")
+	}
+	pv, err := s.proj.ViewByID(ctx, b.ProjectID)
+	if err != nil {
+		return "", 0, false, errors.New("项目不存在")
+	}
+	cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
+	if err != nil {
+		return "", 0, false, err
+	}
+	chunk, err := cip.LogProgressive(ctx, BuildRef{RepoPath: pv.RepoPath, SHA: b.SHA, Tag: b.Tag, Job: pv.CIJob}, start)
+	if err != nil {
+		return "", 0, false, err
+	}
+	// Jenkins progressiveText 对 start 超出总长会从头重播全量（实测），
+	// 游标回退（日志长度缩水/构建重开）时丢弃片段，防前端拼接重复日志
+	if chunk.Next < start {
+		return "", start, more, nil
+	}
+	return chunk.Text, chunk.Next, more, nil
+}
+
 // Branches 供前端表单（M5 槽位占用选分支）。
 func (s *Service) Branches(ctx context.Context, projectID uint) ([]string, error) {
 	pv, err := s.proj.ViewByID(ctx, projectID)

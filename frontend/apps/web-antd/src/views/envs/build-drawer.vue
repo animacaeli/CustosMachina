@@ -3,7 +3,7 @@ import type { Build } from '#/api/ci';
 
 import { computed, ref, watch } from 'vue';
 
-import { getBuildLogApi, getBuildsApi } from '#/api/ci';
+import { getBuildLogStreamApi, getBuildsApi } from '#/api/ci';
 import { usePagedListPolling } from '#/composables/use-paged-list-polling';
 
 defineOptions({ name: 'BuildDrawer' });
@@ -113,21 +113,56 @@ const columns = computed(() => {
   return [{ title: '标签', dataIndex: 'tag' }, ...base];
 });
 
-// ---- 内嵌部署日志（槽位构建=平台直接部署，日志为部署输出；质检在 Jenkins） ----
+// ---- 内嵌日志：增量轮询实时滚动 ----
+// 构建中（pending/running）每 2s 拉增量（Jenkins progressiveText / 槽位部署输出），
+// 终态一次拉全（more=false）自动停；关窗或换行后旧轮询按会话令牌自止。
+// 槽位记录（test）= 平台部署输出；tag 记录（prod/canary）= CI 构建日志。
 const logOpen = ref(false);
 const logText = ref('');
 const logTitle = ref('');
 const logLoading = ref(false);
+const logStreaming = ref(false); // 增量轮询进行中（构建未结束）
+let logToken = 0;
+const logPreRef = ref<HTMLElement | null>(null);
+// 增量追加后滚到底部（实时跟进）
+watch(logText, () => {
+  const el = logPreRef.value;
+  if (el) el.scrollTop = el.scrollHeight;
+});
+const LOG_POLL_MS = 2000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function openLog(record: Build) {
-  logTitle.value = `${record.tag} 部署日志`;
+  const live = record.status === 'pending' || record.status === 'running';
+  const kind = record.envType === 'test' ? '部署日志' : 'CI 构建日志';
+  logTitle.value = `${record.tag} ${kind}${live ? '（实时）' : ''}`;
   logOpen.value = true;
+  logText.value = '';
   logLoading.value = true;
+  const token = ++logToken;
+  let start = 0;
   try {
-    logText.value = (await getBuildLogApi(record.id)) || '（无日志）';
+    for (;;) {
+      const chunk = await getBuildLogStreamApi(record.id, start);
+      if (token !== logToken) return; // 已关窗/查看其他记录
+      if (chunk.text) logText.value += chunk.text;
+      start = chunk.next;
+      if (!chunk.more) break;
+      logLoading.value = false; // 首段到达即展示，后续增量滚动
+      logStreaming.value = true;
+      await sleep(LOG_POLL_MS);
+    }
+    if (!logText.value) logText.value = '（无日志）';
   } catch {
-    logText.value = '部署日志拉取失败（部署可能尚未执行完成）';
+    if (!logText.value) logText.value = '日志拉取失败（构建可能尚未产生日志）';
   } finally {
-    logLoading.value = false;
+    if (token === logToken) {
+      logLoading.value = false;
+      logStreaming.value = false;
+    }
   }
 }
 
@@ -202,7 +237,11 @@ function fmtTime(v: string) {
       @close="logOpen = false"
     >
       <a-spin :spinning="logLoading">
+        <div v-if="logStreaming" class="mb-1 text-xs text-blue-400">
+          ⏳ 实时获取中（每 2 秒增量）…
+        </div>
         <pre
+          ref="logPreRef"
           class="max-h-[70vh] overflow-auto rounded p-3 text-xs leading-5"
           style="color: #c9d1d9; background: #0b0e14"
           >{{ logText }}</pre>
