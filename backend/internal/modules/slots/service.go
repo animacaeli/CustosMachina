@@ -315,9 +315,10 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 		output = err.Error()
 	}
 	// 用 struct 落库：map 方式不会触发 GORM 的 CreatedAt 自动填充（曾出零值时间）
+	// Provider 必须显式带项目值：Build 默认 gitea，漏设则 gitee 项目显示错来源
 	b := ci.Build{
 		ProjectID: p.ID, EnvType: "test", Tag: tag, Builder: slot.OccupiedBy,
-		Source: "auto", Status: status,
+		Provider: p.Provider, Source: "auto", Status: status,
 	}
 	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
 		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)
