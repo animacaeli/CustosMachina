@@ -61,9 +61,6 @@ func (s *Service) Promote(ctx context.Context, projectID uint, operator string) 
 	if err := s.db.WithContext(ctx).First(&st, projectID).Error; err != nil {
 		return errors.New("项目未启用蓝绿（无活跃色记录）")
 	}
-	if st.PromotedContainer != "" {
-		return fmt.Errorf("已转正（稳态容器 %s），重复转正请先发布新版本", st.PromotedContainer)
-	}
 	p, err := s.project(ctx, projectID)
 	if err != nil {
 		return err
@@ -74,17 +71,21 @@ func (s *Service) Promote(ctx context.Context, projectID uint, operator string) 
 	}
 	norm := strx.NormalizeName(p.Name)
 	steady := norm + "-prod-1"
-	if st.ActiveContainer == "" {
-		return errors.New("活跃容器名未记录（旧版本部署的项目，请重新发布一次后再转正）")
+	if st.PromotedContainer == "" {
+		// 首次转正：rename + 落库（幂等锚点=落库后再写 conf——中途失败重试走下方补 conf 路径）
+		if st.ActiveContainer == "" {
+			return errors.New("活跃容器名未记录（旧版本部署的项目，请重新发布一次后再转正）")
+		}
+		if err := s.res.RenameContainer(ctx, target.ServerID, st.ActiveContainer, steady); err != nil {
+			return err
+		}
+		if err := s.db.WithContext(ctx).Model(&BGState{}).Where("project_id = ?", projectID).
+			Updates(map[string]any{"promoted_container": steady, "active_container": steady, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
 	}
-	if err := s.res.RenameContainer(ctx, target.ServerID, st.ActiveContainer, steady); err != nil {
-		return err
-	}
-	// conf 重渲染（PromotedContainer 落库后 FullConf 自动用稳态名）+ 写入 reload
-	if err := s.db.WithContext(ctx).Model(&BGState{}).Where("project_id = ?", projectID).
-		Updates(map[string]any{"promoted_container": steady, "updated_at": time.Now()}).Error; err != nil {
-		return err
-	}
+	// conf 重渲染（PromotedContainer 落库后 FullConf 自动用稳态名）+ 写入 reload。
+	// 已转正时重入此函数 = 上次 conf 失败的修复重试（rename 已完成，只补 conf）
 	conf, err := s.canary.FullConf(ctx, projectID, st.ActiveColor)
 	if err != nil {
 		return fmt.Errorf("conf 渲染失败（rename 已完成，可重试转正修复）: %w", err)
@@ -102,8 +103,10 @@ func (s *Service) recordActiveContainer(ctx context.Context, projectID uint, dom
 	if container == "" {
 		container = domain + "-server-1"
 	}
+	// 新版本部署 = 回到未转正态：必须同时清 promoted_container——
+	// 否则后续 conf 渲染优先读旧稳态名（即将销毁的上一版容器），切流指向死容器
 	s.db.WithContext(ctx).Exec(
-		"UPDATE blue_green_states SET active_container = ?, updated_at = ? WHERE project_id = ?",
+		"UPDATE blue_green_states SET active_container = ?, promoted_container = '', updated_at = ? WHERE project_id = ?",
 		container, time.Now(), projectID)
 }
 
@@ -245,6 +248,12 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	if err != nil {
 		return nil, err
 	}
+	// tag 白名单（tag 拼进 compose 镜像名/域名，收敛注入面；canary 域名含 tag）
+	for _, r := range in.Tag {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' || r == '@') {
+			return nil, fmt.Errorf("非法标签字符 %q", string(r))
+		}
+	}
 	// 校验该标签在本项目该环境已通过 CI
 	var cnt int64
 	if err := s.db.WithContext(ctx).
@@ -320,6 +329,16 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 				} else {
 					rel.Output += fmt.Sprintf("\n已清理上一版本灰度域 %s", old)
 				}
+			}
+			// 版本化灰度域：容器名随域变化，部署后必须重写 conf（upstream 指向新城容器），
+			// 失败告警不阻断（容器已健康，conf 旧值指向旧域会被上面的清理移除——残留断流风险，提示手动修复）
+			conf, cErr := s.canary.FullConf(ctx, in.ProjectID, s.ActiveColor(ctx, in.ProjectID))
+			if cErr != nil {
+				rel.Output += fmt.Sprintf("\n[warn] 灰度 conf 渲染失败（分流暂不可用）: %v", cErr)
+			} else if _, wErr := s.res.DeployNginxConf(ctx, target.ServerID, p.Name, conf); wErr != nil {
+				rel.Output += fmt.Sprintf("\n[warn] 灰度 conf 写入失败（分流暂不可用，可重发灰度或手动修复）: %v", wErr)
+			} else {
+				rel.Output += "\n已更新灰度 conf（upstream 指向新版本域）"
 			}
 		}
 	} else {

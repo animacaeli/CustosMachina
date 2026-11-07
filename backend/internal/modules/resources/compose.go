@@ -396,15 +396,19 @@ func (s *Service) RenameContainer(ctx context.Context, serverID uint, oldName, n
 func RenderCompose(yamlContent, domain, image string) (string, string, error) {
 	out := yamlContent
 	container := ""
-	if strings.Contains(out, "PLATFORM_CONTAINER") {
-		container = domain + "-1"
-		out = strings.ReplaceAll(out, "PLATFORM_CONTAINER", container)
-	}
-	if strings.Contains(out, "PLATFORM_IMAGE") {
+	// 行级匹配（容忍缩进/引号/空白差异）；注释里出现占位符字样不误判——
+	// 只有真正的 image:/container_name: 值才被替换
+	imgRe := regexp.MustCompile(`(?m)^(\s*(?:image|container_name):\s*[\"']?)PLATFORM_IMAGE([\"']?\s*)$`)
+	if imgRe.MatchString(out) {
 		if image == "" {
 			return "", "", errors.New("compose 使用 PLATFORM_IMAGE 占位符但本次部署未提供镜像（检查项目 registry 绑定与 CI 回调参数）")
 		}
-		out = strings.ReplaceAll(out, "PLATFORM_IMAGE", image)
+		out = imgRe.ReplaceAllString(out, "${1}"+image+"${2}")
+	}
+	ctRe := regexp.MustCompile(`(?m)^(\s*(?:image|container_name):\s*[\"']?)PLATFORM_CONTAINER([\"']?\s*)$`)
+	if ctRe.MatchString(out) {
+		container = domain + "-1"
+		out = ctRe.ReplaceAllString(out, "${1}"+container+"${2}")
 	}
 	return out, container, nil
 }

@@ -260,6 +260,19 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]map[string]any, e
 
 // ---- 分支推送自动链路（ci 模块的 BranchPushHook 调入） ----
 
+// validImageTag 镜像 tag 白名单（拼进 compose 镜像名的值，收敛注入面）。
+func validImageTag(tag string) bool {
+	if len(tag) == 0 || len(tag) > 64 {
+		return false
+	}
+	for _, r := range tag {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // SlotCallback CI 构建完成回调（2026-11-08 命名统一，替代 push 即部署）：
 // Jenkins 质检+构建测试镜像后携带 tag 调用（应用级拉取令牌鉴权，env=test），
 // 平台找到占用该分支的槽位并以该镜像重建。质检失败不会回调 → 测试环境停留旧版。
@@ -276,6 +289,10 @@ func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token 
 	}
 	if _, err := s.tokens.VerifyPullToken(ctx, token, in.App, "test"); err != nil {
 		return nil, err
+	}
+	// tag 白名单：回调值会拼进 compose 镜像名（受信 CI 也校验，防令牌泄漏后的注入面）
+	if !validImageTag(in.Tag) {
+		return nil, fmt.Errorf("非法镜像 tag %q（仅允许字母数字._-）", in.Tag)
 	}
 	var proj projectRow
 	if err := s.db.WithContext(ctx).Table("projects").
