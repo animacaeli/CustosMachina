@@ -54,8 +54,8 @@ overrides:
   tinypool: ^2.1.2
   undici@<8: ^7.30.1
   vite: ^8.3.3
-  zod: ^4.6.6
   vue: 'catalog:'
+  zod: ^4.6.6
 
 catalog:
   '@ant-design/icons-vue': ^7.0.1
