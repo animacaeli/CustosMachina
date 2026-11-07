@@ -44,6 +44,84 @@ type registryCred struct {
 // 密文字段绑定（GCM AAD）
 // registries.credential 经 crypto.AADRegistryCredential 共享（ci 写 release 读）
 
+// PromotedContainer 当前稳态容器名（空=未转正；UI 转正按钮显隐依据）。
+func (s *Service) PromotedContainer(ctx context.Context, projectID uint) string {
+	var st BGState
+	if err := s.db.WithContext(ctx).First(&st, projectID).Error; err != nil {
+		return ""
+	}
+	return st.PromotedContainer
+}
+
+// Promote 转正（2026-11-08 命名统一）：活跃色容器 rename 为稳态名 <proj>-prod-1
+// → 重渲染 conf（upstream 恒定名）→ reload → 状态落库。不进发布关键路径：
+// 失败最坏只影响名字（rename 后 conf 未 reload 时 nginx 按缓存 IP 继续转发，流量无损）。
+func (s *Service) Promote(ctx context.Context, projectID uint, operator string) error {
+	var st BGState
+	if err := s.db.WithContext(ctx).First(&st, projectID).Error; err != nil {
+		return errors.New("项目未启用蓝绿（无活跃色记录）")
+	}
+	if st.PromotedContainer != "" {
+		return fmt.Errorf("已转正（稳态容器 %s），重复转正请先发布新版本", st.PromotedContainer)
+	}
+	p, err := s.project(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	target, err := s.envTarget(ctx, projectID, "prod")
+	if err != nil {
+		return err
+	}
+	norm := strx.NormalizeName(p.Name)
+	steady := norm + "-prod-1"
+	if st.ActiveContainer == "" {
+		return errors.New("活跃容器名未记录（旧版本部署的项目，请重新发布一次后再转正）")
+	}
+	if err := s.res.RenameContainer(ctx, target.ServerID, st.ActiveContainer, steady); err != nil {
+		return err
+	}
+	// conf 重渲染（PromotedContainer 落库后 FullConf 自动用稳态名）+ 写入 reload
+	if err := s.db.WithContext(ctx).Model(&BGState{}).Where("project_id = ?", projectID).
+		Updates(map[string]any{"promoted_container": steady, "updated_at": time.Now()}).Error; err != nil {
+		return err
+	}
+	conf, err := s.canary.FullConf(ctx, projectID, st.ActiveColor)
+	if err != nil {
+		return fmt.Errorf("conf 渲染失败（rename 已完成，可重试转正修复）: %w", err)
+	}
+	if _, err := s.res.DeployNginxConf(ctx, target.ServerID, p.Name, conf); err != nil {
+		return fmt.Errorf("conf 写入失败（rename 已完成，可重试转正修复）: %w", err)
+	}
+	s.notifyRelease(ctx, p, &Release{Status: ReleaseSuccess, EnvType: "prod", Tag: "promote:" + steady, ReleaseBy: operator})
+	return nil
+}
+
+// recordActiveContainer 记录活跃域入口容器名（占位符形态=渲染返回值；
+// 存量 compose 渲染返回空 → 按旧规则 <域>-server-1 推断，两代命名可共存）。
+func (s *Service) recordActiveContainer(ctx context.Context, projectID uint, domain, container string) {
+	if container == "" {
+		container = domain + "-server-1"
+	}
+	s.db.WithContext(ctx).Exec(
+		"UPDATE blue_green_states SET active_container = ?, updated_at = ? WHERE project_id = ?",
+		container, time.Now(), projectID)
+}
+
+// recordCanaryDomain 记录/更新当前 canary 域（返回旧域供清理；首次部署旧值为空）。
+func (s *Service) recordCanaryDomain(ctx context.Context, projectID uint, domain, container string) (oldDomain string) {
+	var st CanaryState
+	if err := s.db.WithContext(ctx).First(&st, projectID).Error; err == nil {
+		oldDomain = st.Domain
+	}
+	if container == "" {
+		container = domain + "-server-1"
+	}
+	s.db.WithContext(ctx).Save(&CanaryState{
+		ProjectID: projectID, Domain: domain, Container: container, UpdatedAt: time.Now(),
+	})
+	return oldDomain
+}
+
 // imageFor 正式/灰度镜像全名：registry/<proj>:<tag>（2026-11-08 命名统一，
 // 占位符 compose 的 image 由平台统一填充；未绑 registry 或 tag 空返回空——
 // 无占位符的存量 compose 原文部署不受影响）。
@@ -222,14 +300,28 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 		RollbackOf: rollbackOfRef(rollbackOf),
 	}
 	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
+	if in.EnvType == "canary" {
+		// 2026-11-08 命名统一：灰度域版本化 <proj>-canary-<yyyymmdd-缩写>（域=tag），
+		// 容器名随域携带版本；新灰度部署后自动销毁上一版本旧域（流量不冲突）
+		deployName = strx.NormalizeName(p.Name) + "-" + strx.NormalizeName(in.Tag)
+	}
 
 	startedAt := time.Now()
-	out, _, err := s.res.DeployComposeToImage(ctx, target.ServerID, deployName, yamlContent,
+	out, _, container, err := s.res.DeployComposeToImage(ctx, target.ServerID, deployName, yamlContent,
 		s.imageFor(ctx, in.ProjectID, in.Tag))
 	rel.DurationSecs = int(time.Since(startedAt).Seconds())
 	rel.Output = truncate(out, 8000)
 	if err == nil {
 		rel.Status = ReleaseSuccess
+		if in.EnvType == "canary" {
+			if old := s.recordCanaryDomain(ctx, in.ProjectID, deployName, container); old != "" && old != deployName {
+				if dOut, dErr := s.res.DestroyCompose(ctx, target.ServerID, old); dErr != nil {
+					rel.Output += fmt.Sprintf("\n[warn] 旧灰度域 %s 清理失败（可手动清理）: %v\n%s", old, dErr, dOut)
+				} else {
+					rel.Output += fmt.Sprintf("\n已清理上一版本灰度域 %s", old)
+				}
+			}
+		}
 	} else {
 		rel.Output = rel.Output + "\n" + err.Error()
 	}

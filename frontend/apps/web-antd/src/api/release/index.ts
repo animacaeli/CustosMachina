@@ -43,11 +43,17 @@ export async function getReleaseApi(id: number) {
   return requestClient.get<ReleaseItem>(`/releases/${id}`);
 }
 
-/** 正式环境蓝绿活跃色（空 = 未启用蓝绿） */
+/** 正式环境蓝绿活跃色（空 = 未启用蓝绿；promoted = 已转正的稳态容器名） */
 export async function getActiveColorApi(projectId: number) {
-  return requestClient.get<{ color: string }>('/releases/active-color', {
-    params: { projectId },
-  });
+  return requestClient.get<{ color: string; promoted: string }>(
+    '/releases/active-color',
+    { params: { projectId } },
+  );
+}
+
+/** 转正：活跃色容器 rename 为稳态 <proj>-prod-1 + conf 恒定名（命名统一批 3） */
+export async function promoteReleaseApi(projectId: number) {
+  return requestClient.post('/releases/promote', { projectId });
 }
 
 export async function createReleaseApi(data: {

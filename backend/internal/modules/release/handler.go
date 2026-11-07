@@ -30,6 +30,7 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.GET("/:id", h.detail)
 		g.POST("", h.execute)
 		g.POST("/:id/rollback", h.rollback)
+		g.POST("/promote", h.promote)
 	}
 }
 
@@ -98,7 +99,10 @@ func (h *Handler) activeColor(c *gin.Context) {
 		httpx.FailBadRequest(c, "projectId 必填")
 		return
 	}
-	httpx.OK(c, gin.H{"color": h.svc.ActiveColor(c.Request.Context(), projectID)})
+	httpx.OK(c, gin.H{
+		"color":    h.svc.ActiveColor(c.Request.Context(), projectID),
+		"promoted": h.svc.PromotedContainer(c.Request.Context(), projectID),
+	})
 }
 
 func (h *Handler) execute(c *gin.Context) {
@@ -128,6 +132,21 @@ func (h *Handler) execute(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, rel)
+}
+
+func (h *Handler) promote(c *gin.Context) {
+	var in struct {
+		ProjectID uint `json:"projectId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.Promote(c.Request.Context(), in.ProjectID, operatorOf(c)); err != nil {
+		httpx.FailUpstream(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"promoted": true})
 }
 
 func (h *Handler) rollback(c *gin.Context) {

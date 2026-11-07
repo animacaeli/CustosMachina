@@ -57,10 +57,11 @@ func hasHealthcheck(yamlContent string) bool {
 // deployer 蓝绿链路需要的部署能力（*resources.Service 实现；接口化便于测试）。
 type Deployer interface {
 	DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error)
-	DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, error)
+	DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, string, error)
 	WaitComposeHealthy(ctx context.Context, serverID uint, name string, timeout time.Duration) error
 	DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error)
 	DestroyCompose(ctx context.Context, serverID uint, name string) (string, error)
+	RenameContainer(ctx context.Context, serverID uint, oldName, newName string) error
 	RegistryLogin(ctx context.Context, serverID uint, registryAddr, username, password string) error
 	RegistryLogout(ctx context.Context, serverID uint, registryAddr string)
 }
@@ -233,8 +234,11 @@ func (s *Service) executeBlueGreen(ctx context.Context, p *projectRow, target *E
 
 	// 1. 部署新颜色域（先起容器再写 conf：upstream 引用的容器名必须已可解析）
 	step("部署新颜色域 %s（标签 %s）", newDomain, in.Tag)
-	out, _, err := s.res.DeployComposeToImage(ctx, target.ServerID, newDomain, yamlContent,
+	out, _, activeContainer, err := s.res.DeployComposeToImage(ctx, target.ServerID, newDomain, yamlContent,
 		s.imageFor(ctx, in.ProjectID, in.Tag))
+	if err == nil {
+		s.recordActiveContainer(ctx, in.ProjectID, newDomain, activeContainer)
+	}
 	if err != nil {
 		step("部署输出:\n%s", out)
 		fail(fmt.Errorf("新颜色域部署失败: %w", err))

@@ -12,6 +12,7 @@ import {
   getPassedTagsApi,
   getReleaseApi,
   getReleasesApi,
+  promoteReleaseApi,
 } from '#/api/release';
 import AiAssist from '#/components/ai-assist.vue';
 
@@ -38,6 +39,8 @@ const list = ref<ReleaseItem[]>([]);
 
 // 蓝绿：正式环境当前活跃色（空 = 尚未启用蓝绿/首次发布）
 const activeColor = ref('');
+const promotedContainer = ref(''); // 转正后的稳态容器名（空=可转正）
+const promoting = ref(false);
 const drainSecs = ref(30); // 蓝绿 drain 窗口（秒）
 
 // 发布进行中的记录：行内部署按钮转圈、发布按钮互斥；列表 3s 轮询至终态
@@ -67,9 +70,26 @@ async function loadActiveColor() {
   try {
     const res = await getActiveColorApi(props.projectId);
     activeColor.value = res.color ?? '';
+    promotedContainer.value = res.promoted ?? '';
   } catch {
     activeColor.value = '';
+    promotedContainer.value = '';
   }
+
+// 转正：活跃色容器 rename 为稳态 <proj>-prod-1 + conf 恒定名（命名统一批 3）
+async function doPromote() {
+  if (!props.projectId) return;
+  promoting.value = true;
+  try {
+    await promoteReleaseApi(props.projectId);
+    message.success('已转正：容器名与 nginx conf 已切换为稳态名');
+    await loadActiveColor();
+  } catch {
+    // 拦截器已提示
+  } finally {
+    promoting.value = false;
+  }
+}
 }
 
 // test 环境的 tag 形如 "分支@dev1"——拆成 标签/槽位 两列
@@ -330,6 +350,15 @@ function fmtTime(v: string) {
         @click="doRelease"
       >
         {{ anyRunning ? '发布中…' : '发布' }}
+      </a-button>
+      <a-button
+        v-if="props.env === 'prod' && activeColor && !promotedContainer"
+        :disabled="anyRunning"
+        :loading="promoting"
+        title="确认新版本稳定后点击：容器改名与 conf 切换为稳态名 starveil-*-prod-1"
+        @click="doPromote"
+      >
+        转 正
       </a-button>
       <!-- P8-M2 发布前检查（advisory）：AI 综合构建/配置/回滚基线给 GO/NO-GO
            建议——仅供参考，绝不构成发布闸门（AI 安全红线） -->

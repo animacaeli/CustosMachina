@@ -18,7 +18,13 @@ import (
 //
 // 配置写入目标机 /opt/custos-machina/canary/<proj>.conf（server 块内 include 用）。
 // 蓝绿与灰度共写此文件：整份渲染单写者在本模块，发布切换（release）经 FullConf 调用。
-func renderNginx(proj string, policies []Policy, activeColor string) (string, error) {
+// backendsConf 渲染所需的实际容器后端（由调用方查状态表后传入；空=按旧规则推断）。
+type backendsConf struct {
+	prodBackend   string // 转正容器（稳态）或活跃域容器（含优先级，调用方已裁决）
+	canaryBackend string // 版本化灰度域容器
+}
+
+func renderNginx(proj string, policies []Policy, activeColor string, backends backendsConf) (string, error) {
 	var headers, traffic []Policy
 	for _, p := range policies {
 		switch p.Type {
@@ -32,10 +38,14 @@ func renderNginx(proj string, policies []Policy, activeColor string) (string, er
 		return "", fmt.Errorf("没有启用的策略")
 	}
 
-	// prod upstream 的后端域名：蓝绿项目指向活跃颜色域
-	prodBackend := fmt.Sprintf("%s-prod-server-1:80", proj)
-	if activeColor != "" {
-		prodBackend = fmt.Sprintf("%s-prod-%s-server-1:80", proj, activeColor)
+	// prod upstream 后端：调用方传入的实际容器名（转正/活跃域记录，两代命名统一）；
+	// 空 = 按活跃色旧规则推断（存量项目/未记录）
+	prodBackend := backends.prodBackend
+	if prodBackend == "" {
+		prodBackend = fmt.Sprintf("%s-prod-server-1:80", proj)
+		if activeColor != "" {
+			prodBackend = fmt.Sprintf("%s-prod-%s-server-1:80", proj, activeColor)
+		}
 	}
 
 	var b strings.Builder
@@ -71,7 +81,11 @@ func renderNginx(proj string, policies []Policy, activeColor string) (string, er
 	fmt.Fprintf(&b, "upstream %s-prod-upstream { server %s; }\n", proj, prodBackend)
 	hasCanary := hasH || hasT
 	if hasCanary {
-		fmt.Fprintf(&b, "upstream %s-canary-upstream { server %s-canary-server-1:80; }\n", proj, proj)
+		canaryBackend := backends.canaryBackend
+		if canaryBackend == "" {
+			canaryBackend = fmt.Sprintf("%s-canary-server-1:80", proj) // 存量推断
+		}
+		fmt.Fprintf(&b, "upstream %s-canary-upstream { server %s; }\n", proj, canaryBackend)
 	}
 	fmt.Fprintf(&b, "server {\n")
 	fmt.Fprintf(&b, "\tlisten 18999;\n\tserver_name canary-test.%s.local;\n", proj)

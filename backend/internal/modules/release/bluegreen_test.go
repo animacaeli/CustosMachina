@@ -19,8 +19,11 @@ type fakeDeployer struct {
 	confErr   error
 }
 
-func (f *fakeDeployer) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, _ string) (string, string, error) {
-	return f.DeployComposeTo(ctx, serverID, name, yamlContent)
+func (f *fakeDeployer) RenameContainer(_ context.Context, _ uint, _, _ string) error { return nil }
+
+func (f *fakeDeployer) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, _ string) (string, string, string, error) {
+	out, dir, err := f.DeployComposeTo(ctx, serverID, name, yamlContent)
+	return out, dir, "", err
 }
 
 func (f *fakeDeployer) DeployComposeTo(_ context.Context, _ uint, name, _ string) (string, string, error) {

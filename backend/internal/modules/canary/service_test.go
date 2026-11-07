@@ -163,7 +163,7 @@ func TestRenderNginxMultiTrafficSum(t *testing.T) {
 	conf, err := renderNginx("demo", []Policy{
 		{Type: TypeTraffic, TrafficPercent: 10},
 		{Type: TypeTraffic, TrafficPercent: 20},
-	}, "")
+	}, "", backendsConf{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestSavePolicyInputBinding(t *testing.T) {
 
 // 蓝绿渲染：prod upstream 指向活跃颜色域；无策略也允许（纯蓝绿项目）。
 func TestRenderNginxBlueGreen(t *testing.T) {
-	conf, err := renderNginx("demo", nil, "green")
+	conf, err := renderNginx("demo", nil, "green", backendsConf{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestRenderNginxBlueGreen(t *testing.T) {
 		t.Fatalf("无策略时不应渲染 canary upstream:\n%s", conf)
 	}
 	// 有策略时 prod 引用活跃色、canary upstream 正常渲染
-	conf2, err := renderNginx("demo", []Policy{{Type: TypeHeader, HeaderKey: "x-canary", HeaderValue: "gh", BoundTag: "t"}}, "blue")
+	conf2, err := renderNginx("demo", []Policy{{Type: TypeHeader, HeaderKey: "x-canary", HeaderValue: "gh", BoundTag: "t"}}, "blue", backendsConf{})
 	if err != nil {
 		t.Fatal(err)
 	}

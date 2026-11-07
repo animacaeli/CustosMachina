@@ -363,30 +363,50 @@ func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yaml
 
 // DeployComposeToImage 占位符渲染版部署（2026-11-08 命名统一）：
 // image 填充 PLATFORM_IMAGE；域名注入 PLATFORM_CONTAINER。
-func (s *Service) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, error) {
-	rendered, err := RenderCompose(yamlContent, name, image)
+// 第三个返回值为渲染出的入口容器名（占位符形态 <域名>-1；无占位符返回空——
+// 容器名由 compose 默认规则决定，调用方按需用 域名-server-1 兜底推断）。
+func (s *Service) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, string, error) {
+	rendered, container, err := RenderCompose(yamlContent, name, image)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return s.deployCompose(ctx, serverID, name, rendered)
+	out, dir, err := s.deployCompose(ctx, serverID, name, rendered)
+	return out, dir, container, err
+}
+
+// RenameContainer 目标机容器改名（转正用：活跃色容器 → 稳态 <proj>-prod-1）。
+// 目标名已存在时先报错（不覆盖：宁可让用户先处理冲突）。
+func (s *Service) RenameContainer(ctx context.Context, serverID uint, oldName, newName string) error {
+	srv, cred, err := s.serverWithCredential(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	out, err := sshRunOutput(srv, cred, fmt.Sprintf(
+		"docker rename %q %q 2>&1", oldName, newName), 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("rename 失败: %v\n%s", err, out)
+	}
+	return nil
 }
 
 // RenderCompose 占位符渲染：image: PLATFORM_IMAGE → 镜像全名；
 // container_name: PLATFORM_CONTAINER → <域名>-1（单实例；多副本服务勿用占位符）。
 // 无占位符原样返回（存量项目零影响）；有 image 占位符但未提供镜像 → 明确报错
 // （防止把字面量当镜像名部署出去）。
-func RenderCompose(yamlContent, domain, image string) (string, error) {
+func RenderCompose(yamlContent, domain, image string) (string, string, error) {
 	out := yamlContent
+	container := ""
 	if strings.Contains(out, "PLATFORM_CONTAINER") {
-		out = strings.ReplaceAll(out, "PLATFORM_CONTAINER", domain+"-1")
+		container = domain + "-1"
+		out = strings.ReplaceAll(out, "PLATFORM_CONTAINER", container)
 	}
 	if strings.Contains(out, "PLATFORM_IMAGE") {
 		if image == "" {
-			return "", errors.New("compose 使用 PLATFORM_IMAGE 占位符但本次部署未提供镜像（检查项目 registry 绑定与 CI 回调参数）")
+			return "", "", errors.New("compose 使用 PLATFORM_IMAGE 占位符但本次部署未提供镜像（检查项目 registry 绑定与 CI 回调参数）")
 		}
 		out = strings.ReplaceAll(out, "PLATFORM_IMAGE", image)
 	}
-	return out, nil
+	return out, container, nil
 }
 
 func (s *Service) deployCompose(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error) {

@@ -190,7 +190,11 @@ async function doScale() {
         <template #default="{ record }">
           <a-tag
             :color="
-              record.state === 'running' ? 'green' : record.state === 'restarting' ? 'orange' : 'red'
+              record.state === 'running'
+                ? 'green'
+                : record.state === 'restarting'
+                  ? 'orange'
+                  : 'red'
             "
             class="w-20 text-center"
           >
@@ -217,11 +221,7 @@ async function doScale() {
           <a-button size="small" type="link" @click="openLogs(record)">
             日志
           </a-button>
-          <a-button
-            size="small"
-            type="link"
-            @click="openScale(record)"
-          >
+          <a-button size="small" type="link" @click="openScale(record)">
             实例数
           </a-button>
         </template>

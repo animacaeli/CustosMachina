@@ -51,12 +51,31 @@
 - [ ] 槽位 OnBranchPush 直接重建停用（由回调接管；webhook 分支推送事件仍落
       构建通知等既有语义按需保留）
 
-### 批 3（中）
-- [ ] canary 版本化域名：灰度发布域 `<proj>-canary-<tag>`；DB 记录活跃 canary 域；
-      新灰度部署成功后自动销毁旧 canary 域（DestroyCompose，失败告警不阻断）
-- [ ] nginx conf 渲染适配版本化 canary 域
-- [ ] 转正操作：发布详情按钮 + 项目级「发布后自动转正」开关（默认关）；
-      rename + conf 恒定名 + reload；幂等与失败告警
+### 批 3（中，2026-11-08 完成）
+- [x] canary 版本化域名：灰度发布域 `<proj>-<tag>`（tag=canary-yyyymmdd-缩写）；
+      canary_states 表记录活跃域+容器名；新灰度部署成功后自动销毁旧域
+      （DestroyCompose，失败告警不阻断，输出留痕于发布 Output）
+- [x] nginx conf 渲染适配：backendsConf 参数化（转正容器 > 活跃域容器记录 >
+      旧规则推断），canary upstream 用 canary_states 实际容器名
+- [x] 转正操作：POST /releases/promote（rename 活跃容器为 <proj>-prod-1 +
+      conf 恒定名 + reload；重复转正/未记录容器名明确报错；发布抽屉「转正」
+      按钮——prod+有活跃色+未转正时显示）
+- [ ] 「发布后自动转正」项目开关：**后置**（机制就绪，等真实偏好反馈再加 UI）
+
+### 批 4 多实例（设计定稿 2026-11-08，实现后置——等第一个真实扩容需求）
+- 实例 = 独立隔离域：扩容=新城 `<proj>-prod-<N+1>`（同一 compose 渲染，
+  PLATFORM_CONTAINER 实例号参数化）；缩容=末尾淘汰（conf 先行移除成员→销毁域）
+- upstream 多 server 行 = 负载均衡；实例清单以容器扫描为真源（不存 DB 防漂移）
+- 发布策略分化：N=1 蓝绿+转正；N≥2 逐实例滚动（摘除→更新→健康→加回，
+  与多机滚动同一状态机）
+
+### 批 5 多机 compose / nginx 集群（设计入档，实现后置——rule of two）
+- 架构：1 台入口机（nginx 管全部项目流量，HA=keepalived VIP 后置）+
+  N 台应用机（compose + 平台分配 hostPort 段；「不占宿主端口」铁律在多机
+  场景让步）；前提=入口机与应用机内网互通（接入条件写明）
+- 滚动状态机与批 4 统一（滚动单元=隔离域，摘除/更新/恢复）
+- 与 k3s 重叠度高：多机需求默认引导 k3s（单节点也轻），本路径仅服务
+  「客户环境装不了 k3s」场景，等真实需求立项
 
 ### 收尾
 - [ ] deploy-conventions.md 全面更新（§一隔离域命名/§二 nginx/§三自查清单）

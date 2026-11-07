@@ -54,6 +54,29 @@ func (s *Service) SetColorGetter(g ActiveColorGetter) { s.colors = g }
 
 // FullConf 渲染项目整份 nginx conf（蓝绿切换与灰度发布共用的单写者入口，
 // release 模块经此获取整份配置后自行 DeployNginxConf）。
+// backendsOf 查状态表拿实际容器后端（两代命名统一：优先转正容器 > 活跃域记录；
+// 空=调用方渲染层按旧规则推断）。
+func (s *Service) backendsOf(ctx context.Context, projectID uint) backendsConf {
+	var out backendsConf
+	var bgRow struct {
+		ActiveContainer   string
+		PromotedContainer string
+	}
+	_ = s.db.WithContext(ctx).Table("blue_green_states").
+		Where("project_id = ?", projectID).Scan(&bgRow)
+	if bgRow.PromotedContainer != "" {
+		out.prodBackend = bgRow.PromotedContainer + ":80"
+	} else if bgRow.ActiveContainer != "" {
+		out.prodBackend = bgRow.ActiveContainer + ":80"
+	}
+	var csRow struct{ Container string }
+	if err := s.db.WithContext(ctx).Table("canary_states").
+		Where("project_id = ?", projectID).Scan(&csRow).Error; err == nil && csRow.Container != "" {
+		out.canaryBackend = csRow.Container + ":80"
+	}
+	return out
+}
+
 func (s *Service) FullConf(ctx context.Context, projectID uint, activeColor string) (string, error) {
 	var ps []Policy
 	if err := s.db.WithContext(ctx).
@@ -65,7 +88,7 @@ func (s *Service) FullConf(ctx context.Context, projectID uint, activeColor stri
 	if err != nil {
 		return "", errors.New("项目不存在")
 	}
-	return renderNginx(strx.NormalizeName(projView.Name), ps, activeColor)
+	return renderNginx(strx.NormalizeName(projView.Name), ps, activeColor, s.backendsOf(ctx, projectID))
 }
 
 // ---- 策略 CRUD ----
@@ -247,7 +270,7 @@ func (s *Service) Publish(ctx context.Context, projectID uint, operator string) 
 	if s.colors != nil {
 		active = s.colors.ActiveColor(ctx, projectID)
 	}
-	conf, err := renderNginx(strx.NormalizeName(proj.Name), ps, active)
+	conf, err := renderNginx(strx.NormalizeName(proj.Name), ps, active, s.backendsOf(ctx, projectID))
 	if err != nil {
 		return 0, "", err
 	}

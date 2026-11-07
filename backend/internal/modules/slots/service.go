@@ -345,7 +345,7 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 			logger.Warnf("[slots] 旧域名清理失败 %s: %v\n%s", legacyDeployName(p.Name, slot.SlotName), derr, out)
 		}
 		var out string
-		out, _, err = s.res.DeployComposeToImage(ctx, serverID, deployName(p.Name, slot.SlotName), yamlContent,
+		out, _, _, err = s.res.DeployComposeToImage(ctx, serverID, deployName(p.Name, slot.SlotName), yamlContent,
 			s.testImage(ctx, p.ID, imageTag))
 		output = out
 	}
