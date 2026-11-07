@@ -176,6 +176,10 @@ func (s *Service) Release(ctx context.Context, projectID uint, slotName string, 
 		if out, derr := s.res.DestroyCompose(ctx, serverID, deployName(p.Name, slotName)); derr != nil {
 			return fmt.Errorf("销毁失败（可重试）：%s\n%v", out, derr)
 		}
+		// 旧命名域（<proj>-test-<slot>）兼容清理：幂等，不存在时无害
+		if out, derr := s.res.DestroyCompose(ctx, serverID, legacyDeployName(p.Name, slotName)); derr != nil {
+			logger.Warnf("[slots] 旧域名清理失败 %s: %v\n%s", legacyDeployName(p.Name, slotName), derr, out)
+		}
 	}
 	// 硬删：占用行是临时状态（审计已在 server_events/notify），且软删行会占用
 	// (project_id, slot_name) 唯一索引导致无法重新占用
@@ -307,6 +311,10 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 	status := ci.BuildSuccess
 	output := ""
 	if err == nil {
+		// 旧命名域兼容清理（一次性迁移）：新城部署前销毁存量 <proj>-test-<slot>
+		if out, derr := s.res.DestroyCompose(ctx, serverID, legacyDeployName(p.Name, slot.SlotName)); derr != nil {
+			logger.Warnf("[slots] 旧域名清理失败 %s: %v\n%s", legacyDeployName(p.Name, slot.SlotName), derr, out)
+		}
 		var out string
 		out, _, err = s.res.DeployComposeTo(ctx, serverID, deployName(p.Name, slot.SlotName), yamlContent)
 		output = out
@@ -421,7 +429,14 @@ func (s *Service) notifySlot(ctx context.Context, p *projectRow, slot *Slot, tex
 	})
 }
 
+// deployName 槽位隔离域：<proj>-<slot>（命名统一去 -test 段，2026-11-08；
+// 槽位名 dev1..N 天然不与 prod/canary 域冲突）。
 func deployName(projectName, slotName string) string {
+	return strx.NormalizeName(projectName) + "-" + slotName
+}
+
+// legacyDeployName 2026-11-08 之前的 <proj>-test-<slot> 旧域——兼容清理用。
+func legacyDeployName(projectName, slotName string) string {
 	return strx.NormalizeName(projectName) + "-test-" + slotName
 }
 

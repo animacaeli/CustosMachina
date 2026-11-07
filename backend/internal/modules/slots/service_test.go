@@ -122,8 +122,12 @@ func TestSlotIndexAndDeployName(t *testing.T) {
 	if slotIndex("dev3") != 3 || slotIndex("bad") <= 64 {
 		t.Fatal("slotIndex 异常")
 	}
-	if got := deployName("我的 Demo", "dev2"); got != "---demo-test-dev2" {
+	// 2026-11-08 命名统一：槽位域去 -test 段；旧名保留兼容清理函数
+	if got := deployName("我的 Demo", "dev2"); got != "---demo-dev2" {
 		t.Fatalf("deployName = %q", got)
+	}
+	if got := legacyDeployName("我的 Demo", "dev2"); got != "---demo-test-dev2" {
+		t.Fatalf("legacyDeployName = %q", got)
 	}
 }
 

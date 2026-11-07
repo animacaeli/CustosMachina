@@ -30,33 +30,33 @@ const env = computed(() => props.env);
 const loading = ref(false);
 const containers = ref<ProjectContainer[]>([]);
 
-// 部署前缀由后端下发（project.deployPrefix + 环境段）——命名规则只在
-// 后端实现一处，防前后端漂移；环境段必须带（否则三个隔离域混在一起）
-const deployPrefix = computed(
-  () => `${project.value?.deployPrefix ?? 'project-'}${props.env}-`,
-);
+// 部署前缀由后端下发（project.deployPrefix=<norm项目名>-）——命名规则只在
+// 后端实现一处，防前后端漂移。容器匹配：prod/canary 带 <proj>-<env>- 段；
+// test 域 2026-11-08 命名统一后为 <proj>-<slot>（无环境段），匹配项目前缀后
+// 排除 prod-/canary- 段（否则三个隔离域混在一起）
+const deployPrefix = computed(() => project.value?.deployPrefix ?? 'project-');
+
+function matchContainer(name: string) {
+  const prefix = deployPrefix.value;
+  if (!name.startsWith(prefix)) return false;
+  if (env.value === 'test') {
+    const rest = name.slice(prefix.length);
+    return !rest.startsWith('prod-') && !rest.startsWith('canary-');
+  }
+  return name.startsWith(`${prefix}${env.value}-`);
+}
 
 const targetServer = computed(() => {
   const t = targets.value.find((x) => x.envType === env.value);
   return servers.value.find((s) => s.id === t?.serverId);
 });
 
-// 按服务聚合（server + worker 各服务及其实例数）
-const services = computed(() => {
-  const map = new Map<
-    string,
-    { containers: ProjectContainer[]; service: string }
-  >();
-  for (const ct of containers.value) {
-    const svc = ct.composeService || ct.name;
-    if (!map.has(svc)) {
-      map.set(svc, { service: svc, containers: [] });
-    }
-    const entry = map.get(svc);
-    if (entry) entry.containers.push(ct);
-  }
-  return [...map.values()];
-});
+// 一行一容器（2026-11-08 命名统一：容器名/状态/镜像分列）
+// 镜像列只显示 repo:tag（registry 前缀与 namespace 去掉，减少噪音）
+function fmtImage(image: string) {
+  const parts = image.split('/');
+  return parts[parts.length - 1] || image;
+}
 
 async function load() {
   const sid = targetServer.value?.id;
@@ -67,14 +67,7 @@ async function load() {
   loading.value = true;
   try {
     const all = await getServerContainersApi(sid);
-    const prefix = deployPrefix.value; // 如 demo-canary-
-    containers.value = all.filter((ct) => {
-      // 容器名带实例后缀（demo-canary-server-1），composeProject 恰好等于
-      // 去掉尾横杠的前缀（demo-canary）——两种形态都认
-      return (
-        ct.name.startsWith(prefix) || ct.composeProject === prefix.slice(0, -1)
-      );
-    });
+    containers.value = all.filter((ct) => matchContainer(ct.name));
   } catch {
     containers.value = [];
   } finally {
@@ -120,30 +113,42 @@ async function openLogs(ct: ProjectContainer) {
 
 // ---- 实例伸缩 ----
 const scaleOpen = ref(false);
-const scaleForm = ref({ service: '', replicas: 1 });
+// 记录当前行容器的 compose 标签（多槽位/多服务时定位准确，不能取列表首个）
+const scaleForm = ref({
+  composeFile: '',
+  composeProject: '',
+  replicas: 1,
+  service: '',
+});
 const scaling = ref(false);
 
-function openScale(service: string, current: number) {
-  scaleForm.value = { service, replicas: current };
+function openScale(ct: ProjectContainer) {
+  const count = containers.value.filter(
+    (c) => (c.composeService || c.name) === (ct.composeService || ct.name),
+  ).length;
+  scaleForm.value = {
+    composeFile: ct.composeFile ?? '',
+    composeProject: ct.composeProject ?? '',
+    replicas: Math.max(count, 1),
+    service: ct.composeService || ct.name,
+  };
   scaleOpen.value = true;
 }
 
 async function doScale() {
   const sid = targetServer.value?.id;
-  const ct = containers.value.find(
-    (c) => (c.composeService || c.name) === scaleForm.value.service,
-  );
-  if (!sid || !ct?.composeProject || !ct?.composeFile) {
+  const f = scaleForm.value;
+  if (!sid || !f.composeProject || !f.composeFile) {
     message.warning('缺少 compose 标签信息（非 compose 部署的服务不支持伸缩）');
     return;
   }
   scaling.value = true;
   try {
     await scaleComposeApi(sid, {
-      path: ct.composeFile,
-      project: ct.composeProject,
-      replicas: scaleForm.value.replicas,
-      service: scaleForm.value.service,
+      path: f.composeFile,
+      project: f.composeProject,
+      replicas: f.replicas,
+      service: f.service,
     });
     message.success('伸缩完成');
     scaleOpen.value = false;
@@ -170,54 +175,52 @@ async function doScale() {
     </div>
 
     <a-table
-      :data-source="services"
+      :data-source="containers"
       :loading="loading"
       :pagination="false"
-      row-key="service"
+      row-key="id"
       size="middle"
     >
-      <a-table-column title="服务" :width="180">
+      <a-table-column key="name" title="容器名" :width="280">
         <template #default="{ record }">
-          {{ record.service }}
+          <span class="text-xs">{{ record.name }}</span>
         </template>
       </a-table-column>
-      <a-table-column title="实例" :width="90">
+      <a-table-column key="state" title="状态" :width="100">
         <template #default="{ record }">
-          {{ record.containers.length }}
-        </template>
-      </a-table-column>
-      <a-table-column title="镜像 / 状态" key="detail">
-        <template #default="{ record }">
-          <div
-            v-for="ct in record.containers"
-            :key="ct.id"
-            class="flex items-center gap-2"
+          <a-tag
+            :color="
+              record.state === 'running' ? 'green' : record.state === 'restarting' ? 'orange' : 'red'
+            "
+            class="w-20 text-center"
           >
-            <a-tag
-              :color="ct.state === 'running' ? 'green' : 'red'"
-              class="w-16 text-center"
-            >
-              {{ ct.state }}
-            </a-tag>
-            <span class="text-xs">{{ ct.name }}</span>
-            <span class="text-muted-foreground text-xs">{{ ct.image }}</span>
-          </div>
+            {{ record.state }}
+          </a-tag>
+        </template>
+      </a-table-column>
+      <a-table-column key="image" title="镜像" :width="220">
+        <template #default="{ record }">
+          <span class="text-muted-foreground text-xs">
+            {{ fmtImage(record.image) }}
+          </span>
+        </template>
+      </a-table-column>
+      <a-table-column key="service" title="服务" :width="120">
+        <template #default="{ record }">
+          <span class="text-muted-foreground text-xs">
+            {{ record.composeService ?? '-' }}
+          </span>
         </template>
       </a-table-column>
       <a-table-column :width="200" key="action" title="操作">
         <template #default="{ record }">
-          <a-button
-            :disabled="record.containers.length === 0"
-            size="small"
-            type="link"
-            @click="openLogs(record.containers[0])"
-          >
+          <a-button size="small" type="link" @click="openLogs(record)">
             日志
           </a-button>
           <a-button
             size="small"
             type="link"
-            @click="openScale(record.service, record.containers.length)"
+            @click="openScale(record)"
           >
             实例数
           </a-button>
