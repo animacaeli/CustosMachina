@@ -19,6 +19,10 @@ type fakeDeployer struct {
 	confErr   error
 }
 
+func (f *fakeDeployer) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, _ string) (string, string, error) {
+	return f.DeployComposeTo(ctx, serverID, name, yamlContent)
+}
+
 func (f *fakeDeployer) DeployComposeTo(_ context.Context, _ uint, name, _ string) (string, string, error) {
 	f.deployed = append(f.deployed, name)
 	return "up ok", "/opt/custos-machina/compose/" + name, nil

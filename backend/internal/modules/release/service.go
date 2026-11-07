@@ -44,6 +44,25 @@ type registryCred struct {
 // 密文字段绑定（GCM AAD）
 // registries.credential 经 crypto.AADRegistryCredential 共享（ci 写 release 读）
 
+// imageFor 正式/灰度镜像全名：registry/<proj>:<tag>（2026-11-08 命名统一，
+// 占位符 compose 的 image 由平台统一填充；未绑 registry 或 tag 空返回空——
+// 无占位符的存量 compose 原文部署不受影响）。
+func (s *Service) imageFor(ctx context.Context, projectID uint, tag string) string {
+	if tag == "" {
+		return ""
+	}
+	rc, err := s.registryFor(ctx, projectID)
+	if err != nil || rc == nil || rc.Address == "" {
+		return ""
+	}
+	var name string
+	s.db.WithContext(ctx).Table("projects").Select("name").Where("id = ?", projectID).Scan(&name)
+	if name == "" {
+		return ""
+	}
+	return rc.Address + "/" + strx.NormalizeName(name) + ":" + tag
+}
+
 func (s *Service) registryFor(ctx context.Context, projectID uint) (*registryCred, error) {
 	var row struct {
 		RAddress    string
@@ -205,7 +224,8 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	deployName := fmt.Sprintf("%s-%s", strx.NormalizeName(p.Name), in.EnvType)
 
 	startedAt := time.Now()
-	out, _, err := s.res.DeployComposeTo(ctx, target.ServerID, deployName, yamlContent)
+	out, _, err := s.res.DeployComposeToImage(ctx, target.ServerID, deployName, yamlContent,
+		s.imageFor(ctx, in.ProjectID, in.Tag))
 	rel.DurationSecs = int(time.Since(startedAt).Seconds())
 	rel.Output = truncate(out, 8000)
 	if err == nil {

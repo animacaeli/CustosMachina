@@ -201,8 +201,8 @@ func ProvideModules(
 ) server.Modules {
 	// 桥接：服务器不可达/恢复事件推运维群（第二阶段空壳的补全）
 	resources.AttachNotifier(notifySvc)
-	// 桥接：分支 push → 匹配占用该分支的测试槽位自动重建
-	ciSvc.BranchPushHook = slotsSvc.OnBranchPush
+	// 2026-11-08 命名统一：分支 push 不再由平台直接重建槽位（旧镜像空转），
+	// 改为 CI 质检+构建测试镜像后回调 /api/slots/callback 触发（见 slots.SlotCallback）
 	// 桥接：canary 渲染 conf 时取蓝绿活跃色（release→canary 单向依赖，
 	// color getter 事后注入避免构造环）
 	canarySvc.SetColorGetter(releaseSvc)
@@ -294,6 +294,8 @@ var Set = wire.NewSet(
 	moduleSet,
 	server.New,
 	server.NewEngine,
+	// CI 回调鉴权复用配置拉取令牌（slots.TokenVerifier ← configs.Service）
+	wire.Bind(new(slots.TokenVerifier), new(*configs.Service)),
 )
 
 // seedSkills 内置技能种子（P6 M3）：首次启动种入；管理员可在后台改删。

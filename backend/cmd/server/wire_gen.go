@@ -95,7 +95,8 @@ func InitializeServer() (*server.Server, func(), error) {
 	canaryHandler := canary.NewHandler(canaryService)
 	observService := observ.NewService(db, resourcesService, cipher)
 	observHandler := observ.NewHandler(observService, userRepository)
-	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService)
+	configsService := configs.NewService(db, resourcesService, cipher)
+	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService, configsService)
 	slotsHandler := slots.NewHandler(slotsService)
 	cronService := cron.NewService(db, resourcesService)
 	cronHandler := cron.NewHandler(cronService)
@@ -109,7 +110,6 @@ func InitializeServer() (*server.Server, func(), error) {
 	}
 	backupService := backup.NewService(db, cipher, configConfig, resourcesService)
 	backupHandler := backup.NewHandler(backupService)
-	configsService := configs.NewService(db, resourcesService, cipher)
 	configsHandler := configs.NewHandler(configsService)
 	certsService := certs.NewService(db, cipher, resourcesService)
 	certsHandler := certs.NewHandler(certsService)

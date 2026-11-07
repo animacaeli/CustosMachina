@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/custos-machina/backend/internal/modules/configs"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type Service struct {
 	res    *resources.Service
 	notify *notify.Service
 	proj   projects.Reader // 只读投影，替代 Table("projects") 直读
+	tokens TokenVerifier   // CI 回调鉴权（可空=回调未装配）
 
 	// push 重建风暴防护：同槽位串行执行，正在跑时只记 pending、
 	// 跑完补跑一次（部署幂等——按分支最新提交，连续 push 合并为最后一次）
@@ -37,20 +39,28 @@ type Service struct {
 }
 
 type rebuildReq struct {
-	p      *projectRow
-	slotID uint
-	slot   Slot
-	source string
+	p        *projectRow
+	slotID   uint
+	slot     Slot
+	source   string
+	imageTag string // CI 回调携带的测试镜像 tag（空=compose 原文，兼容存量）
 }
 
-func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service, proj projects.Reader) *Service {
+func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service,
+	proj projects.Reader, tokens TokenVerifier) *Service {
 	// 存量库迁移兜底：清理历史软删的占用行，避免 (project_id, slot_name)
 	// 唯一索引创建失败（占用行本就是临时状态，审计在事件表）
 	db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&Slot{})
 	return &Service{
-		db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj,
+		db: db, ci: ciSvc, res: resSvc, notify: ntfy, proj: proj, tokens: tokens,
 		rebuildRunning: map[uint]bool{}, rebuildPending: map[uint]*rebuildReq{},
 	}
+}
+
+// TokenVerifier 应用级令牌校验（configs.Service 实现，wire 注入）——
+// CI 回调鉴权复用配置拉取令牌（限定 app×env=test，可即时吊销）。
+type TokenVerifier interface {
+	VerifyPullToken(ctx context.Context, plaintext, app, env string) (*configs.PullToken, error)
 }
 
 // projectRow 只读所需列。
@@ -151,8 +161,9 @@ func (s *Service) Occupy(ctx context.Context, projectID uint, in OccupyInput, ui
 	if err := s.db.WithContext(ctx).Create(&slot).Error; err != nil {
 		return nil, err
 	}
-	// 立即拉起（失败不回滚占用：用户可修好后等推送重建，或手动释放）
-	s.dispatchRebuild(p, &slot, "occupy")
+	// 2026-11-08 命名统一：槽位部署由 CI 回调触发（质检+镜像就绪才部署），
+	// 占用不再立即拉起——推一次分支触发 CI 即自动部署首个环境
+	s.notifySlot(ctx, p, &slot, fmt.Sprintf("槽位 %s 已占用（分支 %s）：等待首次 CI 构建回调后自动部署", slot.SlotName, slot.Branch))
 	return &slot, nil
 }
 
@@ -249,28 +260,46 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]map[string]any, e
 
 // ---- 分支推送自动链路（ci 模块的 BranchPushHook 调入） ----
 
-// OnBranchPush 项目仓库某分支收到 push：匹配占用该分支的槽位并重建。
-func (s *Service) OnBranchPush(ctx context.Context, repoPath, branch, pusher string) {
-	v, err := s.proj.ViewByRepoPath(ctx, repoPath)
-	if err != nil {
-		return // 未登记项目
+// SlotCallback CI 构建完成回调（2026-11-08 命名统一，替代 push 即部署）：
+// Jenkins 质检+构建测试镜像后携带 tag 调用（应用级拉取令牌鉴权，env=test），
+// 平台找到占用该分支的槽位并以该镜像重建。质检失败不会回调 → 测试环境停留旧版。
+type SlotCallbackInput struct {
+	App    string `json:"app" binding:"required"`    // 项目名（须与令牌绑定一致）
+	Branch string `json:"branch" binding:"required"` // 触发构建的分支
+	Tag    string `json:"tag" binding:"required"`    // 测试镜像 tag（yyyymmddHHMMSS）
+}
+
+// SlotCallback 返回 skipped=true 表示构建正常但无槽位可部署（不视为错误）。
+func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token string) (map[string]any, error) {
+	if s.tokens == nil {
+		return nil, fmt.Errorf("回调鉴权未装配（平台配置）")
 	}
-	proj := *viewToRow(v)
+	if _, err := s.tokens.VerifyPullToken(ctx, token, in.App, "test"); err != nil {
+		return nil, err
+	}
+	var proj projectRow
+	if err := s.db.WithContext(ctx).Table("projects").
+		Where("name = ? AND deleted_at IS NULL", in.App).First(&proj).Error; err != nil {
+		return nil, fmt.Errorf("项目 %s 不存在（令牌 app 须与项目名一致）", in.App)
+	}
 	var hits []Slot
 	s.db.WithContext(ctx).
-		Where("project_id = ? AND branch = ? AND status IN ?", proj.ID, branch, []string{StatusOccupied, StatusExpired}).
+		Where("project_id = ? AND branch = ? AND status IN ?", proj.ID, in.Branch, []string{StatusOccupied, StatusExpired}).
 		Find(&hits)
-	for i := range hits {
-		slot := hits[i]
-		s.dispatchRebuild(&proj, &slot, "push:"+pusher)
+	if len(hits) == 0 {
+		return map[string]any{"skipped": true, "reason": fmt.Sprintf("分支 %s 无占用槽位", in.Branch)}, nil
 	}
+	for i := range hits {
+		s.dispatchRebuild(&proj, &hits[i], "ci:"+in.Tag, in.Tag)
+	}
+	return map[string]any{"skipped": false, "slots": len(hits), "tag": in.Tag}, nil
 }
 
 // dispatchRebuild 投递重建请求：目标槽位空闲则立即执行（异步），
 // 正在跑则记 pending（覆盖旧 pending），跑完补跑一次——部署幂等（按分支
 // 最新提交），连续 push 合并为最后一次的结果。
-func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source string) {
-	req := &rebuildReq{p: p, slotID: slot.ID, slot: *slot, source: source}
+func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source, imageTag string) {
+	req := &rebuildReq{p: p, slotID: slot.ID, slot: *slot, source: source, imageTag: imageTag}
 	s.rebuildMu.Lock()
 	defer s.rebuildMu.Unlock()
 	if s.rebuildRunning[slot.ID] {
@@ -285,7 +314,7 @@ func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source string) {
 func (s *Service) rebuildLoop(first *rebuildReq) {
 	req := first
 	for {
-		s.rebuild(context.Background(), req.p, &req.slot, req.source)
+		s.rebuild(context.Background(), req.p, &req.slot, req.source, req.imageTag)
 		s.rebuildMu.Lock()
 		next := s.rebuildPending[req.slotID]
 		delete(s.rebuildPending, req.slotID)
@@ -299,7 +328,7 @@ func (s *Service) rebuildLoop(first *rebuildReq) {
 	}
 }
 
-func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source string) {
+func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source, imageTag string) {
 	start := time.Now()
 	serverID, err := s.testTarget(ctx, p.ID)
 	if err != nil {
@@ -316,7 +345,8 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 			logger.Warnf("[slots] 旧域名清理失败 %s: %v\n%s", legacyDeployName(p.Name, slot.SlotName), derr, out)
 		}
 		var out string
-		out, _, err = s.res.DeployComposeTo(ctx, serverID, deployName(p.Name, slot.SlotName), yamlContent)
+		out, _, err = s.res.DeployComposeToImage(ctx, serverID, deployName(p.Name, slot.SlotName), yamlContent,
+			s.testImage(ctx, p.ID, imageTag))
 		output = out
 	}
 	if err != nil {
@@ -427,6 +457,25 @@ func (s *Service) notifySlot(ctx context.Context, p *projectRow, slot *Slot, tex
 	jobs.GoSafe("slots:test-notify", func() {
 		_ = s.notify.Send(context.WithoutCancel(ctx), g, "测试槽位："+p.Name, text)
 	})
+}
+
+// testImage CI 回调镜像全名：registry/<proj>-test:<tag>。
+// tag 为空返回空（compose 原文部署，兼容存量无占位符项目）。
+func (s *Service) testImage(ctx context.Context, projectID uint, imageTag string) string {
+	if imageTag == "" {
+		return ""
+	}
+	var addr string
+	s.db.WithContext(ctx).Table("projects").
+		Select("registries.address").
+		Joins("LEFT JOIN registries ON registries.id = projects.registry_id").
+		Where("projects.id = ?", projectID).Scan(&addr)
+	if addr == "" {
+		return "" // 未绑 registry：交由 RenderCompose 报「占位符未提供镜像」
+	}
+	var name string
+	s.db.WithContext(ctx).Table("projects").Select("name").Where("id = ?", projectID).Scan(&name)
+	return addr + "/" + strx.NormalizeName(name) + "-test:" + imageTag
 }
 
 // deployName 槽位隔离域：<proj>-<slot>（命名统一去 -test 段，2026-11-08；

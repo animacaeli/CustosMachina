@@ -28,6 +28,33 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.POST("/:projectId/:slotName/release", h.release)
 		g.POST("/:projectId/:slotName/renew", h.renew)
 	}
+	// CI 构建完成回调（公开路由 + 应用级拉取令牌鉴权，限速防滥用）
+	pub := r.Public.Group("/slots")
+	pub.POST("/callback", h.ciCallback)
+}
+
+// ciCallback POST /api/slots/callback {app,branch,tag} + X-Config-Token。
+// Jenkins 质检+构建测试镜像后调用；返回 skipped=true 表示无槽位（非错误）。
+func (h *Handler) ciCallback(c *gin.Context) {
+	var in SlotCallbackInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	tok := c.GetHeader("X-Config-Token")
+	if tok == "" {
+		tok = c.GetHeader("Authorization")
+	}
+	if tok == "" {
+		c.JSON(401, gin.H{"code": 401, "message": "缺少回调令牌（X-Config-Token）"})
+		return
+	}
+	out, err := h.svc.SlotCallback(c.Request.Context(), in, tok)
+	if err != nil {
+		c.JSON(401, gin.H{"code": 401, "message": err.Error()})
+		return
+	}
+	httpx.OK(c, out)
 }
 
 func (h *Handler) list(c *gin.Context) {

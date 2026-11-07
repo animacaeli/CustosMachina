@@ -59,7 +59,7 @@ func (buildTbl) TableName() string { return "builds" }
 
 func TestOccupyAndSlotBounds(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, newFakeReader())
+	svc := NewService(db, nil, nil, nil, newFakeReader(), nil)
 
 	// 超出配置个数的槽位
 	if _, err := svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev5", Branch: "feat/x", DurationValue: 1, DurationUnit: "days"}, 1, "u"); err == nil {
@@ -89,7 +89,7 @@ func TestOccupyAndSlotBounds(t *testing.T) {
 
 func TestReleasePermission(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, newFakeReader())
+	svc := NewService(db, nil, nil, nil, newFakeReader(), nil)
 	// 未配测试部署目标时 Release 应在销毁前报错提示（项目未配置目标）
 	svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev1", Branch: "b", DurationValue: 1, DurationUnit: "days"}, 7, "张三")
 	if err := svc.Release(t.Context(), 1, "dev1", 8, false); err == nil {
@@ -99,7 +99,7 @@ func TestReleasePermission(t *testing.T) {
 
 func TestSweepExpireMarksAndRecycles(t *testing.T) {
 	db := testDB(t)
-	svc := NewService(db, nil, nil, nil, newFakeReader())
+	svc := NewService(db, nil, nil, nil, newFakeReader(), nil)
 	// 直接落一条已过期的占用
 	old := Slot{
 		ProjectID: 1, SlotName: "dev2", Branch: "feat/old",

@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -357,6 +358,38 @@ func (s *Service) RegistryLogout(ctx context.Context, serverID uint, registryAdd
 // DeployComposeTo 部署 compose 到指定服务器（第三阶段 M3 起供 release 模块复用）。
 // name 需已过白名单校验；返回部署输出与远端目录。
 func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error) {
+	return s.deployCompose(ctx, serverID, name, yamlContent)
+}
+
+// DeployComposeToImage 占位符渲染版部署（2026-11-08 命名统一）：
+// image 填充 PLATFORM_IMAGE；域名注入 PLATFORM_CONTAINER。
+func (s *Service) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, error) {
+	rendered, err := RenderCompose(yamlContent, name, image)
+	if err != nil {
+		return "", "", err
+	}
+	return s.deployCompose(ctx, serverID, name, rendered)
+}
+
+// RenderCompose 占位符渲染：image: PLATFORM_IMAGE → 镜像全名；
+// container_name: PLATFORM_CONTAINER → <域名>-1（单实例；多副本服务勿用占位符）。
+// 无占位符原样返回（存量项目零影响）；有 image 占位符但未提供镜像 → 明确报错
+// （防止把字面量当镜像名部署出去）。
+func RenderCompose(yamlContent, domain, image string) (string, error) {
+	out := yamlContent
+	if strings.Contains(out, "PLATFORM_CONTAINER") {
+		out = strings.ReplaceAll(out, "PLATFORM_CONTAINER", domain+"-1")
+	}
+	if strings.Contains(out, "PLATFORM_IMAGE") {
+		if image == "" {
+			return "", errors.New("compose 使用 PLATFORM_IMAGE 占位符但本次部署未提供镜像（检查项目 registry 绑定与 CI 回调参数）")
+		}
+		out = strings.ReplaceAll(out, "PLATFORM_IMAGE", image)
+	}
+	return out, nil
+}
+
+func (s *Service) deployCompose(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error) {
 	if !deployNameRe.MatchString(name) {
 		return "", "", fmt.Errorf("项目名须为小写字母/数字开头，可含 _.-")
 	}
