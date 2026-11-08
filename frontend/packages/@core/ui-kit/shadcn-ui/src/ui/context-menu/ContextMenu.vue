@@ -13,6 +13,6 @@ const forwarded = useForwardPropsEmits(props, emits);
 
 <template>
   <ContextMenuRoot data-slot="context-menu" v-bind="forwarded">
-    <slot></slot>
+    <slot />
   </ContextMenuRoot>
 </template>

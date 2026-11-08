@@ -135,7 +135,7 @@ watch(values, (currentValues, previousValues) => {
         v-bind="slotProps"
         :form-api="formApi"
         :values="form.values"
-      ></slot>
+      />
     </template>
     <template #default="slotProps">
       <slot
@@ -143,7 +143,7 @@ watch(values, (currentValues, previousValues) => {
         v-bind="slotProps"
         :form-api="formApi"
         :values="form.values"
-      ></slot>
+      />
       <FormActions
         v-else-if="forward.showDefaultActions"
         :model-value="state?.collapsed"
@@ -155,7 +155,7 @@ watch(values, (currentValues, previousValues) => {
             v-bind="resetSlotProps"
             :form-api="formApi"
             :values="form.values"
-          ></slot>
+          />
         </template>
         <template #submit-before="submitSlotProps">
           <slot
@@ -163,7 +163,7 @@ watch(values, (currentValues, previousValues) => {
             v-bind="submitSlotProps"
             :form-api="formApi"
             :values="form.values"
-          ></slot>
+          />
         </template>
         <template #expand-before="expandBeforeSlotProps">
           <slot
@@ -171,7 +171,7 @@ watch(values, (currentValues, previousValues) => {
             v-bind="expandBeforeSlotProps"
             :form-api="formApi"
             :values="form.values"
-          ></slot>
+          />
         </template>
         <template #expand-after="expandAfterSlotProps">
           <slot
@@ -179,7 +179,7 @@ watch(values, (currentValues, previousValues) => {
             v-bind="expandAfterSlotProps"
             :form-api="formApi"
             :values="form.values"
-          ></slot>
+          />
         </template>
       </FormActions>
     </template>

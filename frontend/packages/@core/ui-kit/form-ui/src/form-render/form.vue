@@ -182,7 +182,7 @@ function getGroupWrapperClass(schema: NormalizedFormGroupSchema) {
             :rules="fieldSchema.rules"
           >
             <template #default="slotProps">
-              <slot v-bind="slotProps" :name="fieldSchema.fieldName"></slot>
+              <slot v-bind="slotProps" :name="fieldSchema.fieldName" />
             </template>
           </FormField>
         </FormGroup>
@@ -196,11 +196,11 @@ function getGroupWrapperClass(schema: NormalizedFormGroupSchema) {
           :rules="cSchema.rules"
         >
           <template #default="slotProps">
-            <slot v-bind="slotProps" :name="cSchema.fieldName"> </slot>
+            <slot v-bind="slotProps" :name="cSchema.fieldName" />
           </template>
         </FormField>
       </template>
-      <slot :shapes="shapes"></slot>
+      <slot :shapes="shapes" />
     </div>
   </component>
 </template>

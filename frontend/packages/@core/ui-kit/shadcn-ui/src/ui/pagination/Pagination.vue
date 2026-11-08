@@ -26,6 +26,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
     v-bind="forwarded"
     :class="cn('mx-auto flex w-full justify-center', props.class)"
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </PaginationRoot>
 </template>

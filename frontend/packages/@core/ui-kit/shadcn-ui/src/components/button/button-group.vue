@@ -24,7 +24,7 @@ withDefaults(
     "
     :style="{ gap: gap ? `${gap}px` : '0px' }"
   >
-    <slot></slot>
+    <slot />
   </div>
 </template>
 

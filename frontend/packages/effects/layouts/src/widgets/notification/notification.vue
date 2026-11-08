@@ -117,7 +117,7 @@ defineExpose({ toggle });
                   class="absolute top-1/2 right-3 flex -translate-y-1/2 flex-row gap-1"
                 >
                   <slot name="action" :item="item">
-                    <slot name="action-prepend" :item="item"></slot>
+                    <slot name="action-prepend" :item="item" />
                     <VbenIconButton
                       v-if="!item.isRead"
                       size="xs"
@@ -138,7 +138,7 @@ defineExpose({ toggle });
                     >
                       <CircleX class="size-4" />
                     </VbenIconButton>
-                    <slot name="action-append" :item="item"></slot>
+                    <slot name="action-append" :item="item" />
                   </slot>
                 </div>
               </slot>

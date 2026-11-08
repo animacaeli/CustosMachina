@@ -397,10 +397,10 @@ onUnmounted(() => {
           v-model:expand-on-hover="expandOnHover"
         />
         <div v-if="slots.logo" :style="headerStyle">
-          <slot name="logo"></slot>
+          <slot name="logo" />
         </div>
         <VbenScrollbar :style="contentStyle" shadow shadow-border>
-          <slot></slot>
+          <slot />
         </VbenScrollbar>
 
         <div :style="collapseStyle"></div>
@@ -430,7 +430,7 @@ onUnmounted(() => {
           v-model:expand-on-hover="expandOnHover"
         />
         <div v-if="!extraCollapse" :style="extraTitleStyle" class="pl-2">
-          <slot name="extra-title"></slot>
+          <slot name="extra-title" />
         </div>
         <VbenScrollbar
           :style="extraContentStyle"
@@ -438,7 +438,7 @@ onUnmounted(() => {
           shadow
           shadow-border
         >
-          <slot name="extra"></slot>
+          <slot name="extra" />
         </VbenScrollbar>
       </div>
       <div

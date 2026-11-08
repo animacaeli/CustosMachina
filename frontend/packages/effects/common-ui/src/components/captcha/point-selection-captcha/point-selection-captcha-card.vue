@@ -60,7 +60,7 @@ function handleClick(e: MouseEvent) {
           <span>{{ title }}</span>
         </template>
         <div class="flex items-center justify-end">
-          <slot name="extra"></slot>
+          <slot name="extra" />
         </div>
       </CardTitle>
     </CardHeader>
@@ -76,11 +76,11 @@ function handleClick(e: MouseEvent) {
         @click="handleClick"
       />
       <div class="absolute inset-0">
-        <slot></slot>
+        <slot />
       </div>
     </CardContent>
     <CardFooter class="mt-2 flex justify-between p-0">
-      <slot name="footer"></slot>
+      <slot name="footer" />
     </CardFooter>
   </Card>
 </template>

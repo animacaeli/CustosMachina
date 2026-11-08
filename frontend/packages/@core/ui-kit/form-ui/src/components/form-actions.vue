@@ -120,7 +120,7 @@ defineExpose({
   <div :class="cn(actionWrapperClass)">
     <template v-if="rootProps.actionButtonsReverse">
       <!-- 提交按钮前 -->
-      <slot name="submit-before"></slot>
+      <slot name="submit-before" />
 
       <component
         :is="COMPONENT_MAP.PrimaryButton"
@@ -134,7 +134,7 @@ defineExpose({
     </template>
 
     <!-- 重置按钮前 -->
-    <slot name="reset-before"></slot>
+    <slot name="reset-before" />
 
     <component
       :is="COMPONENT_MAP.DefaultButton"
@@ -148,7 +148,7 @@ defineExpose({
 
     <template v-if="!rootProps.actionButtonsReverse">
       <!-- 提交按钮前 -->
-      <slot name="submit-before"></slot>
+      <slot name="submit-before" />
 
       <component
         :is="COMPONENT_MAP.PrimaryButton"
@@ -162,7 +162,7 @@ defineExpose({
     </template>
 
     <!-- 展开按钮前 -->
-    <slot name="expand-before"></slot>
+    <slot name="expand-before" />
 
     <VbenExpandableArrow
       class="ml-[-0.3em]"
@@ -173,6 +173,6 @@ defineExpose({
     </VbenExpandableArrow>
 
     <!-- 展开按钮后 -->
-    <slot name="expand-after"></slot>
+    <slot name="expand-after" />
   </div>
 </template>

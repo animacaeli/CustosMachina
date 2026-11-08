@@ -234,7 +234,7 @@ function resume() {
       :text="text || $t('ui.captcha.sliderDefaultText')"
     >
       <template v-if="$slots.text" #text>
-        <slot :is-passing="state.isPassing" name="text"></slot>
+        <slot :is-passing="state.isPassing" name="text" />
       </template>
     </SliderCaptchaContent>
 
@@ -247,7 +247,7 @@ function resume() {
       @touchstart="handleDragStart"
     >
       <template v-if="$slots.actionIcon" #icon>
-        <slot :is-passing="state.isPassing" name="actionIcon"></slot>
+        <slot :is-passing="state.isPassing" name="actionIcon" />
       </template>
     </SliderCaptchaAction>
   </div>

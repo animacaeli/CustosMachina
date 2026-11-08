@@ -88,7 +88,7 @@ function calcZIndex() {
         :sub-title="$t('authentication.loginAgainSubTitle')"
         :title="$t('authentication.loginAgainTitle')"
       >
-        <slot> </slot>
+        <slot />
       </Slot>
     </Modal>
   </div>

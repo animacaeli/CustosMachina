@@ -38,7 +38,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         )
       "
     >
-      <slot></slot>
+      <slot />
     </ContextMenuContent>
   </ContextMenuPortal>
 </template>

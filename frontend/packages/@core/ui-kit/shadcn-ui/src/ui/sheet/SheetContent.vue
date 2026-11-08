@@ -94,7 +94,7 @@ const { handleAnimationEvent } = useDialogStateEvents({
       @animationcancel="handleAnimationEvent"
       v-bind="{ ...forwarded, ...$attrs }"
     >
-      <slot></slot>
+      <slot />
 
       <!-- <DialogClose
         class="data-[state=open]:bg-secondary absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none"

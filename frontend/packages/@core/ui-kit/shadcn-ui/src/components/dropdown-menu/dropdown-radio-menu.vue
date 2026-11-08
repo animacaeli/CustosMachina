@@ -23,7 +23,7 @@ function handleItemClick(value: string) {
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child class="flex items-center gap-1">
-      <slot></slot>
+      <slot />
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start">
       <DropdownMenuGroup>

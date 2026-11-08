@@ -104,7 +104,7 @@ function handleScroll(event: Event) {
       }"
       class="scrollbar-top-shadow pointer-events-none absolute top-0 z-10 h-12 w-full opacity-0 transition-opacity duration-300 ease-in-out will-change-[opacity]"
     ></div>
-    <slot></slot>
+    <slot />
     <div
       v-if="showShadowBottom"
       :class="{

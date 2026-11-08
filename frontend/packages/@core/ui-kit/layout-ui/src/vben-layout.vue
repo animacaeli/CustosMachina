@@ -617,21 +617,21 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
       @update:width="(val) => emit('update:sidebarWidth', val)"
     >
       <template v-if="isSideMode && !isMixedNav && sidebarLogoVisible" #logo>
-        <slot name="logo"></slot>
+        <slot name="logo" />
       </template>
 
       <template v-if="isSidebarMixedNav || isHeaderMixedNav">
-        <slot name="mixed-menu"></slot>
+        <slot name="mixed-menu" />
       </template>
       <template v-else>
-        <slot name="menu"></slot>
+        <slot name="menu" />
       </template>
 
       <template #extra>
-        <slot name="side-extra"></slot>
+        <slot name="side-extra" />
       </template>
       <template #extra-title>
-        <slot name="side-extra-title"></slot>
+        <slot name="side-extra-title" />
       </template>
     </LayoutSidebar>
 
@@ -665,7 +665,7 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
             :logo-visible="sidebarLogoVisible"
           >
             <template v-if="showHeaderLogo" #logo>
-              <slot name="logo"></slot>
+              <slot name="logo" />
             </template>
 
             <template #toggle-button>
@@ -682,7 +682,7 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
                 <IconifyIcon v-else icon="ep:expand" />
               </VbenIconButton>
             </template>
-            <slot name="header"></slot>
+            <slot name="header" />
           </LayoutHeader>
 
           <LayoutTabbar
@@ -690,7 +690,7 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
             :height="tabbarHeight"
             :style="tabbarStyle"
           >
-            <slot name="tabbar"></slot>
+            <slot name="tabbar" />
           </LayoutTabbar>
         </div>
       </Teleport>
@@ -715,10 +715,10 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
           :padding-top="contentPaddingTop"
           :style="contentStyle"
         >
-          <slot name="content"></slot>
+          <slot name="content" />
 
           <template #overlay>
-            <slot name="content-overlay"></slot>
+            <slot name="content-overlay" />
           </template>
         </LayoutContent>
 
@@ -730,11 +730,11 @@ const layoutStaticHeaderTarget = `#${idLayoutStaticHeader}`;
           :width="footerWidth"
           :z-index="zIndex"
         >
-          <slot name="footer"></slot>
+          <slot name="footer" />
         </LayoutFooter>
       </div>
     </div>
-    <slot name="extra"></slot>
+    <slot name="extra" />
     <Transition name="mobile-sidebar-mask">
       <div
         v-if="maskVisible"

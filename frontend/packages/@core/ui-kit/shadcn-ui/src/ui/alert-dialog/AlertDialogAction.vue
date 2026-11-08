@@ -8,6 +8,6 @@ const props = defineProps<AlertDialogActionProps>();
 
 <template>
   <AlertDialogAction v-bind="props">
-    <slot></slot>
+    <slot />
   </AlertDialogAction>
 </template>

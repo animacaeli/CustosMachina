@@ -17,6 +17,6 @@ withDefaults(defineProps<Props>(), {
     <h3 class="mb-3 leading-none font-semibold tracking-tight">
       {{ title }}
     </h3>
-    <slot></slot>
+    <slot />
   </div>
 </template>

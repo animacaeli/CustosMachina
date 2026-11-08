@@ -46,14 +46,14 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 <template>
   <PopoverRoot v-bind="forwarded">
     <PopoverTrigger as="span" :class="triggerClass">
-      <slot name="trigger"></slot>
+      <slot name="trigger" />
 
       <PopoverContent
         :class="contentClass"
         class="side-content z-popup"
         v-bind="contentProps"
       >
-        <slot></slot>
+        <slot />
       </PopoverContent>
     </PopoverTrigger>
   </PopoverRoot>

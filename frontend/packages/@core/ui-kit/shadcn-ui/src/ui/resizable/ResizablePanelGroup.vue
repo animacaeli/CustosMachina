@@ -27,6 +27,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       cn('flex h-full w-full data-[orientation=vertical]:flex-col', props.class)
     "
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </SplitterGroup>
 </template>

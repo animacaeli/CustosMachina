@@ -42,6 +42,6 @@ const delegatedProps = reactiveOmit(props, 'class', 'size', 'isActive');
       )
     "
   >
-    <slot></slot>
+    <slot />
   </PaginationListItem>
 </template>

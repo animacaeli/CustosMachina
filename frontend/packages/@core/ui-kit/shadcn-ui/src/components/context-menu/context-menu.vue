@@ -93,7 +93,7 @@ onUnmounted(() => {
   <ContextMenu v-bind="forwarded">
     <ContextMenuTrigger as-child>
       <div ref="triggerRef" class="contents">
-        <slot></slot>
+        <slot />
       </div>
     </ContextMenuTrigger>
     <ContextMenuContent

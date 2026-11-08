@@ -32,7 +32,7 @@ const delegatedProps = reactiveOmit(props, 'class', 'onScroll');
       class="h-full w-full rounded-[inherit] focus:outline-hidden"
       @scroll="props.onScroll"
     >
-      <slot></slot>
+      <slot />
     </ScrollAreaViewport>
     <ScrollBar />
     <ScrollAreaCorner />

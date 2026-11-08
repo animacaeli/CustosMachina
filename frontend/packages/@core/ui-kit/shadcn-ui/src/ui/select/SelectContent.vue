@@ -56,7 +56,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
           )
         "
       >
-        <slot></slot>
+        <slot />
       </SelectViewport>
       <SelectScrollDownButton />
     </SelectContent>

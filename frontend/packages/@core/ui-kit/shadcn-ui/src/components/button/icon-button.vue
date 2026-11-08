@@ -51,7 +51,7 @@ function handleClick(e: MouseEvent) {
     size="icon"
     @click="handleClick"
   >
-    <slot></slot>
+    <slot />
   </VbenButton>
 
   <VbenTooltip
@@ -67,10 +67,10 @@ function handleClick(e: MouseEvent) {
         size="icon"
         @click="handleClick"
       >
-        <slot></slot>
+        <slot />
       </VbenButton>
     </template>
-    <slot v-if="slots.tooltip" name="tooltip"> </slot>
+    <slot v-if="slots.tooltip" name="tooltip" />
     <template v-else>
       {{ tooltip }}
     </template>

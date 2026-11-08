@@ -67,9 +67,9 @@ const style = computed((): CSSProperties => {
         data-layout-region="overlay-viewport"
         class="pointer-events-none relative min-h-0 w-full"
       >
-        <slot name="overlay"></slot>
+        <slot name="overlay" />
       </div>
     </div>
-    <slot></slot>
+    <slot />
   </main>
 </template>

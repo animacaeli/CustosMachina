@@ -1188,7 +1188,7 @@ watch(
     @touchstart="bodyDown($event as TouchEvent & MouseEvent)"
   >
     <div ref="container" :style="sizeStyle" class="content-container">
-      <slot></slot>
+      <slot />
     </div>
     <div
       v-for="(stick, index) of sticks"

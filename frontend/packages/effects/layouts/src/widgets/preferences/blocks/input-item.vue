@@ -40,7 +40,7 @@ const slots = useSlots();
     class="my-1 flex w-full items-center justify-between rounded-md px-2 py-1"
   >
     <span class="flex items-center text-sm">
-      <slot></slot>
+      <slot />
 
       <VbenTooltip v-if="slots.tip || tip" side="bottom">
         <template #trigger>

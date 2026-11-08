@@ -18,7 +18,7 @@ withDefaults(defineProps<Props>(), {});
       <CardTitle class="text-xl">{{ title }}</CardTitle>
     </CardHeader>
     <CardContent>
-      <slot></slot>
+      <slot />
     </CardContent>
   </Card>
 </template>

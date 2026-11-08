@@ -80,7 +80,7 @@ const iconArrowStyle = computed(() => {
       is('more', isMenuMore),
     ]"
   >
-    <slot></slot>
+    <slot />
 
     <VbenIcon
       v-if="!isMenuMore"
@@ -90,7 +90,7 @@ const iconArrowStyle = computed(() => {
     />
 
     <div v-if="!hiddenTitle" :class="[e('title')]">
-      <slot name="title"></slot>
+      <slot name="title" />
     </div>
 
     <component

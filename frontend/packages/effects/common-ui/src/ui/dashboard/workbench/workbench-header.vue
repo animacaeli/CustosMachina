@@ -21,10 +21,10 @@ withDefaults(defineProps<Props>(), {
       class="flex flex-col justify-center md:mt-0 md:ml-6"
     >
       <h1 v-if="$slots.title" class="text-md font-semibold md:text-xl">
-        <slot name="title"></slot>
+        <slot name="title" />
       </h1>
       <span v-if="$slots.description" class="mt-1 text-foreground/80">
-        <slot name="description"></slot>
+        <slot name="description" />
       </span>
     </div>
     <div class="mt-4 flex flex-1 justify-end md:mt-0">

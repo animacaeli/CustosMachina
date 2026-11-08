@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
             @click.stop="handleClick"
           >
             <template #title>
-              <slot name="title"></slot>
+              <slot name="title" />
             </template>
           </SubMenuContent>
         </template>
@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
             :class="[nsMenu.b(), is('rounded', rounded)]"
             :style="subMenuStyle"
           >
-            <slot></slot>
+            <slot />
           </ul>
         </div>
       </VbenHoverCard>
@@ -257,9 +257,9 @@ onBeforeUnmount(() => {
         :path="path"
         @click.stop="handleClick"
       >
-        <slot name="content"></slot>
+        <slot name="content" />
         <template #title>
-          <slot name="title"></slot>
+          <slot name="title" />
         </template>
       </SubMenuContent>
       <CollapseTransition>
@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
           :class="[nsMenu.b(), is('rounded', rounded)]"
           :style="subMenuStyle"
         >
-          <slot></slot>
+          <slot />
         </ul>
       </CollapseTransition>
     </template>

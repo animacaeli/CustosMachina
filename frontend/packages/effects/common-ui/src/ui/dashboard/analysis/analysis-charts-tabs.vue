@@ -32,7 +32,7 @@ const defaultValue = computed(() => {
       </TabsList>
       <template v-for="tab in tabs" :key="tab.label">
         <TabsContent :value="tab.value" class="pt-4">
-          <slot :name="tab.value"></slot>
+          <slot :name="tab.value" />
         </TabsContent>
       </template>
     </Tabs>

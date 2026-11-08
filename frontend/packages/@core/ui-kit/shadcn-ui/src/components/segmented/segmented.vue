@@ -68,7 +68,7 @@ function activeClass(tab: string): string[] {
     </TabsList>
     <template v-for="tab in tabs" :key="tab.value">
       <TabsContent :value="tab.value">
-        <slot :name="tab.value"></slot>
+        <slot :name="tab.value" />
       </TabsContent>
     </template>
   </Tabs>

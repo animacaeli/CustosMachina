@@ -51,6 +51,6 @@ const forwardedProps = useForwardProps(delegatedProps);
       )
     "
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </ToggleGroupItem>
 </template>

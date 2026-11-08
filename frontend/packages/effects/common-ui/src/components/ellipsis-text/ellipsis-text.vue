@@ -198,7 +198,7 @@ function handleExpand() {
       :side="placement"
     >
       <slot name="tooltip">
-        <slot></slot>
+        <slot />
       </slot>
 
       <template #trigger>
@@ -217,7 +217,7 @@ function handleExpand() {
           @click="handleExpand"
           v-bind="$attrs"
         >
-          <slot></slot>
+          <slot />
         </div>
       </template>
     </VbenTooltip>

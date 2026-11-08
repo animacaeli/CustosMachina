@@ -8,6 +8,6 @@ const props = defineProps<DialogTriggerProps>();
 
 <template>
   <DialogTrigger data-slot="dialog-trigger" v-bind="props">
-    <slot></slot>
+    <slot />
   </DialogTrigger>
 </template>

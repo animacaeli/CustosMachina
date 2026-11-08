@@ -32,7 +32,7 @@ function handleClick() {
     @click="handleClick"
   >
     <span class="flex items-center text-sm">
-      <slot></slot>
+      <slot />
 
       <VbenTooltip v-if="slots.tip || tip" side="bottom">
         <template #trigger>
@@ -48,7 +48,7 @@ function handleClick() {
       </VbenTooltip>
     </span>
     <span v-if="$slots.shortcut" class="mr-2 ml-auto text-xs opacity-60">
-      <slot name="shortcut"></slot>
+      <slot name="shortcut" />
     </span>
     <Switch v-model="checked" @click.stop />
   </div>

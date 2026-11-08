@@ -37,6 +37,6 @@ const isDisabled = computed(() => {
       v-if="loading"
       class="text-md mr-2 size-4 shrink-0 animate-spin"
     />
-    <slot></slot>
+    <slot />
   </Primitive>
 </template>

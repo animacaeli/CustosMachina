@@ -41,7 +41,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
   <HoverCard v-bind="forwarded">
     <HoverCardTrigger as-child class="h-full">
       <div class="h-full cursor-pointer">
-        <slot name="trigger"></slot>
+        <slot name="trigger" />
       </div>
     </HoverCardTrigger>
     <HoverCardContent
@@ -49,7 +49,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       v-bind="contentProps"
       class="side-content z-popup"
     >
-      <slot></slot>
+      <slot />
     </HoverCardContent>
   </HoverCard>
 </template>

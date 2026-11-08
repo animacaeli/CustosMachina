@@ -36,7 +36,7 @@ const forwardedProps = useForwardProps(delegatedProps);
         )
       "
     >
-      <slot></slot>
+      <slot />
     </HoverCardContent>
   </HoverCardPortal>
 </template>

@@ -17,6 +17,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="context-menu-radio-group"
     v-bind="forwarded"
   >
-    <slot></slot>
+    <slot />
   </ContextMenuRadioGroup>
 </template>

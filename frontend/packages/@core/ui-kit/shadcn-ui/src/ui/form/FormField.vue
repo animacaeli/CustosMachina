@@ -31,5 +31,5 @@ provide(FORM_FIELD_INJECTION_KEY, {
 </script>
 
 <template>
-  <slot></slot>
+  <slot />
 </template>

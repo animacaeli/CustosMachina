@@ -364,7 +364,7 @@ function getActivePaths() {
       </SubMenu>
     </template>
     <template v-else>
-      <slot></slot>
+      <slot />
     </template>
   </ul>
 </template>

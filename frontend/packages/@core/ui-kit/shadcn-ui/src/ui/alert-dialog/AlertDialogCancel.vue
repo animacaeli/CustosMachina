@@ -8,6 +8,6 @@ const props = defineProps<AlertDialogCancelProps>();
 
 <template>
   <AlertDialogCancel v-bind="props">
-    <slot></slot>
+    <slot />
   </AlertDialogCancel>
 </template>

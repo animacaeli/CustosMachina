@@ -118,7 +118,7 @@ function toggleCollapsed() {
       </template>
       <template #collapsibleContent>
         <div :class="props.contentClass">
-          <slot></slot>
+          <slot />
         </div>
       </template>
     </VbenCollapsible>

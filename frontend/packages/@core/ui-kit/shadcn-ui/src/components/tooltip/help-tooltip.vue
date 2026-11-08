@@ -26,6 +26,6 @@ defineProps<{ triggerClass?: string }>();
         />
       </slot>
     </template>
-    <slot></slot>
+    <slot />
   </Tooltip>
 </template>

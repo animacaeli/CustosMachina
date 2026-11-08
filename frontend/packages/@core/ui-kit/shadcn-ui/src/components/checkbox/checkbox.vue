@@ -21,6 +21,6 @@ const id = useId();
 <template>
   <div class="flex items-center">
     <Checkbox v-bind="forwarded" :id="id" v-model="checked" />
-    <label :for="id" class="ml-2 cursor-pointer text-sm"> <slot></slot> </label>
+    <label :for="id" class="ml-2 cursor-pointer text-sm"> <slot /> </label>
   </div>
 </template>

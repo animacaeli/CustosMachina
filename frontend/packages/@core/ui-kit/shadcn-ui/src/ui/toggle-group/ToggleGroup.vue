@@ -59,6 +59,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       )
     "
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </ToggleGroupRoot>
 </template>

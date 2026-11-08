@@ -74,7 +74,7 @@ const contentStyle = computed<StyleValue>(() => {
       </div>
 
       <div v-if="$slots.extra">
-        <slot name="extra"></slot>
+        <slot name="extra" />
       </div>
     </div>
 
@@ -89,7 +89,7 @@ const contentStyle = computed<StyleValue>(() => {
       "
       :style="contentStyle"
     >
-      <slot></slot>
+      <slot />
     </div>
     <div
       v-if="$slots.footer"
@@ -101,7 +101,7 @@ const contentStyle = computed<StyleValue>(() => {
         )
       "
     >
-      <slot name="footer"></slot>
+      <slot name="footer" />
     </div>
   </div>
 </template>

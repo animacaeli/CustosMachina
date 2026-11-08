@@ -31,7 +31,7 @@ const forwardedProps = useForwardProps(delegatedProps);
     <div
       class="bg-background text-foreground inline-flex size-full items-center justify-center rounded-md text-sm font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
     >
-      <slot></slot>
+      <slot />
     </div>
   </TabsIndicator>
 </template>

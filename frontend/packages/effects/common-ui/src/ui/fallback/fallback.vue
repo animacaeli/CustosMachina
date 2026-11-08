@@ -136,21 +136,21 @@ function refresh() {
       class="md:1/3 h-1/3 w-1/2 lg:w-1/4"
     />
     <div class="flex-col-center">
-      <slot v-if="$slots.title" name="title"></slot>
+      <slot v-if="$slots.title" name="title" />
       <p
         v-else-if="titleText"
         class="mt-8 text-2xl text-foreground md:text-3xl lg:text-4xl"
       >
         {{ titleText }}
       </p>
-      <slot v-if="$slots.describe" name="describe"></slot>
+      <slot v-if="$slots.describe" name="describe" />
       <p
         v-else-if="descText"
         class="md:text-md my-4 text-muted-foreground lg:text-lg"
       >
         {{ descText }}
       </p>
-      <slot v-if="$slots.action" name="action"></slot>
+      <slot v-if="$slots.action" name="action" />
       <VbenButton v-else-if="showBack" size="lg" @click="back">
         <ArrowLeft class="mr-2 size-4" />
         {{ $t('common.backToHome') }}

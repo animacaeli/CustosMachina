@@ -264,7 +264,7 @@ const getForceMount = computed(() => {
         </VisuallyHidden>
 
         <div class="flex-center">
-          <slot name="extra"></slot>
+          <slot name="extra" />
           <SheetClose
             v-if="closable && closeIconPlacement === 'right'"
             as-child
@@ -293,7 +293,7 @@ const getForceMount = computed(() => {
           })
         "
       >
-        <slot></slot>
+        <slot />
       </div>
       <VbenLoading v-if="showLoading || submitting" spinning />
       <SheetFooter
@@ -305,7 +305,7 @@ const getForceMount = computed(() => {
           )
         "
       >
-        <slot name="prepend-footer"></slot>
+        <slot name="prepend-footer" />
         <slot name="footer">
           <component
             :is="components.DefaultButton || VbenButton"
@@ -318,7 +318,7 @@ const getForceMount = computed(() => {
               {{ cancelText || $t('cancel') }}
             </slot>
           </component>
-          <slot name="center-footer"></slot>
+          <slot name="center-footer" />
           <component
             :is="components.PrimaryButton || VbenButton"
             v-if="showConfirmButton"
@@ -330,7 +330,7 @@ const getForceMount = computed(() => {
             </slot>
           </component>
         </slot>
-        <slot name="append-footer"></slot>
+        <slot name="append-footer" />
       </SheetFooter>
     </SheetContent>
   </Sheet>

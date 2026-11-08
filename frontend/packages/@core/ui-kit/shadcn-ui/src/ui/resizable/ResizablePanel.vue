@@ -27,6 +27,6 @@ defineExpose({
     data-slot="resizable-panel"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </SplitterPanel>
 </template>

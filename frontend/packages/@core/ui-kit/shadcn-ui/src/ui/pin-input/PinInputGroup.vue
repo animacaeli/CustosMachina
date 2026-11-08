@@ -21,6 +21,6 @@ const forwardedProps = useForwardProps(delegatedProps);
     v-bind="forwardedProps"
     :class="cn('flex items-center', props.class)"
   >
-    <slot></slot>
+    <slot />
   </Primitive>
 </template>

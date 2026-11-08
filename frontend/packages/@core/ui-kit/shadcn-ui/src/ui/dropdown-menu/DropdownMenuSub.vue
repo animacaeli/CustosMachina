@@ -15,6 +15,6 @@ const forwarded = useForwardPropsEmits(props, emits);
     data-slot="dropdown-menu-sub"
     v-bind="forwarded"
   >
-    <slot v-bind="slotProps"></slot>
+    <slot v-bind="slotProps" />
   </DropdownMenuSub>
 </template>

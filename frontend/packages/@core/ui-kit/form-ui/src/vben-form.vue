@@ -64,7 +64,7 @@ watchEffect(() => {
       :key="slotName"
       #[slotName]="slotProps"
     >
-      <slot :name="slotName" v-bind="slotProps"></slot>
+      <slot :name="slotName" v-bind="slotProps" />
     </template>
     <template #default="slotProps">
       <slot v-bind="slotProps">

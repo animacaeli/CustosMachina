@@ -91,6 +91,6 @@ const on = {
 
 <template>
   <transition name="collapse-transition" v-on="on">
-    <slot></slot>
+    <slot />
   </transition>
 </template>

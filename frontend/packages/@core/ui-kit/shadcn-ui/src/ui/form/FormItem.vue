@@ -19,6 +19,6 @@ provide(FORM_ITEM_INJECTION_KEY, id);
 
 <template>
   <div data-slot="form-item" :class="cn(props.class)">
-    <slot></slot>
+    <slot />
   </div>
 </template>

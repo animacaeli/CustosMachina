@@ -22,6 +22,6 @@ const props = withDefaults(
     :as-child="asChild"
     :class="cn('hover:text-foreground transition-colors', props.class)"
   >
-    <slot></slot>
+    <slot />
   </Primitive>
 </template>

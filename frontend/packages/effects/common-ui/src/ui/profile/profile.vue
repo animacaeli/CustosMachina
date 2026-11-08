@@ -57,7 +57,7 @@ const tabsValue = defineModel<string | undefined>('modelValue', {
         </Tabs>
       </Card>
       <Card class="ml-4 w-5/6 flex-auto p-8">
-        <slot name="content"></slot>
+        <slot name="content" />
       </Card>
     </div>
   </Page>

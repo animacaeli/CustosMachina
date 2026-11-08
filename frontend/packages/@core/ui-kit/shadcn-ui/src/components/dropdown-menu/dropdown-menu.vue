@@ -28,7 +28,7 @@ function handleItemClick(menu: IDropdownMenuItem) {
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger class="flex h-full items-center gap-1">
-      <slot></slot>
+      <slot />
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start">
       <DropdownMenuGroup>

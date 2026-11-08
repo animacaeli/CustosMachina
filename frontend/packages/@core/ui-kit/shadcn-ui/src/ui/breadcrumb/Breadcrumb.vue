@@ -8,6 +8,6 @@ const props = defineProps<{
 
 <template>
   <nav aria-label="breadcrumb" data-slot="breadcrumb" :class="props.class">
-    <slot></slot>
+    <slot />
   </nav>
 </template>

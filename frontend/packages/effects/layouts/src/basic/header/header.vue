@@ -293,19 +293,19 @@ function clearPreferencesAndLogout() {
     </slot>
   </template>
   <div class="flex-center hidden lg:block">
-    <slot name="breadcrumb"></slot>
+    <slot name="breadcrumb" />
   </div>
   <template
     v-for="slot in leftSlots.filter((item) => item.index > REFERENCE_VALUE)"
     :key="slot.name"
   >
-    <slot :name="slot.name"></slot>
+    <slot :name="slot.name" />
   </template>
   <div
     :class="`menu-align-${preferences.header.menuAlign}`"
     class="flex h-full min-w-0 flex-1 items-center"
   >
-    <slot name="menu"></slot>
+    <slot name="menu" />
   </div>
   <div class="flex h-full min-w-0 shrink-0 items-center">
     <template v-for="slot in rightSlots" :key="slot.name">

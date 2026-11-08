@@ -79,11 +79,11 @@ const logoStyle = computed((): CSSProperties => {
     class="top-0 flex w-full flex-[0_0_auto] items-center border-b border-border bg-header pl-2 transition-[margin-top] duration-200"
   >
     <div v-if="slots.logo || (!logoVisible && !isMobile)" :style="logoStyle">
-      <slot name="logo"></slot>
+      <slot name="logo" />
     </div>
 
-    <slot name="toggle-button"> </slot>
+    <slot name="toggle-button" />
 
-    <slot></slot>
+    <slot />
   </header>
 </template>

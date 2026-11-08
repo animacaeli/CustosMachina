@@ -48,7 +48,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         )
       "
     >
-      <slot></slot>
+      <slot />
       <TooltipArrow class="fill-accent stroke-border" />
     </TooltipContent>
   </TooltipPortal>

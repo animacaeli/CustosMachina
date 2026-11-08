@@ -15,6 +15,6 @@ const { error, formItemId, formDescriptionId, formMessageId } = useFormField();
     "
     :aria-invalid="!!error"
   >
-    <slot></slot>
+    <slot />
   </Slot>
 </template>

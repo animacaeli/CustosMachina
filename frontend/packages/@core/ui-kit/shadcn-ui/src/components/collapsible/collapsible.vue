@@ -52,7 +52,7 @@ defineExpose({
       class="flex items-center justify-between"
       v-if="$slots.label || showTrigger"
     >
-      <slot name="label" v-if="$slots.label"> </slot>
+      <slot name="label" v-if="$slots.label" />
       <CollapsibleTrigger
         v-if="showTrigger"
         class="cursor-pointer rounded-full h-[25px] w-[25px] inline-flex items-center justify-center outline-none data-[state=closed]:bg-white data-[state=open]:bg-primary/20 hover:bg-primary/20 text-primary"
@@ -68,12 +68,12 @@ defineExpose({
       </CollapsibleTrigger>
     </div>
 
-    <slot name="visibleContent" :open></slot>
+    <slot name="visibleContent" :open />
 
     <CollapsibleContent
       class="data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up -mx-px overflow-hidden px-px justify-start"
     >
-      <slot name="collapsibleContent" :open></slot>
+      <slot name="collapsibleContent" :open />
     </CollapsibleContent>
   </CollapsibleRoot>
 </template>
