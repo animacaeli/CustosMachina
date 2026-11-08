@@ -37,12 +37,17 @@ overrides:
   '@intlify/core-base': ^11.4.14
   '@intlify/message-compiler': ^11.4.14
   '@intlify/shared': ^11.4.14
+  # vue-tsc 3.3.14（配 TS 6.0.3）对模板内 reactive 成员误报 .value 不存在（v0.12.22 验证版钉回）
+  # @vue/test-utils 2.5.1（重解析顶新）pointerdown 事件行为变化——
+  # vben 上游 drawer 测试 expect.poll 超时（CI 第七轮）；2.4.11 钉回
+  '@vue/test-utils': 2.4.11
   brace-expansion@2: ^2.1.7
   clsx: 'catalog:'
   dompurify: ^3.4.17
   fast-uri: ^3.1.8
   follow-redirects@<1.16.2: ^1.16.2
   glob@10: ^10.5.0
+  happy-dom: 20.14.5
   js-yaml@4: ^4.3.2
   # oxlint 1.92 的 type-aware 引擎（tsgolint）Go 侧 panic 崩溃（2026-11-09 CI 第四轮）；1.83（v0.12.22 已验证版）钉回
   oxlint: 1.83.0
@@ -56,13 +61,8 @@ overrides:
   tinypool: ^2.1.2
   undici@<8: ^7.30.1
   vite: 8.3.2 # 精确锁：8.3.3+ 引入 chunk 拆分回归——vue-router 双模块实例致布局白屏（命名统一排障 2026-11-09）
-  vue: 'catalog:'
-  # vue-tsc 3.3.14（配 TS 6.0.3）对模板内 reactive 成员误报 .value 不存在（v0.12.22 验证版钉回）
-  # @vue/test-utils 2.5.1（重解析顶新）pointerdown 事件行为变化——
-  # vben 上游 drawer 测试 expect.poll 超时（CI 第七轮）；2.4.11 钉回
-  '@vue/test-utils': 2.4.11
-  happy-dom: 20.14.5
   vitest: 4.1.11
+  vue: 'catalog:'
   vue-tsc: 3.3.11
   zod: ^4.6.6
 
