@@ -383,7 +383,10 @@ async function onDelete(p: Project) {
           />
         </a-form-item>
         <a-form-item label="仓库地址" required>
-          <a-input v-model:value="form.repoUrl" :placeholder="repoUrlPlaceholder" />
+          <a-input
+            v-model:value="form.repoUrl"
+            :placeholder="repoUrlPlaceholder"
+          />
         </a-form-item>
         <a-form-item
           label="仓库路径"
