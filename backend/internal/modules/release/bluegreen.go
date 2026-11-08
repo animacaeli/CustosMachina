@@ -173,7 +173,7 @@ func (s *Service) executeBlueGreen(ctx context.Context, p *projectRow, target *E
 	// registry 凭据在后台任务内登录/登出：后台生命周期覆盖全部 pull/up 阶段
 	//（login 放在锁后，避免与并发发布/灰度的 logout 交错）。
 	if reg != nil && reg.HasCred {
-		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
+		if err := s.res.RegistryLogin(ctx, target.ServerID, strings.SplitN(reg.Address, "/", 2)[0], reg.Username, reg.Password); err != nil {
 			rel.Status = ReleaseFailed
 			rel.Output = time.Now().Format("15:04:05") + " 目标机 registry 登录失败: " + err.Error()
 			_ = s.db.Model(&Release{}).Where("id = ?", rel.ID).

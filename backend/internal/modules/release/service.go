@@ -141,7 +141,9 @@ func (s *Service) imageFor(ctx context.Context, projectID uint, tag string) stri
 	if name == "" {
 		return ""
 	}
-	return rc.Address + "/" + strx.NormalizeName(name) + ":" + tag
+	// address 允许 host/namespace 形态（TCR 个人版 namespace 层）：
+	// 镜像前缀=完整 address；docker login 用 host 段（registryFor 内已拆）
+	return strings.TrimRight(rc.Address, "/") + "/" + strx.NormalizeName(name) + ":" + tag
 }
 
 func (s *Service) registryFor(ctx context.Context, projectID uint) (*registryCred, error) {
@@ -296,7 +298,7 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	}
 
 	if reg != nil && reg.HasCred {
-		if err := s.res.RegistryLogin(ctx, target.ServerID, reg.Address, reg.Username, reg.Password); err != nil {
+		if err := s.res.RegistryLogin(ctx, target.ServerID, strings.SplitN(reg.Address, "/", 2)[0], reg.Username, reg.Password); err != nil {
 			return nil, fmt.Errorf("目标机 registry 登录失败: %w", err)
 		}
 		defer s.res.RegistryLogout(ctx, target.ServerID, reg.Address)

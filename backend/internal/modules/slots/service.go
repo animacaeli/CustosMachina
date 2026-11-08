@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/custos-machina/backend/internal/modules/configs"
+	"strings"
 	"sync"
 	"time"
 
@@ -494,7 +495,8 @@ func (s *Service) testImage(ctx context.Context, projectID uint, imageTag string
 	s.db.WithContext(ctx).Table("projects").Select("name").Where("id = ?", projectID).Scan(&name)
 	// 与主仓库同 repo、纯时间戳 tag 区分环境（TCR 个人版自动新建的 -test 仓库
 	// 存在 compose pull 被拒异常，复用已验证仓库；tag 白名单保证纯数字/字母）
-	return addr + "/" + strx.NormalizeName(name) + ":" + imageTag
+	// address 允许 host/namespace 形态（与 release.imageFor 一致；TrimRight 防双斜杠）
+	return strings.TrimRight(addr, "/") + "/" + strx.NormalizeName(name) + ":" + imageTag
 }
 
 // deployName 槽位隔离域：<proj>-<slot>（命名统一去 -test 段，2026-11-08；
