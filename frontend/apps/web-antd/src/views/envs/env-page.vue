@@ -140,6 +140,17 @@ const form = reactive({
   repoUrl: '',
 });
 
+// 模板内多行三元/数组在 vue-tsc 新版模板表达式解析下报 TS1005——收进 computed
+const providerOptions = [
+  { label: 'gitea', value: 'gitea' },
+  { label: 'gitee', value: 'gitee' },
+];
+const repoUrlPlaceholder = computed(() =>
+  form.provider === 'gitee'
+    ? 'https://gitee.com/org/repo'
+    : 'https://gitea.internal/org/repo',
+);
+
 function openCreate() {
   editingId.value = null;
   Object.assign(form, {
@@ -367,22 +378,12 @@ async function onDelete(p: Project) {
         >
           <a-radio-group
             v-model:value="form.provider"
-            :options="[
-              { label: 'gitea', value: 'gitea' },
-              { label: 'gitee', value: 'gitee' },
-            ]"
+            :options="providerOptions"
             option-type="button"
           />
         </a-form-item>
         <a-form-item label="仓库地址" required>
-          <a-input
-            v-model:value="form.repoUrl"
-            :placeholder="
-              form.provider === 'gitee'
-                ? 'https://gitee.com/org/repo'
-                : 'https://gitea.internal/org/repo'
-            "
-          />
+          <a-input v-model:value="form.repoUrl" :placeholder="repoUrlPlaceholder" />
         </a-form-item>
         <a-form-item
           label="仓库路径"

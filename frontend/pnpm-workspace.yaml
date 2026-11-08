@@ -46,6 +46,9 @@ overrides:
   js-yaml@4: ^4.3.2
   # oxlint 1.92 的 type-aware 引擎（tsgolint）Go 侧 panic 崩溃（2026-11-09 CI 第四轮）；1.83（v0.12.22 已验证版）钉回
   oxlint: 1.83.0
+  # vue-tsc 3.3.14（配 TS 6.0.3）对模板内 reactive 成员误报 .value 不存在
+  # （v0.12.22 验证版 3.3.11 钉回；2026-11-09 CI 第五轮）
+  vue-tsc: 3.3.11
   pinia: 'catalog:'
   postcss-selector-parser: ^7.1.6
   prosemirror-view: ^1.42.3
