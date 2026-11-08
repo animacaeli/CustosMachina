@@ -1,6 +1,6 @@
 import type { Router } from 'vue-router';
 
-import { nextTick, onScopeDispose } from 'vue';
+import { getCurrentInstance, nextTick, onScopeDispose } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { getLayoutScrollElement } from '@vben-core/shared/utils';
@@ -31,12 +31,26 @@ function getHashTarget(scrollElement: HTMLElement, hash: string) {
   }
 }
 
-export function useLayoutScroll(router: LayoutScrollRouter = useRouter()) {
+export function useLayoutScroll(router?: LayoutScrollRouter) {
+  // 布局滚动位置恢复是增强能力：拿不到 router 时打印告警并优雅跳过，
+  // 绝不让布局挂掉（2026-11-09 白屏事故防御层——根因是 pnpm peer 组合
+  // 分裂导致 vue-router 多副本，已在 .npmrc dedupe 修复；此处兜底）。
+  const activeRouter = router ?? useRouter();
+  if (!activeRouter) {
+    const inst = getCurrentInstance();
+    console.error(
+      '[useLayoutScroll] router unavailable — hasInstance:',
+      !!inst,
+      'appHasRouter:',
+      !!inst?.appContext?.config?.globalProperties?.$router,
+    );
+    return;
+  }
   const scrollPositions = new Map<number, number>();
   let currentHistoryPosition = getHistoryPosition();
   let isHistoryNavigation = false;
 
-  const removeBeforeGuard = router.beforeEach(() => {
+  const removeBeforeGuard = activeRouter.beforeEach(() => {
     const scrollElement = getLayoutScrollElement();
     if (scrollElement && currentHistoryPosition !== undefined) {
       scrollPositions.set(currentHistoryPosition, scrollElement.scrollTop);
@@ -49,7 +63,7 @@ export function useLayoutScroll(router: LayoutScrollRouter = useRouter()) {
       currentHistoryPosition !== nextHistoryPosition;
   });
 
-  const removeAfterHook = router.afterEach(async (to, _from, failure) => {
+  const removeAfterHook = activeRouter.afterEach(async (to, _from, failure) => {
     const nextHistoryPosition = getHistoryPosition();
 
     if (!failure) {

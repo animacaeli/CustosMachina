@@ -31,6 +31,17 @@ export default defineConfig(async () => {
           },
         },
       },
+      // preview 不继承 server.proxy——本机 8080 是 Jenkins（曾把 /api 打进
+      // Jenkins 收 403 crumb）。显式同配置，连测环境才与 dev 一致。
+      preview: {
+        proxy: {
+          '/api': {
+            changeOrigin: true,
+            target: process.env.CUSTOS_API_TARGET ?? 'http://localhost:8080',
+            ws: true,
+          },
+        },
+      },
     },
   };
 });

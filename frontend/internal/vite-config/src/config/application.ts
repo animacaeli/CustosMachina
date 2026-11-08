@@ -63,6 +63,19 @@ function defineApplicationConfig(userConfigPromise?: DefineApplicationOptions) {
             assetFileNames: '[ext]/[name]-[hash].[ext]',
             chunkFileNames: 'js/[name]-[hash].js',
             entryFileNames: 'jse/index-[name]-[hash].js',
+            // 2026-11-09 命名统一排障：vite 8.3.3+ 的默认拆分把 vue-router 打进
+            // basic 与 bootstrap 两个 chunk（双模块实例——app.use 的是实例 A、
+            // 组件 useRouter() inject 的是实例 B 的 key → undefined → 布局白屏。
+            // 强制响应式核心（vue/vue-router/pinia）单 chunk，杜绝双实例。
+            advancedChunks: {
+              groups: [
+                {
+                  name: 'vue-core',
+                  // pnpm 真实布局：.pnpm/<pkg>@<ver>/node_modules/<pkg>/（vue/vue-router/pinia 归一 chunk）
+                  test: /node_modules[\\/]\.pnpm[\\/][^\\/]*[\\/]node_modules[\\/](vue|vue-router|pinia)[\\/]/,
+                },
+              ],
+            },
             minify: isBuild
               ? {
                   compress: {

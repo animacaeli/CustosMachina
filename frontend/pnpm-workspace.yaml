@@ -34,9 +34,9 @@ overrides:
   # critical/high 传递依赖钉到修复版；例外与依据见 pnpm-audit-allowlist.json ---
   '@ast-grep/napi': 'catalog:'
   '@ctrl/tinycolor': 'catalog:'
-  '@intlify/core-base': ^11.4.14
-  '@intlify/message-compiler': ^11.4.14
-  '@intlify/shared': ^11.4.14
+  '@intlify/core-base': 11.4.10
+  '@intlify/message-compiler': 11.4.10
+  '@intlify/shared': 11.4.10
   brace-expansion@2: ^2.1.7
   clsx: 'catalog:'
   dompurify: ^3.4.17
@@ -53,7 +53,7 @@ overrides:
   svgo@<5: ^4.1.0
   tinypool: ^2.1.2
   undici@<8: ^7.30.1
-  vite: ^8.3.3
+  vite: 8.3.2  # 精确锁：8.3.3+ 引入 chunk 拆分回归——vue-router 双模块实例致布局白屏（命名统一排障 2026-11-09）
   vue: 'catalog:'
   zod: ^4.6.6
 
@@ -208,7 +208,7 @@ catalog:
   typescript: ^6.0.3
   unplugin-dts: ^1.0.3
   unplugin-vue: ^7.2.0
-  vite: ^8.3.3
+  vite: 8.3.2  # 精确锁：8.3.3+ 引入 chunk 拆分回归——vue-router 双模块实例致布局白屏（命名统一排障 2026-11-09）
   vite-plugin-compression: ^0.5.1
   vite-plugin-lazy-import: ^1.0.7
   vite-plugin-pwa: ^1.3.0
@@ -216,7 +216,7 @@ catalog:
   vitest: ^4.1.11
   vue: 3.5.42
   vue-eslint-parser: ^10.4.1
-  vue-i18n: ^11.4.18
+  vue-i18n: 11.4.10
   vue-json-pretty: ^2.6.0
   vue-router: ^5.2.0
   vue-tippy: ^6.7.1
