@@ -58,6 +58,11 @@ overrides:
   vite: 8.3.2 # 精确锁：8.3.3+ 引入 chunk 拆分回归——vue-router 双模块实例致布局白屏（命名统一排障 2026-11-09）
   vue: 'catalog:'
   # vue-tsc 3.3.14（配 TS 6.0.3）对模板内 reactive 成员误报 .value 不存在（v0.12.22 验证版钉回）
+  # @vue/test-utils 2.5.1（重解析顶新）pointerdown 事件行为变化——
+  # vben 上游 drawer 测试 expect.poll 超时（CI 第七轮）；2.4.11 钉回
+  '@vue/test-utils': 2.4.11
+  happy-dom: 20.14.5
+  vitest: 4.1.11
   vue-tsc: 3.3.11
   zod: ^4.6.6
 
