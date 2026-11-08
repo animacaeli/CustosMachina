@@ -34,9 +34,9 @@ overrides:
   # critical/high 传递依赖钉到修复版；例外与依据见 pnpm-audit-allowlist.json ---
   '@ast-grep/napi': 'catalog:'
   '@ctrl/tinycolor': 'catalog:'
-  '@intlify/core-base': 11.4.10
-  '@intlify/message-compiler': 11.4.10
-  '@intlify/shared': 11.4.10
+  '@intlify/core-base': ^11.4.14
+  '@intlify/message-compiler': ^11.4.14
+  '@intlify/shared': ^11.4.14
   brace-expansion@2: ^2.1.7
   clsx: 'catalog:'
   dompurify: ^3.4.17
@@ -216,7 +216,7 @@ catalog:
   vitest: ^4.1.11
   vue: 3.5.42
   vue-eslint-parser: ^10.4.1
-  vue-i18n: 11.4.10
+  vue-i18n: ^11.4.18
   vue-json-pretty: ^2.6.0
   vue-router: ^5.2.0
   vue-tippy: ^6.7.1

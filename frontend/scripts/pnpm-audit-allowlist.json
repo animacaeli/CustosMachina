@@ -13,6 +13,13 @@
       "severity": "high",
       "reason": "修复版未发布（registry 最新 1.4.0 < 1.4.1）；仅 dev server 链（vite-config>nitropack>listhen），不进浏览器产物",
       "expires": "2027-01-07"
+    },
+    {
+      "id": "GHSA-587h-7wmj-h5pm",
+      "module": "vite",
+      "severity": "high",
+      "reason": "锁 8.3.2 是构建正确性回归的临时处置（8.3.3+ chunk 拆分 + 需配合 dedupe 验证）；漏洞为 launch-editor 存在性检查绕过，仅 dev server + Windows 场景，不进浏览器产物",
+      "expires": "2027-02-09"
     }
   ]
 }
