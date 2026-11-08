@@ -345,9 +345,6 @@ catalogs:
     qrcode:
       specifier: ^1.5.4
       version: 1.5.4
-    reka-ui:
-      specifier: ^2.10.4
-      version: 2.11.0
     resolve.exports:
       specifier: ^2.0.3
       version: 2.0.4
@@ -478,15 +475,18 @@ overrides:
   '@intlify/core-base': ^11.4.14
   '@intlify/message-compiler': ^11.4.14
   '@intlify/shared': ^11.4.14
+  '@vue/test-utils': 2.4.11
   brace-expansion@2: ^2.1.7
   clsx: ^2.1.1
   dompurify: ^3.4.17
   fast-uri: ^3.1.8
   follow-redirects@<1.16.2: ^1.16.2
   glob@10: ^10.5.0
+  happy-dom: 20.14.5
   js-yaml@4: ^4.3.2
   oxlint: 1.83.0
   pinia: ^4.0.2
+  reka-ui: 2.10.4
   postcss-selector-parser: ^7.1.6
   prosemirror-view: ^1.42.3
   qs: ^6.16.0
@@ -496,10 +496,8 @@ overrides:
   tinypool: ^2.1.2
   undici@<8: ^7.30.1
   vite: 8.3.2
-  vue: 3.5.42
-  '@vue/test-utils': 2.4.11
-  happy-dom: 20.14.5
   vitest: 4.1.11
+  vue: 3.5.42
   vue-tsc: 3.3.11
   zod: ^4.6.6
 
@@ -1068,8 +1066,8 @@ importers:
         specifier: 'catalog:'
         version: 14.4.0(vue@3.5.42(typescript@6.0.3))
       reka-ui:
-        specifier: 'catalog:'
-        version: 2.11.0(vue@3.5.42(typescript@6.0.3))
+        specifier: 2.10.4
+        version: 2.10.4(vue@3.5.42(typescript@6.0.3))
       sortablejs:
         specifier: 'catalog:'
         version: 1.15.7
@@ -1262,8 +1260,8 @@ importers:
         specifier: 'catalog:'
         version: 0.7.1
       reka-ui:
-        specifier: 'catalog:'
-        version: 2.11.0(vue@3.5.42(typescript@6.0.3))
+        specifier: 2.10.4
+        version: 2.10.4(vue@3.5.42(typescript@6.0.3))
       vue:
         specifier: 3.5.42
         version: 3.5.42(typescript@6.0.3)
@@ -3231,10 +3229,8 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
-  '@floating-ui/vue@2.0.1':
-    resolution: {integrity: sha512-043dyEKD9TDSfz080YH2vobubgg+NIo/9Fw4RAl7sEMpD8Am1DNrrSTl/GpMBjyGHoD/FbJY2QLawY+HSQsEIA==}
-    peerDependencies:
-      vue: 3.5.42
+  '@floating-ui/vue@1.1.11':
+    resolution: {integrity: sha512-HzHKCNVxnGS35r9fCHBc3+uCnjw9IWIlCPL683cGgM9Kgj2BiAl8x1mS7vtvP6F9S/e/q4O6MApwSHj8hNLGfw==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -8352,8 +8348,8 @@ packages:
     resolution: {integrity: sha512-IeYboCLG1KBNRksrZQIZ1SV5KVWZiR0ikFokOcA0n63vLvlaFvCsfxN+fd4aXwL0KW3YD+ByRzIgo9ZAHdbldw==}
     hasBin: true
 
-  reka-ui@2.11.0:
-    resolution: {integrity: sha512-ilkpm4bIAol4jwzm4tpm3WVcffyGOpqksNZL1k1qO9QmIwAA+q8jroxjkUGLEn/GddfdExFfvofWfQiKZszUeQ==}
+  reka-ui@2.10.4:
+    resolution: {integrity: sha512-kbS5GAbkHkYj0EVKAg5ZPEPndhBjeUFSa1Aq5m5ftQwyHnB1v5tw8X6fcwfKH/ry3StPXblMWM1DW82MVS71cw==}
     peerDependencies:
       vue: 3.5.42
 
@@ -11531,11 +11527,14 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@floating-ui/vue@2.0.1(vue@3.5.42(typescript@6.0.3))':
+  '@floating-ui/vue@1.1.11(vue@3.5.42(typescript@6.0.3))':
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@floating-ui/utils': 0.2.12
-      vue: 3.5.42(typescript@6.0.3)
+      vue-demi: 0.14.10(vue@3.5.42(typescript@6.0.3))
+    transitivePeerDependencies:
+      - '@vue/composition-api'
+      - vue
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -16615,9 +16614,10 @@ snapshots:
     dependencies:
       jsesc: 3.1.0
 
-  reka-ui@2.11.0(vue@3.5.42(typescript@6.0.3)):
+  reka-ui@2.10.4(vue@3.5.42(typescript@6.0.3)):
     dependencies:
-      '@floating-ui/vue': 2.0.1(vue@3.5.42(typescript@6.0.3))
+      '@floating-ui/dom': 1.8.0
+      '@floating-ui/vue': 1.1.11(vue@3.5.42(typescript@6.0.3))
       '@internationalized/date': 3.12.4
       '@internationalized/number': 3.6.9
       '@tanstack/vue-virtual': 3.13.52(vue@3.5.42(typescript@6.0.3))
@@ -16627,6 +16627,8 @@ snapshots:
       defu: 6.1.7
       ohash: 2.0.12
       vue: 3.5.42(typescript@6.0.3)
+    transitivePeerDependencies:
+      - '@vue/composition-api'
 
   relateurl@0.2.7: {}
 
