@@ -38,6 +38,15 @@ export default {
   ],
   plugins: ['stylelint-order', '@stylistic/stylelint-plugin', 'stylelint-scss'],
   rules: {
+    // Tailwind v4 的 @apply prelude 用主题类（border-border/size-full 等）——
+    // stylelint 17.x 新增的 at-rule-prelude-no-invalid 不认识这些工具类，
+    // 对 @apply 关闭（2026-11-09 重解析顶新 stylelint 后 CI 全量误报）
+    'at-rule-prelude-no-invalid': [
+      true,
+      {
+        ignoreAtRules: ['apply', 'tailwind', 'theme', 'utility', 'custom-variant', 'source', 'plugin', 'mixin', 'include', 'function', 'if', 'each', 'for', 'use', 'forward'],
+      },
+    ],
     'at-rule-no-deprecated': null,
     'at-rule-no-unknown': [
       true,
