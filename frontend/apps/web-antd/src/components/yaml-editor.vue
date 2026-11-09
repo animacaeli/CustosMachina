@@ -44,8 +44,24 @@ ensureMonacoEnv();
 // compose schema 补全（monaco-yaml 单例配置）：仅显式要求时更新一次——
 // 无 schema 的实例不触碰全局配置，避免清掉其他编辑器挂上的补全
 // （v0.12.3 复核残留项）
+// yaml 语言注册与 compose schema 解耦（2026-11-09）：yaml 语言注册依赖
+// configureMonacoYaml 执行——此前被 schema 条件挡住，未传 schema 的实例
+// （配置文件视图）从不注册 yaml → Monaco 静默降级纯文本无高亮。
+// 注册（无 schema）随首个实例初始化无条件执行；schema 覆盖保持原条件。
+let yamlRegistered = false;
+function ensureYamlLanguage() {
+  if (yamlRegistered) return;
+  yamlRegistered = true;
+  configureMonacoYaml(monaco, {
+    completion: true,
+    hover: true,
+    validate: true,
+  });
+}
+
 let schemaApplied = false;
 function applyComposeSchema() {
+  ensureYamlLanguage();
   if (schemaApplied || !props.schema || props.language !== 'yaml') return;
   schemaApplied = true;
   configureMonacoYaml(monaco, {
@@ -61,6 +77,7 @@ function applyComposeSchema() {
     ],
   });
 }
+ensureYamlLanguage();
 applyComposeSchema();
 
 // 跟随应用主题切换明暗
