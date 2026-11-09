@@ -695,7 +695,7 @@ const envOptions = computed(() =>
 // {env} 占位符渲染预览（与后端 renderPath 同语义；仅表单预览，实际下发以后端为准）
 function renderEnvPath(path: string, relPath: string) {
   if (!path.includes('{env}')) return path;
-  const seg = (relPath.split('/').filter(Boolean)[0] ?? '').trim();
+  const seg = (relPath.split('/').find(Boolean) ?? '').trim();
   const env = seg === '' || seg === 'canary' ? 'prod' : seg;
   return path.replaceAll('{env}', env);
 }
@@ -1071,7 +1071,9 @@ async function toggleMergedReveal() {
       :width="880"
     >
       <div class="text-muted-foreground mb-2 text-xs">
-        左侧=历史版本 {{ versionDiffMeta?.hash }}（{{ fmtVersionAt }}），右侧=当前已保存内容；需整体恢复用「回滚」（生成新版本，手动下发）
+        左侧=历史版本 {{ versionDiffMeta?.hash }}（{{
+          fmtVersionAt
+        }}），右侧=当前已保存内容；需整体恢复用「回滚」（生成新版本，手动下发）
       </div>
       <DiffEditor
         :language="versionDiffLang"
@@ -1266,20 +1268,20 @@ async function toggleMergedReveal() {
             placeholder="选择主机（按路径首段自动带出环境族部署目标，可改）"
           />
         </a-form-item>
-                <a-form-item
-                  :extra="
-                    form.path.includes('{env}')
-                      ? `实际下发：${formRenderedPath}（{env} 按层级首段渲染，多环境同模板各归其位）`
-                      : '支持 {env} 占位符（按层级路径首段渲染），如 /opt/app/{env}/config.yaml'
-                  "
-                  label="远端绝对路径"
-                  required
-                >
-                  <a-input
-                    v-model:value="form.path"
-                    placeholder="/etc/myapp/config.yaml 或 /opt/app/{env}/config.yaml"
-                  />
-                </a-form-item>
+        <a-form-item
+          :extra="
+            form.path.includes('{env}')
+              ? `实际下发：${formRenderedPath}（{env} 按层级首段渲染，多环境同模板各归其位）`
+              : '支持 {env} 占位符（按层级路径首段渲染），如 /opt/app/{env}/config.yaml'
+          "
+          label="远端绝对路径"
+          required
+        >
+          <a-input
+            v-model:value="form.path"
+            placeholder="/etc/myapp/config.yaml 或 /opt/app/{env}/config.yaml"
+          />
+        </a-form-item>
         <a-form-item label="格式（编辑器高亮）">
           <a-radio-group v-model:value="form.format">
             <a-radio value="yaml">yaml</a-radio>

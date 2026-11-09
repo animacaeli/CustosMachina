@@ -38,7 +38,9 @@ const project = ref<null | Project>(null);
 const targets = ref<EnvTarget[]>([]);
 const groups = ref<NotifyGroup[]>([]);
 const servers = ref<ManagedServer[]>([]);
-const registries = ref<Array<{ address: string; id: number; name: string }>>([]);
+const registries = ref<Array<{ address: string; id: number; name: string }>>(
+  [],
+);
 const loading = ref(false);
 const activeTab = ref('config');
 

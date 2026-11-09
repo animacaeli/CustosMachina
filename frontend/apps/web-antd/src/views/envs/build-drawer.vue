@@ -140,18 +140,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function logKindLabel(): string {
+  // test 记录区分双视图；prod/canary 恒为 CI 构建日志
+  if (logKind.value === 'deploy') return '部署日志';
+  return 'CI 构建日志';
+}
+
 async function openLog(record: Build, kind?: 'ci' | 'deploy') {
   logRecord = record;
   const live = record.status === 'pending' || record.status === 'running';
   logDual.value = record.envType === 'test' && !!record.ciRef;
   logKind.value = kind ?? (logDual.value ? 'ci' : 'deploy');
-  const kindLabel =
-    record.envType === 'test'
-      ? logKind.value === 'deploy'
-        ? '部署日志'
-        : 'CI 构建日志'
-      : 'CI 构建日志';
-  logTitle.value = `${record.tag} ${kindLabel}${live ? '（实时）' : ''}`;
+  logTitle.value = `${record.tag} ${logKindLabel()}${live ? '（实时）' : ''}`;
   logOpen.value = true;
   logText.value = '';
   logLoading.value = true;
