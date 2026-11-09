@@ -24,6 +24,10 @@ import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 import yamlWorker from 'monaco-yaml/yaml.worker?worker';
 
 // 基础高亮语言（实际使用的面）：显式注册，防惰性挂载
+// yaml 着色 tokenizer（2026-11-09 二次修复）：configureMonacoYaml 只注册
+// 语言服务（补全/校验），不注册 Monarch 着色——此前误以为其"自带注册"，
+// 导致所有 yaml 视图单色 plaintext（mtk1）
+import 'monaco-editor/languages/definitions/yaml/register';
 import 'monaco-editor/languages/definitions/ini/register';
 import 'monaco-editor/languages/definitions/python/register';
 import 'monaco-editor/languages/definitions/shell/register';
