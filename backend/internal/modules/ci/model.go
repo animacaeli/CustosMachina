@@ -34,6 +34,7 @@ type Build struct {
 	Builder      string         `gorm:"size:64" json:"builder"`
 	Source       string         `gorm:"size:16;not null" json:"source"`
 	Status       string         `gorm:"size:16;not null;default:pending" json:"status"`
+	CIRef        string         `gorm:"size:128" json:"ciRef"`           // 外部构建定位 job#number（test 记录由 CI 回调携带；有值可直拉 Jenkins 日志）
 	DurationSecs int            `json:"durationSecs"`                    // 终态时计算；running 期由前端用 started_at 差值显示
 	FailCount    int            `gorm:"not null;default:0" json:"-"`     // 防抖：连续 N 次非 success 才标 failed（commit status 在 job 切换间隙可能短暂回落）
 	LogURL       string         `gorm:"size:512" json:"logUrl"`          // CI Web UI 页面（外链兜底）

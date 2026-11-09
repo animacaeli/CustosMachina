@@ -60,6 +60,7 @@ type SaveProjectInput struct {
 	CIToken       string `json:"ciToken" binding:"omitempty,max=512"`            // 留空保留
 	ComposePath   string `json:"composePath" binding:"omitempty,max=255"`
 	DefaultBranch string `json:"defaultBranch" binding:"omitempty,max=128"`
+	Remark        string `json:"remark" binding:"omitempty,max=255"` // 备注（Create 覆盖；Update 全量提交语义直接覆盖）
 	// 指针语义：Create nil = 不设置（通知群）/默认 true（成功通知）；Update nil = 保留原值
 	NotifyProdGroupID   *uint `json:"notifyProdGroupId"`
 	NotifyCanaryGroupID *uint `json:"notifyCanaryGroupId"`
@@ -110,7 +111,7 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	p := Project{
 		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
 		Provider: defaultStr(in.Provider, "gitea"), CIJob: in.CIJob,
-		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"),
+		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"), Remark: in.Remark,
 		NotifyProdGroupID:   in.NotifyProdGroupID,
 		NotifyCanaryGroupID: in.NotifyProdGroupID, // 灰度通知群恒等于正式（不分离）
 		NotifyTestGroupID:   in.NotifyTestGroupID, NotifyOnSuccess: onSuccess,
@@ -148,6 +149,7 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 	if in.DefaultBranch != "" {
 		p.DefaultBranch = in.DefaultBranch
 	}
+	p.Remark = in.Remark // 备注全量提交语义（前端两处表单均随整体保存提交）
 	// nil = 保留原值（部分更新不清空；显式传 null 会被 JSON 解为 nil，如需清空用前端全量提交约定外的专门接口）
 	if in.NotifyProdGroupID != nil {
 		p.NotifyProdGroupID = in.NotifyProdGroupID

@@ -128,6 +128,9 @@ export interface Project {
   notifyProdGroupId: null | number;
   notifyTestGroupId: null | number;
   provider: 'gitea' | 'gitee';
+  /** 绑定的镜像仓库 id（发版镜像前缀与 docker login 来源；null=未绑定） */
+  registryId: null | number;
+  remark: string;
   ciJob: string;
   repoPath: string;
   repoUrl: string;
@@ -147,6 +150,8 @@ export interface SaveProjectInput {
   notifyTestGroupId?: null | number;
   provider?: 'gitea' | 'gitee';
   ciJob?: string; // provider=gitee 时的 Jenkins job 名
+  registryId?: null | number; // null=保留原值；0=解绑（后端 nil/0 语义）
+  remark?: string;
   repoPath: string;
   repoUrl: string;
   slotGraceDays?: number;

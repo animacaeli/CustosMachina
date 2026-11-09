@@ -118,6 +118,13 @@ func init() {
 	// 或内容有异 → 返回错误中止迁移等人工定夺（fail-closed，防静默丢配置）。
 	// 同时清零已废弃的 sensitive 列（脱敏改字段级自动识别）。
 	database.RegisterGoHook("0011", migrateConfigEnvSemantics)
+	// 0012：项目备注 + 构建外部定位（存量库补列；新库 AutoMigrate 已带上）
+	database.RegisterGoHook("0012", func(db *gorm.DB) error {
+		if err := addColIfMissing(&projects.Project{}, "Remark", "remark")(db); err != nil {
+			return err
+		}
+		return addColIfMissing(&ci.Build{}, "CIRef", "ci_ref")(db)
+	})
 }
 
 // ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。

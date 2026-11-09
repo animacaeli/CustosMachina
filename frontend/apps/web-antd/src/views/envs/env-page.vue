@@ -136,6 +136,7 @@ const form = reactive({
   defaultBranch: 'main',
   name: '',
   provider: 'gitea' as 'gitea' | 'gitee',
+  remark: '',
   repoPath: '',
   repoUrl: '',
 });
@@ -159,6 +160,7 @@ function openCreate() {
     repoPath: '',
     provider: 'gitea',
     defaultBranch: 'main',
+    remark: '',
   });
   formOpen.value = true;
 }
@@ -171,6 +173,7 @@ function openEdit(p: Project) {
     repoPath: p.repoPath,
     provider: p.provider || 'gitea',
     defaultBranch: p.defaultBranch,
+    remark: p.remark ?? '',
   });
   formOpen.value = true;
 }
@@ -397,6 +400,14 @@ async function onDelete(p: Project) {
         </a-form-item>
         <a-form-item label="默认分支">
           <a-input v-model:value="form.defaultBranch" />
+        </a-form-item>
+        <a-form-item label="备注" extra="用途 / 负责人等，纯展示">
+          <a-textarea
+            v-model:value="form.remark"
+            :maxlength="255"
+            :rows="2"
+            show-count
+          />
         </a-form-item>
       </a-form>
     </a-modal>

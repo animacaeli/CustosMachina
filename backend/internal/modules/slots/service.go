@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/custos-machina/backend/internal/modules/configs"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/custos-machina/backend/internal/modules/configs"
 
 	"gorm.io/gorm"
 
@@ -40,11 +42,12 @@ type Service struct {
 }
 
 type rebuildReq struct {
-	p        *projectRow
-	slotID   uint
-	slot     Slot
-	source   string
-	imageTag string // CI 回调携带的测试镜像 tag（空=compose 原文，兼容存量）
+	p           *projectRow
+	slotID      uint
+	slot        Slot
+	source      string
+	imageTag    string // CI 回调携带的测试镜像 tag（空=compose 原文，兼容存量）
+	buildNumber string // CI 构建号（空=存量回调/手动占用，无外部构建日志可关联）
 }
 
 func NewService(db *gorm.DB, ciSvc *ci.Service, resSvc *resources.Service, ntfy *notify.Service,
@@ -70,6 +73,7 @@ type projectRow struct {
 	Name              string
 	RepoPath          string
 	Provider          string
+	CIJob             string // test 构建关联外部 CI 日志（CIRef=job#number）时定位 job 用
 	ComposePath       string
 	TestSlotCount     int
 	SlotGraceDays     int
@@ -87,7 +91,7 @@ func (s *Service) project(ctx context.Context, id uint) (*projectRow, error) {
 // viewToRow projects.View → 本模块投影。
 func viewToRow(v *projects.View) *projectRow {
 	return &projectRow{
-		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, Provider: v.Provider, ComposePath: v.ComposePath,
+		ID: v.ID, Name: v.Name, RepoPath: v.RepoPath, Provider: v.Provider, CIJob: v.CIJob, ComposePath: v.ComposePath,
 		TestSlotCount: v.TestSlotCount, SlotGraceDays: v.SlotGraceDays,
 		NotifyTestGroupID: v.NotifyTestGroupID,
 	}
@@ -209,7 +213,8 @@ type DurationInput struct {
 	DurationUnit  string `json:"durationUnit" binding:"required,oneof=hours days weeks"`
 }
 
-// Renew 续期：从当前时间起重新计时一个时长。
+// Renew 续期：在现有到期时间基础上顺延一个时长（未到期时从 expireAt 起算，
+// 已过期/到期边缘从当前时间起算）——从 now 重新起算会让提前续期反而缩短剩余时间。
 func (s *Service) Renew(ctx context.Context, projectID uint, slotName string, in DurationInput, uid uint, isAdmin bool) (*Slot, error) {
 	var slot Slot
 	if err := s.db.WithContext(ctx).
@@ -220,8 +225,13 @@ func (s *Service) Renew(ctx context.Context, projectID uint, slotName string, in
 	if slot.OccupiedByUID != uid && !isAdmin {
 		return nil, fmt.Errorf("仅占用人或管理员可续期")
 	}
+	now := time.Now()
+	base := slot.ExpireAt
+	if base.Before(now) {
+		base = now
+	}
 	slot.Duration = in.duration()
-	slot.ExpireAt = time.Now().Add(in.duration())
+	slot.ExpireAt = base.Add(in.duration())
 	slot.Status = StatusOccupied
 	if err := s.db.WithContext(ctx).Save(&slot).Error; err != nil {
 		return nil, err
@@ -246,11 +256,13 @@ func (s *Service) List(ctx context.Context, projectID uint) ([]map[string]any, e
 		byName[s.SlotName] = s
 	}
 	out := make([]map[string]any, 0, p.TestSlotCount)
+	graceUntil := func(s Slot) time.Time { return s.ExpireAt.Add(time.Duration(p.SlotGraceDays) * 24 * time.Hour) }
 	for i := 1; i <= p.TestSlotCount; i++ {
 		name := fmt.Sprintf("dev%d", i)
 		if s, ok := byName[name]; ok {
 			out = append(out, map[string]any{
 				"slotName": name, "occupied": true, "slot": s,
+				"graceUntil": graceUntil(s), // 过期后宽限截止（超时自动回收）——后端统一下发防前后端算术漂移
 			})
 		} else {
 			out = append(out, map[string]any{"slotName": name, "occupied": false})
@@ -278,9 +290,10 @@ func validImageTag(tag string) bool {
 // Jenkins 质检+构建测试镜像后携带 tag 调用（应用级拉取令牌鉴权，env=test），
 // 平台找到占用该分支的槽位并以该镜像重建。质检失败不会回调 → 测试环境停留旧版。
 type SlotCallbackInput struct {
-	App    string `json:"app" binding:"required"`    // 项目名（须与令牌绑定一致）
-	Branch string `json:"branch" binding:"required"` // 触发构建的分支
-	Tag    string `json:"tag" binding:"required"`    // 测试镜像 tag（yyyymmddHHMMSS）
+	App         string `json:"app" binding:"required"`                 // 项目名（须与令牌绑定一致）
+	Branch      string `json:"branch" binding:"required"`              // 触发构建的分支
+	Tag         string `json:"tag" binding:"required"`                 // 测试镜像 tag（yyyymmddHHMMSS）
+	BuildNumber string `json:"buildNumber" binding:"omitempty,max=16"` // Jenkins BUILD_NUMBER（GWT 注入；有值则构建抽屉可拉 CI 日志）
 }
 
 // SlotCallback 返回 skipped=true 表示构建正常但无槽位可部署（不视为错误）。
@@ -297,6 +310,12 @@ func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token 
 	if !validImageTag(in.Tag) {
 		return nil, fmt.Errorf("非法镜像 tag %q（仅允许字母数字._-）", in.Tag)
 	}
+	// buildNumber 拼进 CIRef（job#number，日志接口据此直连 Jenkins）——同样收敛注入面
+	if in.BuildNumber != "" {
+		if _, err := strconv.Atoi(in.BuildNumber); err != nil || strings.HasPrefix(in.BuildNumber, "-") {
+			return nil, fmt.Errorf("非法 buildNumber %q（须为正整数）", in.BuildNumber)
+		}
+	}
 	var proj projectRow
 	if err := s.db.WithContext(ctx).Table("projects").
 		Where("name = ? AND deleted_at IS NULL", in.App).First(&proj).Error; err != nil {
@@ -310,7 +329,7 @@ func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token 
 		return map[string]any{"skipped": true, "reason": fmt.Sprintf("分支 %s 无占用槽位", in.Branch)}, nil
 	}
 	for i := range hits {
-		s.dispatchRebuild(&proj, &hits[i], "ci:"+in.Tag, in.Tag)
+		s.dispatchRebuild(&proj, &hits[i], "ci:"+in.Tag, in.Tag, in.BuildNumber)
 	}
 	return map[string]any{"skipped": false, "slots": len(hits), "tag": in.Tag}, nil
 }
@@ -318,8 +337,8 @@ func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token 
 // dispatchRebuild 投递重建请求：目标槽位空闲则立即执行（异步），
 // 正在跑则记 pending（覆盖旧 pending），跑完补跑一次——部署幂等（按分支
 // 最新提交），连续 push 合并为最后一次的结果。
-func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source, imageTag string) {
-	req := &rebuildReq{p: p, slotID: slot.ID, slot: *slot, source: source, imageTag: imageTag}
+func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source, imageTag, buildNumber string) {
+	req := &rebuildReq{p: p, slotID: slot.ID, slot: *slot, source: source, imageTag: imageTag, buildNumber: buildNumber}
 	s.rebuildMu.Lock()
 	defer s.rebuildMu.Unlock()
 	if s.rebuildRunning[slot.ID] {
@@ -334,7 +353,7 @@ func (s *Service) dispatchRebuild(p *projectRow, slot *Slot, source, imageTag st
 func (s *Service) rebuildLoop(first *rebuildReq) {
 	req := first
 	for {
-		s.rebuild(context.Background(), req.p, &req.slot, req.source, req.imageTag)
+		s.rebuild(context.Background(), req.p, &req.slot, req.source, req.imageTag, req.buildNumber)
 		s.rebuildMu.Lock()
 		next := s.rebuildPending[req.slotID]
 		delete(s.rebuildPending, req.slotID)
@@ -348,7 +367,7 @@ func (s *Service) rebuildLoop(first *rebuildReq) {
 	}
 }
 
-func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source, imageTag string) {
+func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source, imageTag, buildNumber string) {
 	start := time.Now()
 	serverID, err := s.testTarget(ctx, p.ID)
 	if err != nil {
@@ -381,6 +400,10 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 		ProjectID: p.ID, EnvType: "test", Tag: tag, Builder: slot.OccupiedBy,
 		Provider: p.Provider, Source: "auto", Status: status,
 		DurationSecs: secs,
+	}
+	// CIRef 关联外部构建（job#number）：回调带 BUILD_NUMBER 时构建抽屉可直拉 Jenkins 日志
+	if buildNumber != "" && p.CIJob != "" {
+		b.CIRef = p.CIJob + "#" + buildNumber
 	}
 	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
 		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)

@@ -8,6 +8,7 @@ import { useUserStore } from '@vben/stores';
 
 import { message } from 'ant-design-vue';
 
+import { getRegistriesApi } from '#/api/ci';
 import { listClustersApi } from '#/api/k3s';
 import {
   getNotifyGroupsApi,
@@ -37,6 +38,7 @@ const project = ref<null | Project>(null);
 const targets = ref<EnvTarget[]>([]);
 const groups = ref<NotifyGroup[]>([]);
 const servers = ref<ManagedServer[]>([]);
+const registries = ref<Array<{ address: string; id: number; name: string }>>([]);
 const loading = ref(false);
 const activeTab = ref('config');
 
@@ -44,15 +46,17 @@ async function load() {
   if (!props.projectId) return;
   loading.value = true;
   try {
-    const [detail, gs, ss] = await Promise.all([
+    const [detail, gs, ss, rs] = await Promise.all([
       getProjectApi(props.projectId),
       getNotifyGroupsApi(),
       getServerListApi(),
+      getRegistriesApi().catch(() => []), // 未配置/无权限时静默空列表
     ]);
     project.value = detail.project;
     targets.value = detail.targets;
     groups.value = gs;
     servers.value = ss;
+    registries.value = rs;
     if (project.value) {
       fillConfig(project.value);
       fillTargets(targets.value);
@@ -77,6 +81,8 @@ const config = reactive({
   notifyOnSuccess: false,
   notifyProdGroupId: undefined as number | undefined,
   notifyTestGroupId: undefined as number | undefined,
+  registryId: undefined as number | undefined,
+  remark: '',
   slotGraceDays: 3,
   testSlotCount: 3,
   trafficCap: 50,
@@ -100,6 +106,8 @@ function fillConfig(p: Project) {
   config.testSlotCount = p.testSlotCount;
   config.trafficCap = p.trafficCap;
   config.slotGraceDays = p.slotGraceDays;
+  config.registryId = p.registryId || undefined; // 0=解绑落库形态，视同未选中（placeholder 提示）
+  config.remark = p.remark ?? '';
 }
 
 const userStore = useUserStore();
@@ -123,6 +131,9 @@ async function saveConfig() {
       notifyOnSuccess: config.notifyOnSuccess,
       notifyProdGroupId: config.notifyProdGroupId ?? null,
       notifyTestGroupId: config.notifyTestGroupId ?? null,
+      // 未选/清除 = 0（后端解绑语义）；显式选择才绑定
+      registryId: config.registryId ?? 0,
+      remark: config.remark,
       repoPath: project.value.repoPath,
       repoUrl: project.value.repoUrl,
       slotGraceDays: config.slotGraceDays,
@@ -273,6 +284,28 @@ function close() {
               />
             </a-form-item>
             <a-form-item
+              label="镜像仓库"
+              extra="发版镜像前缀与 docker login 来源；仓库在管理后台 → CI 配置中登记；流水线可经 /api/config/{app}/registry 拉取地址"
+            >
+              <a-select
+                v-model:value="config.registryId"
+                :options="
+                  registries.map((r) => ({
+                    label: `${r.name}（${r.address}）`,
+                    value: r.id,
+                  }))
+                "
+                :placeholder="
+                  registries.length === 0
+                    ? '暂无已登记的镜像仓库'
+                    : '未绑定（发版/槽位不可用）'
+                "
+                allow-clear
+                show-search
+                style="width: 360px"
+              />
+            </a-form-item>
+            <a-form-item
               label="项目级访问 token（可选）"
               extra="留空使用平台全局凭据；填写后覆盖（仅保存时提交）"
             >
@@ -340,6 +373,14 @@ function close() {
                 />
               </a-form-item>
             </div>
+            <a-form-item label="备注" extra="用途 / 负责人等，纯展示">
+              <a-textarea
+                v-model:value="config.remark"
+                :maxlength="255"
+                :rows="2"
+                show-count
+              />
+            </a-form-item>
             <a-button
               :loading="configSaving"
               type="primary"

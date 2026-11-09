@@ -36,6 +36,7 @@ type Project struct {
 	ComposePath string `gorm:"size:255" json:"composePath"`                    // 部署描述文件在仓库中的路径
 
 	DefaultBranch string `gorm:"size:128;default:main" json:"defaultBranch"`
+	Remark        string `gorm:"size:255" json:"remark"` // 备注（用途/负责人等，纯展示）
 
 	// 通知（M1）：按环境绑定 notify_groups；留空 = 该环境不发通知
 	NotifyProdGroupID   *uint `json:"notifyProdGroupId"`

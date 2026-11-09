@@ -99,6 +99,13 @@ function goEnv(env: 'canary' | 'prod' | 'test') {
             <div class="text-muted-foreground text-xs">
               {{ record.repoPath }}
             </div>
+            <div v-if="record.remark" class="text-muted-foreground text-xs">
+              <a-tooltip :title="record.remark">
+                <span class="inline-block max-w-[260px] truncate align-bottom">
+                  📝 {{ record.remark }}
+                </span>
+              </a-tooltip>
+            </div>
           </template>
           <template v-else-if="column.key === 'prod'">
             <template v-if="stat(record, 'prod')">
