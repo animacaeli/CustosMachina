@@ -96,6 +96,23 @@ func (s *Service) SetPullTokenEnabled(ctx context.Context, id uint, enabled bool
 // VerifyPullToken 公开接口鉴权：hash 查 token → 启用 → app×env 范围。
 // LastUsedAt best-effort 更新（不阻塞请求）。
 func (s *Service) VerifyPullToken(ctx context.Context, plaintext, app, env string) (*PullToken, error) {
+	t, err := s.verifyPullToken(ctx, plaintext, app)
+	if err != nil {
+		return nil, err
+	}
+	if !envAllowed(t.Envs, env) {
+		return nil, fmt.Errorf("凭证不适用于环境 %q", env)
+	}
+	return t, nil
+}
+
+// VerifyPullTokenApp 仅校验 token 有效性与 app 匹配（不限定环境）——
+// registry 地址是项目级非敏感信息，env 限定范围的测试 token 也可取。
+func (s *Service) VerifyPullTokenApp(ctx context.Context, plaintext, app string) (*PullToken, error) {
+	return s.verifyPullToken(ctx, plaintext, app)
+}
+
+func (s *Service) verifyPullToken(ctx context.Context, plaintext, app string) (*PullToken, error) {
 	sum := sha256.Sum256([]byte(plaintext))
 	var t PullToken
 	if err := s.db.WithContext(ctx).Where("token_hash = ?", hex.EncodeToString(sum[:])).First(&t).Error; err != nil {
@@ -107,12 +124,41 @@ func (s *Service) VerifyPullToken(ctx context.Context, plaintext, app, env strin
 	if t.App != app {
 		return nil, fmt.Errorf("凭证不适用于应用 %q", app)
 	}
-	if !envAllowed(t.Envs, env) {
-		return nil, fmt.Errorf("凭证不适用于环境 %q", env)
-	}
 	s.db.WithContext(context.WithoutCancel(ctx)).Model(&PullToken{}).Where("id = ?", t.ID).
 		Update("last_used_at", time.Now())
 	return &t, nil
+}
+
+// RegistryInfoOut 保留端点 /api/config/{app}/registry 输出：项目绑定 registry
+// 的地址（不含凭据——推送凭据在 Jenkins credentials 侧，平台侧凭据只供发版
+// docker login，绝不外发）。流水线从这取推送地址，免去每项目维护 ci.yaml。
+type RegistryInfoOut struct {
+	Bound   bool   `json:"bound"`
+	Address string `json:"address"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+}
+
+// PullRegistry 项目绑定 registry 信息（未绑定时 bound=false 而非 404——
+// 流水线可按 bound 分支处理）。
+func (s *Service) PullRegistry(ctx context.Context, app string) (*RegistryInfoOut, error) {
+	var row struct {
+		Address string
+		Name    string
+		Type    string
+	}
+	err := s.db.WithContext(ctx).Table("projects").
+		Select("registries.address, registries.name, registries.type").
+		Joins("LEFT JOIN registries ON registries.id = projects.registry_id").
+		Where("projects.name = ? AND projects.deleted_at IS NULL", app).
+		Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	if row.Address == "" {
+		return &RegistryInfoOut{}, nil
+	}
+	return &RegistryInfoOut{Bound: true, Address: row.Address, Name: row.Name, Type: row.Type}, nil
 }
 
 // PullOut 拉取结果：合并后内容 + 聚合指纹（各文件内容 hash 的再 hash）。

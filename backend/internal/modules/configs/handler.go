@@ -65,6 +65,8 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 	// 公开拉取接口：服务启动调用（非用户凭证），应用 token 鉴权 + 限速
 	pub := r.Public.Group("/config")
 	pub.GET("/:app/:env", h.pullConfig)
+	// 保留端点：项目绑定 registry 地址（流水线取推送目的地用；gin 静态段优先于 :env）
+	pub.GET("/:app/registry", h.pullRegistry)
 	// P6-M7 配置中心（AgileConfig 纯后端通道）：同步/对账 + 连接设置
 	// ——键值由 env/ini 文件下发自动派生，无独立 CRUD（文件是唯一编辑入口）
 	kv := r.Authed.Group("/config-kv")
@@ -295,12 +297,12 @@ func (h *Handler) envSync(c *gin.Context) {
 		httpx.Fail(c, http.StatusForbidden, 403, "同步正式环境配置需明文查看权限（config.reveal）")
 		return
 	}
-	created, updated, err := h.svc.EnvSync(c.Request.Context(), in, actor(c))
+	res, err := h.svc.EnvSync(c.Request.Context(), in, actor(c))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"created": created, "updated": updated})
+	httpx.OK(c, res)
 }
 
 // ---- P6-M5 配置拉取（方案 B） ----
@@ -353,6 +355,38 @@ func (h *Handler) setPullTokenEnabled(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// pullRegistry GET /api/config/{app}/registry：项目绑定 registry 地址（保留端点）。
+// 鉴权同拉取（token 有效 + app 匹配，不限定环境——项目级非敏感信息）。
+func (h *Handler) pullRegistry(c *gin.Context) {
+	if !h.pullLimiter.Allow(c.ClientIP()) {
+		c.JSON(429, gin.H{"code": 429, "message": "请求过于频繁，请稍后试"})
+		return
+	}
+	app := c.Param("app")
+	tok := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if tok == "" {
+		tok = c.GetHeader("X-Config-Token")
+	}
+	if tok == "" {
+		c.JSON(401, gin.H{"code": 401, "message": "缺少拉取凭证（Authorization: Bearer 或 X-Config-Token）"})
+		return
+	}
+	if _, err := h.svc.VerifyPullTokenApp(c.Request.Context(), tok, app); err != nil {
+		if strings.Contains(err.Error(), "不适用于") {
+			c.JSON(403, gin.H{"code": 403, "message": err.Error()})
+		} else {
+			c.JSON(401, gin.H{"code": 401, "message": err.Error()})
+		}
+		return
+	}
+	out, err := h.svc.PullRegistry(c.Request.Context(), app)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "data": out})
 }
 
 // pullConfig GET /api/config/{app}/{env}：应用级聚合拉取。

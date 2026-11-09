@@ -581,6 +581,8 @@ async function doEnvSync() {
     message.success(
       `同步完成：新建 ${r.created}、覆盖 ${r.updated}（不自动下发）`,
     );
+    // 覆盖风险（源路径无 {env} 且同主机落盘同路径）：黄条逐条展示，不阻断
+    for (const w of r.warnings ?? []) message.warning(w, 8);
     envSyncOpen.value = false;
     await load();
   } catch (error: any) {
@@ -627,6 +629,23 @@ async function refreshDiff() {
   diffModified.value = rb.content;
 }
 
+// 单版本查看：与当前内容做 diff（不再覆盖主编辑器——此前历史内容可被直接
+// 编辑/保存，且无「正在查看历史版本」标记，易误操作）
+const versionDiffOpen = ref(false);
+const versionDiffMeta = ref<null | { createdAt: string; hash: string }>(null);
+const versionDiffOriginal = ref(''); // 历史版本
+const versionDiffModified = ref(''); // 当前已保存内容
+const versionDiffLang = computed(() =>
+  selected.value ? (FORMAT_LANG[selected.value.format] ?? 'yaml') : 'yaml',
+);
+const fmtVersionAt = computed(() =>
+  versionDiffMeta.value?.createdAt
+    ? new Date(versionDiffMeta.value.createdAt).toLocaleString('zh-CN', {
+        hour12: false,
+      })
+    : '',
+);
+
 async function viewVersion(v: ConfigVersion) {
   if (!selected.value) return;
   // 版本查看跟随当前明文状态（已 reveal 的会话版本查看也免打码；
@@ -636,8 +655,10 @@ async function viewVersion(v: ConfigVersion) {
     v.id,
     !contentMasked.value,
   );
-  content.value = r.content;
-  contentMasked.value = r.masked;
+  versionDiffOriginal.value = r.content;
+  versionDiffModified.value = content.value;
+  versionDiffMeta.value = { hash: v.hash, createdAt: v.createdAt };
+  versionDiffOpen.value = true;
 }
 
 async function doRollback(v: ConfigVersion) {
@@ -670,6 +691,15 @@ const envOptions = computed(() =>
     value: e,
   })),
 );
+
+// {env} 占位符渲染预览（与后端 renderPath 同语义；仅表单预览，实际下发以后端为准）
+function renderEnvPath(path: string, relPath: string) {
+  if (!path.includes('{env}')) return path;
+  const seg = (relPath.split('/').filter(Boolean)[0] ?? '').trim();
+  const env = seg === '' || seg === 'canary' ? 'prod' : seg;
+  return path.replaceAll('{env}', env);
+}
+const formRenderedPath = computed(() => renderEnvPath(form.path, form.relPath));
 // 环境段变化 → 下发目标默认带出（首段映射环境族：devN→test；可覆盖）
 watch(
   () => form.relPath.split('/')[0],
@@ -847,7 +877,15 @@ async function toggleMergedReveal() {
               <a-tag class="ml-1" color="geekblue">
                 {{ serverName(selected.serverId) }}
               </a-tag>
-              <a-tag>{{ selected.path }}</a-tag>
+              <a-tag>
+                <a-tooltip
+                  v-if="selected.renderedPath !== selected.path"
+                  :title="`路径模板 ${selected.path}，{env} 按该文件层级首段渲染`"
+                >
+                  {{ selected.renderedPath }}
+                </a-tooltip>
+                <template v-else>{{ selected.path }}</template>
+              </a-tag>
               <span class="text-muted-foreground text-xs">
                 {{ actionText(selected.applyAction, selected.applyTarget) }}
               </span>
@@ -1024,6 +1062,24 @@ async function toggleMergedReveal() {
         </template>
       </div>
     </a-drawer>
+
+    <!-- 单版本 × 当前内容对比（历史版本抽屉「查看」入口） -->
+    <a-modal
+      v-model:open="versionDiffOpen"
+      :footer="null"
+      :title="`版本对比 · ${versionDiffMeta?.hash ?? ''} → 当前`"
+      :width="880"
+    >
+      <div class="text-muted-foreground mb-2 text-xs">
+        左侧=历史版本 {{ versionDiffMeta?.hash }}（{{ fmtVersionAt }}），右侧=当前已保存内容；需整体恢复用「回滚」（生成新版本，手动下发）
+      </div>
+      <DiffEditor
+        :language="versionDiffLang"
+        :original="versionDiffOriginal"
+        :value="versionDiffModified"
+        height="420px"
+      />
+    </a-modal>
 
     <!-- 合并视图（只读）：项目×环境聚合最终生效配置 = 拉取 API 返回内容预览 -->
     <a-modal
@@ -1210,12 +1266,20 @@ async function toggleMergedReveal() {
             placeholder="选择主机（按路径首段自动带出环境族部署目标，可改）"
           />
         </a-form-item>
-        <a-form-item label="远端绝对路径" required>
-          <a-input
-            v-model:value="form.path"
-            placeholder="/etc/myapp/config.yaml"
-          />
-        </a-form-item>
+                <a-form-item
+                  :extra="
+                    form.path.includes('{env}')
+                      ? `实际下发：${formRenderedPath}（{env} 按层级首段渲染，多环境同模板各归其位）`
+                      : '支持 {env} 占位符（按层级路径首段渲染），如 /opt/app/{env}/config.yaml'
+                  "
+                  label="远端绝对路径"
+                  required
+                >
+                  <a-input
+                    v-model:value="form.path"
+                    placeholder="/etc/myapp/config.yaml 或 /opt/app/{env}/config.yaml"
+                  />
+                </a-form-item>
         <a-form-item label="格式（编辑器高亮）">
           <a-radio-group v-model:value="form.format">
             <a-radio value="yaml">yaml</a-radio>

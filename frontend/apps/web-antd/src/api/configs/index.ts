@@ -10,6 +10,8 @@ export interface ConfigFile {
   id: number;
   name: string;
   path: string;
+  /** {env} 占位符渲染后的实际下发路径（无占位符=path 原样；后端统一下发） */
+  renderedPath: string;
   /** 项目归属与层级路径（首段=prod 或槽位名 devN；canary 引用 prod 无目录） */
   projectId: number;
   relPath: string;
@@ -95,17 +97,19 @@ export async function rollbackConfigApi(id: number, versionId: number) {
   return requestClient.post(`/config-files/${id}/rollback`, { versionId });
 }
 
-/** 环境同步：源环境（可选子前缀）内容完整同步到目标环境 */
+/** 环境同步：源环境（可选子前缀）内容完整同步到目标环境；warnings=路径
+ * 不含 {env} 占位符且同主机的覆盖风险提示（不阻断） */
 export async function envSyncConfigApi(data: {
   projectId: number;
   sourceEnv: string;
   subPath?: string;
   targetEnv: string;
 }) {
-  return requestClient.post<{ created: number; updated: number }>(
-    '/config-files/env-sync',
-    data,
-  );
+  return requestClient.post<{
+    created: number;
+    updated: number;
+    warnings: string[];
+  }>('/config-files/env-sync', data);
 }
 
 /** AgileConfig 式合并视图：项目×环境聚合最终生效配置（只读预览） */

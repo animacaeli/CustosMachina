@@ -358,10 +358,14 @@ func TestEnvSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 同 prod → dev1：新建（主机跟随 test 目标）
-	c1, u1, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
-	if err != nil || c1 != 1 || u1 != 0 {
-		t.Fatalf("首次同步: c=%d u=%d err=%v", c1, u1, err)
+	// 同 prod → dev1：新建（主机跟随 test 目标）；源路径不含 {env} 且目标主机
+	// 不同（prod=10、test=20）→ 无覆盖警告
+	r1, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
+	if err != nil || r1.Created != 1 || r1.Updated != 0 {
+		t.Fatalf("首次同步: c=%d u=%d err=%v", r1.Created, r1.Updated, err)
+	}
+	if len(r1.Warnings) != 0 {
+		t.Fatalf("主机不同不应有覆盖警告: %v", r1.Warnings)
 	}
 	var dst File
 	if err := db.Where("project_id = 1 AND rel_path = ?", "dev1/app.yaml").First(&dst).Error; err != nil {
@@ -377,9 +381,9 @@ func TestEnvSync(t *testing.T) {
 	if err := svc.SaveContent(ctx, src.ID, "v: 2", "t"); err != nil {
 		t.Fatal(err)
 	}
-	c2, u2, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
-	if err != nil || c2 != 0 || u2 != 1 {
-		t.Fatalf("二次同步: c=%d u=%d err=%v", c2, u2, err)
+	r2, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
+	if err != nil || r2.Created != 0 || r2.Updated != 1 {
+		t.Fatalf("二次同步: c=%d u=%d err=%v", r2.Created, r2.Updated, err)
 	}
 	if err := db.First(&dst, dst.ID).Error; err != nil {
 		t.Fatal(err)
@@ -395,13 +399,13 @@ func TestEnvSync(t *testing.T) {
 		t.Fatalf("env_sync 版本数不符: %d", n)
 	}
 	// 同环境拒绝 / canary 拒绝（引用 prod 无独立目录）/ 未绑定环境族拒绝
-	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "prod"}, "t"); err == nil {
+	if _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "prod"}, "t"); err == nil {
 		t.Fatal("同环境应拒绝")
 	}
-	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "canary"}, "t"); err == nil {
+	if _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "canary"}, "t"); err == nil {
 		t.Fatal("canary 应拒绝（引用 prod）")
 	}
-	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev9"}, "t"); err == nil {
+	if _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev9"}, "t"); err == nil {
 		t.Fatal("未绑定环境族应拒绝")
 	}
 }
@@ -417,8 +421,11 @@ func pullTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&File{}, &PullToken{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+	if err := db.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT, registry_id INTEGER, deleted_at DATETIME)`).Error; err != nil {
 		t.Fatalf("建 projects 表失败: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE registries (id INTEGER PRIMARY KEY, name TEXT, type TEXT, address TEXT)`).Error; err != nil {
+		t.Fatalf("建 registries 表失败: %v", err)
 	}
 	return db
 }
@@ -432,6 +439,115 @@ func pullSeed(t *testing.T, db *gorm.DB, files ...File) {
 		if err := db.Create(&f).Error; err != nil {
 			t.Fatalf("seed file 失败: %v", err)
 		}
+	}
+}
+
+// ---- {env} 占位符（远端路径环境路由） ----
+
+func TestRenderPath(t *testing.T) {
+	cases := []struct{ path, relPath, want string }{
+		{"/opt/x/config/{env}/app.yaml", "prod/app.yaml", "/opt/x/config/prod/app.yaml"},
+		{"/opt/x/config/{env}/app.yaml", "dev2/app.yaml", "/opt/x/config/dev2/app.yaml"},
+		{"/opt/x/config/{env}/app.yaml", "canary/app.yaml", "/opt/x/config/prod/app.yaml"}, // canary 引用 prod
+		{"/opt/x/config/{env}/app.yaml", "", "/opt/x/config/prod/app.yaml"},                // 无层级旧形态按 prod
+		{"/opt/x/config/app.yaml", "dev2/app.yaml", "/opt/x/config/app.yaml"},              // 无占位符原样
+		{"/opt/{env}/{env}/a.yaml", "dev1/a.yaml", "/opt/dev1/dev1/a.yaml"},                // 多处全替换
+	}
+	for _, c := range cases {
+		if got := renderPath(c.path, c.relPath); got != c.want {
+			t.Fatalf("renderPath(%q, %q) = %q, want %q", c.path, c.relPath, got, c.want)
+		}
+	}
+	if err := validateEnvPlaceholder("/opt/x/{env}/a.yaml", ""); err == nil {
+		t.Fatal("无层级路径含 {env} 应拒绝")
+	}
+	if err := validateEnvPlaceholder("/opt/x/{env}/a.yaml", "prod/a.yaml"); err != nil {
+		t.Fatalf("有层级不应拒绝: %v", err)
+	}
+}
+
+func TestDeployRendersEnvPlaceholder(t *testing.T) {
+	svc, db, exec := testSvc(t)
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'test', 20)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	f, err := svc.Create(t.Context(), SaveFileInput{
+		Name: "app", ServerID: 20, Path: "/opt/app/{env}/app.yaml", Format: "yaml",
+		ApplyAction: "none", ProjectID: 1, RelPath: "dev2/app.yaml", Content: "v: 1",
+	}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Deploy(t.Context(), f.ID, "t"); err != nil {
+		t.Fatalf("下发失败: %v", err)
+	}
+	if got, ok := exec.written[20]["/opt/app/dev2/app.yaml"]; !ok || got != "v: 1" {
+		t.Fatalf("落盘路径应渲染 {env}: %+v", exec.written[20])
+	}
+	// FileOut 预览路径
+	list, _ := svc.List(t.Context())
+	if len(list) != 1 || list[0].RenderedPath != "/opt/app/dev2/app.yaml" {
+		t.Fatalf("renderedPath 异常: %+v", list)
+	}
+}
+
+func TestEnvSyncSameServerWarns(t *testing.T) {
+	svc, db, _ := testSvc(t)
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	// prod 与 test 同主机：路径无 {env} 的源同步后落盘同路径 → 应出警告
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'prod', 10), (1, 'test', 10)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(t.Context(), SaveFileInput{
+		Name: "app", ServerID: 10, Path: "/opt/app/app.yaml", Format: "yaml",
+		ApplyAction: "none", ProjectID: 1, RelPath: "prod/app.yaml", Content: "v: 1",
+	}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := svc.EnvSync(t.Context(), EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Warnings) != 1 {
+		t.Fatalf("同主机无占位符应有 1 条覆盖警告: %+v", r.Warnings)
+	}
+	// 源路径含 {env}：占位符按各自环境渲染，无警告
+	db.Model(&File{}).Where("rel_path = ?", "prod/app.yaml").Update("path", "/opt/app/{env}/app.yaml")
+	r2, err := svc.EnvSync(t.Context(), EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev2"}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r2.Warnings) != 0 {
+		t.Fatalf("占位符路径不应警告: %+v", r2.Warnings)
+	}
+}
+
+// ---- 保留端点 /api/config/{app}/registry ----
+
+func TestPullRegistry(t *testing.T) {
+	db := pullTestDB(t)
+	db.Exec(`INSERT INTO projects (id, name, registry_id) VALUES (1, 'demo', 5)`)
+	db.Exec(`INSERT INTO registries (id, name, type, address) VALUES (5, 'tcr', 'tencent', 'ccr.ccs.tencentyun.com/starveil')`)
+	svc := &Service{db: db}
+	out, err := svc.PullRegistry(t.Context(), "demo")
+	if err != nil || !out.Bound || out.Address != "ccr.ccs.tencentyun.com/starveil" || out.Type != "tencent" {
+		t.Fatalf("绑定场景异常: %+v err=%v", out, err)
+	}
+	// 解绑 / 未绑定：bound=false 而非报错
+	db.Exec(`UPDATE projects SET registry_id = NULL WHERE id = 1`)
+	out, err = svc.PullRegistry(t.Context(), "demo")
+	if err != nil || out.Bound || out.Address != "" {
+		t.Fatalf("未绑定应 bound=false: %+v err=%v", out, err)
+	}
+	// 项目不存在：同样 bound=false（不泄露项目存在性，公开端点）
+	out, err = svc.PullRegistry(t.Context(), "ghost")
+	if err != nil || out.Bound {
+		t.Fatalf("项目不存在应 bound=false: %+v err=%v", out, err)
 	}
 }
 

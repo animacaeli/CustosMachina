@@ -190,6 +190,25 @@ func EnvTypeOf(env string) string {
 	}
 }
 
+// envPlaceholder 远端路径环境占位符：{env} 按文件 rel_path 首段渲染
+// （prod→prod、devN→devN；canary 引用 prod 不落独立路径）。多环境文件
+// 用同一路径模板（如 /opt/x/config/{env}/app.yaml），下发时各归其位；
+// 路径不含占位符则原样（存量路径零影响）。
+const envPlaceholder = "{env}"
+
+// renderPath 渲染远端路径的 {env} 占位符。无层级旧形态裸文件按 prod
+// （fail-safe 取最严环境，与 IsTestPath 的 fail-closed 对齐）。
+func renderPath(path, relPath string) string {
+	if !strings.Contains(path, envPlaceholder) {
+		return path
+	}
+	env := firstSeg(relPath)
+	if env == "" || env == "canary" {
+		env = "prod"
+	}
+	return strings.ReplaceAll(path, envPlaceholder, env)
+}
+
 // validEnvSeg 拉取/同步/合并视图的环境入参：prod、canary（引用 prod）或槽位名。
 func validEnvSeg(env string) bool { return EnvTypeOf(env) != "" }
 
@@ -250,11 +269,23 @@ func (s *Service) validateRelPath(ctx context.Context, projectID uint, relPath s
 	return nil
 }
 
+// validateEnvPlaceholder {env} 占位符依赖环境层级：无层级（旧形态裸文件）
+// 时首段恒渲染为 prod，多环境同路径会互相覆盖——直接拒绝，早暴露。
+func validateEnvPlaceholder(path, relPath string) error {
+	if strings.Contains(path, envPlaceholder) && strings.Trim(strings.TrimSpace(relPath), "/") == "" {
+		return fmt.Errorf("远端路径含 {env} 占位符，需要层级路径（首段 prod 或槽位名）")
+	}
+	return nil
+}
+
 func (s *Service) Create(ctx context.Context, in SaveFileInput, by string) (*File, error) {
 	if err := validateTarget(in.ApplyAction, in.ApplyTarget); err != nil {
 		return nil, err
 	}
 	if err := s.validateRelPath(ctx, in.ProjectID, in.RelPath); err != nil {
+		return nil, err
+	}
+	if err := validateEnvPlaceholder(in.Path, in.RelPath); err != nil {
 		return nil, err
 	}
 	f := File{Name: in.Name, ServerID: in.ServerID, Path: in.Path, Format: in.Format,
@@ -279,6 +310,9 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveFileInput) error {
 		return err
 	}
 	if err := s.validateRelPath(ctx, in.ProjectID, in.RelPath); err != nil {
+		return err
+	}
+	if err := validateEnvPlaceholder(in.Path, in.RelPath); err != nil {
 		return err
 	}
 	updates := map[string]any{
@@ -309,9 +343,14 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 type FileOut struct {
 	File
 	HasContent bool `json:"hasContent"`
+	// RenderedPath {env} 占位符渲染后的实际下发路径（无占位符=原样；
+	// 后端统一下发防前后端渲染漂移，前端预览直接展示）。
+	RenderedPath string `json:"renderedPath"`
 }
 
-func toOut(f File) FileOut { return FileOut{File: f, HasContent: f.Content != ""} }
+func toOut(f File) FileOut {
+	return FileOut{File: f, HasContent: f.Content != "", RenderedPath: renderPath(f.Path, f.RelPath)}
+}
 
 func (s *Service) List(ctx context.Context) ([]FileOut, error) {
 	var fs []File
@@ -565,7 +604,8 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 	if s.exec == nil {
 		return fmt.Errorf("SSH 执行器未注入")
 	}
-	if err := s.exec.SftpWrite(f.ServerID, f.Path, []byte(f.Content)); err != nil {
+	dstPath := renderPath(f.Path, f.RelPath)
+	if err := s.exec.SftpWrite(f.ServerID, dstPath, []byte(f.Content)); err != nil {
 		s.exec.RecordEvent(ctx, f.ServerID, "config_deploy", fmt.Sprintf("配置 %q 下发失败: %v", f.Name, err))
 		return fmt.Errorf("SFTP 写入失败: %w", err)
 	}
@@ -583,7 +623,7 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 		actionNote = "生效动作 " + f.ApplyAction + " 完成"
 	}
 	s.exec.RecordEvent(ctx, f.ServerID, "config_deploy",
-		fmt.Sprintf("配置 %q 下发 %s by %s（%s）", f.Name, f.Path, by, actionNote))
+		fmt.Sprintf("配置 %q 下发 %s by %s（%s）", f.Name, dstPath, by, actionNote))
 	// P6-M7：env/ini 文件下发后自动同步 AgileConfig（已配置才触发，异步不阻塞）
 	s.syncAgileAfterDeploy(ctx, &f, by)
 	return nil
@@ -630,15 +670,24 @@ type EnvSyncInput struct {
 	SubPath   string `json:"subPath" binding:"omitempty,max=512"`
 }
 
-// EnvSync 执行环境同步；返回新建/覆盖计数。内容只进版本链，不自动下发。
-func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (created, updated int, err error) {
+// EnvSyncResult 同步结果：计数 + 风险提示（路径不含 {env} 占位符时目标与源
+// 落盘同路径——同主机会互相覆盖，前端黄条展示，不阻断）。
+type EnvSyncResult struct {
+	Created  int      `json:"created"`
+	Updated  int      `json:"updated"`
+	Warnings []string `json:"warnings"`
+}
+
+// EnvSync 执行环境同步；内容只进版本链，不自动下发。
+func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (EnvSyncResult, error) {
+	res := EnvSyncResult{Warnings: []string{}}
 	if in.SourceEnv == in.TargetEnv {
-		return 0, 0, fmt.Errorf("源与目标环境相同")
+		return res, fmt.Errorf("源与目标环境相同")
 	}
 	// 环境入参：prod 或槽位名（canary 无独立配置目录，拒绝——引用 prod 即是）
 	for _, env := range []string{in.SourceEnv, in.TargetEnv} {
 		if env == "canary" || !isSlotSeg(env) && env != "prod" {
-			return 0, 0, fmt.Errorf("环境 %q 不合法（prod 或槽位名 devN；canary 引用 prod 无独立目录）", env)
+			return res, fmt.Errorf("环境 %q 不合法（prod 或槽位名 devN；canary 引用 prod 无独立目录）", env)
 		}
 	}
 	sub := strings.Trim(strings.TrimSpace(in.SubPath), "/")
@@ -647,22 +696,22 @@ func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (crea
 			if sub == "" {
 				break
 			}
-			return 0, 0, fmt.Errorf("子路径不合法: %q", seg)
+			return res, fmt.Errorf("子路径不合法: %q", seg)
 		}
 	}
 	// 目标槽位同样受项目槽位数约束（建档路径与手工创建一致）
 	if err := s.checkSlotCap(ctx, in.ProjectID, in.TargetEnv); err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	// 目标环境族须已绑定部署目标（新建文件的主机来源：prod→prod、devN→test）
 	var targetServer uint
 	if err := s.db.WithContext(ctx).Table("project_env_targets").
 		Select("server_id").Where("project_id = ? AND env_type = ?", in.ProjectID, EnvTypeOf(in.TargetEnv)).
 		Scan(&targetServer).Error; err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	if targetServer == 0 {
-		return 0, 0, fmt.Errorf("项目未配置 %s 环境的部署目标", EnvTypeOf(in.TargetEnv))
+		return res, fmt.Errorf("项目未配置 %s 环境的部署目标", EnvTypeOf(in.TargetEnv))
 	}
 	prefix := in.SourceEnv
 	if sub != "" {
@@ -672,37 +721,43 @@ func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (crea
 	if err := s.db.WithContext(ctx).
 		Where("project_id = ? AND rel_path LIKE ?", in.ProjectID, prefix+"/%").
 		Find(&sources).Error; err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	if len(sources) == 0 {
-		return 0, 0, fmt.Errorf("源路径 %s 下没有配置文件", prefix)
+		return res, fmt.Errorf("源路径 %s 下没有配置文件", prefix)
 	}
 	for _, src := range sources {
 		rest := strings.TrimPrefix(src.RelPath, in.SourceEnv) // /xxx/yyy.yaml
 		dstRel := in.TargetEnv + rest
+		// 覆盖风险提示：源路径不含 {env} 占位符 → 目标文件落盘路径与源完全相同，
+		// 同主机下发互相覆盖（.bak 兜底但会干扰）。提示而非阻断（用户可有意为之）。
+		if src.ServerID == targetServer && !strings.Contains(src.Path, envPlaceholder) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"%s：远端路径 %s 不含 {env} 占位符，目标环境落盘路径与源相同，同主机下发会互相覆盖（建议把路径改为含 {env} 的模板）", src.Name, src.Path))
+		}
 		var dst File
 		e := s.db.WithContext(ctx).Where("project_id = ? AND rel_path = ?", in.ProjectID, dstRel).First(&dst).Error
 		if e == nil {
 			dst.Content = src.Content
 			if err := s.db.WithContext(ctx).Model(&File{}).Where("id = ?", dst.ID).
 				Update("content", src.Content).Error; err != nil {
-				return created, updated, err
+				return res, err
 			}
 			s.snapVersion(ctx, dst.ID, src.Content, SourceEnvSync, by)
-			updated++
+			res.Updated++
 		} else {
 			nf := src
 			nf.ID = 0
 			nf.RelPath = dstRel
 			nf.ServerID = targetServer
 			if err := s.db.WithContext(ctx).Create(&nf).Error; err != nil {
-				return created, updated, err
+				return res, err
 			}
 			s.snapVersion(ctx, nf.ID, src.Content, SourceEnvSync, by)
-			created++
+			res.Created++
 		}
 	}
-	return created, updated, nil
+	return res, nil
 }
 
 // RecentChanges P7-M2：最近的配置版本记录（告警 AI 分析工具 get_config_changes
