@@ -15,8 +15,16 @@ export const test = base.extend({
     const pageErrors: string[] = [];
     page.on('pageerror', (err) => pageErrors.push(String(err)));
     await use(page);
+    // 已知噪音白名单（2026-11-09 v0.12.27 起）：
+    // - doValidation：E2E 跑 vite dev server，monaco-yaml 的 module worker 需
+    //   经数百个模块 import 后才执行 initialize——编辑器先发的 doValidation
+    //   请求偶发早于 handler 注册。仅 dev 竞速（生产 build 为单文件 worker
+    //   无此窗口）；不影响功能（校验稍后到达）。
+    const knownNoise = pageErrors.filter(
+      (e) => !e.includes('Missing requestHandler or method: doValidation'),
+    );
     expect(
-      pageErrors,
+      knownNoise,
       '用例期间不应有未捕获页面错误（pageerror）——若为已知噪音请在 fixtures.ts 登记',
     ).toEqual([]);
   },
