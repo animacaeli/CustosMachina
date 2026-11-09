@@ -2,7 +2,7 @@
 import type { AgileDiff } from '#/api/configs/kv';
 import type { PullToken } from '#/api/configs/pull';
 
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref, watch } from 'vue';
 
 import { message } from 'ant-design-vue';
 
@@ -17,7 +17,7 @@ import {
   listPullTokensApi,
   setPullTokenEnabledApi,
 } from '#/api/configs/pull';
-import { getProjectsApi } from '#/api/projects';
+import { getProjectApi, getProjectsApi } from '#/api/projects';
 import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'AdminPullTokens' });
@@ -33,7 +33,7 @@ const issued = ref<null | { app: string; envs: string; plaintext: string }>(
   null,
 );
 
-const form = reactive({ app: '', envs: 'prod,test', name: '' });
+const form = reactive({ app: '', envs: 'prod,dev1', name: '' });
 
 // ---- AgileConfig（配置中心热更通道）----
 const agile = reactive({ configured: false, endpoint: '' });
@@ -43,6 +43,29 @@ const agileTarget = reactive({
   projectId: undefined as number | undefined,
   env: 'prod',
 });
+// 环境选项：prod + 槽位名（联动所选项目槽位数；canary 引用 prod 不单列）
+const agileEnvOptions = ref<{ label: string; value: string }[]>([
+  { label: 'prod', value: 'prod' },
+]);
+watch(
+  () => agileTarget.projectId,
+  async (id) => {
+    if (!id) return;
+    try {
+      const r = await getProjectApi(id);
+      const opts = [{ label: 'prod', value: 'prod' }];
+      for (let i = 1; i <= (r.project.testSlotCount || 3); i++) {
+        opts.push({ label: `dev${i}`, value: `dev${i}` });
+      }
+      agileEnvOptions.value = opts;
+      if (!opts.some((o) => o.value === agileTarget.env)) {
+        agileTarget.env = 'prod';
+      }
+    } catch {
+      agileEnvOptions.value = [{ label: 'prod', value: 'prod' }];
+    }
+  },
+);
 const syncing = ref(false);
 const reconciling = ref(false);
 const diff = ref<AgileDiff | null>(null);
@@ -265,11 +288,7 @@ onMounted(async () => {
         />
         <a-select
           v-model:value="agileTarget.env"
-          :options="[
-            { value: 'prod', label: 'prod' },
-            { value: 'canary', label: 'canary' },
-            { value: 'test', label: 'test' },
-          ]"
+          :options="agileEnvOptions"
           size="small"
           style="width: 100px"
         />
@@ -342,7 +361,7 @@ onMounted(async () => {
           <a-input v-model:value="form.app" placeholder="如 demo" />
         </a-form-item>
         <a-form-item label="环境范围（逗号分隔，* = 全环境）" required>
-          <a-input v-model:value="form.envs" placeholder="prod,test" />
+          <a-input v-model:value="form.envs" placeholder="prod,dev1,dev2" />
         </a-form-item>
         <a-form-item label="备注名（可选）">
           <a-input v-model:value="form.name" placeholder="默认取应用名" />

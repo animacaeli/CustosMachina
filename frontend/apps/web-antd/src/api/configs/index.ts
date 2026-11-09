@@ -10,11 +10,10 @@ export interface ConfigFile {
   id: number;
   name: string;
   path: string;
-  /** R2 文件管理器：项目归属与层级路径（首段=环境 prod/canary/test） */
+  /** 项目归属与层级路径（首段=prod 或槽位名 devN；canary 引用 prod 无目录） */
   projectId: number;
   relPath: string;
   remark: string;
-  sensitive: boolean;
   serverId: number;
 }
 
@@ -27,10 +26,9 @@ export interface SaveConfigFileInput {
   name: string;
   path: string;
   projectId?: number;
-  /** 层级路径（首段=环境；留空=旧形态） */
+  /** 层级路径（首段=prod 或槽位名；留空=旧形态） */
   relPath?: string;
   remark?: string;
-  sensitive: boolean;
   serverId: number;
 }
 
@@ -85,9 +83,11 @@ export async function getConfigVersionsApi(id: number) {
 export async function getConfigVersionContentApi(
   fileId: number,
   versionId: number,
+  reveal = false,
 ) {
-  return requestClient.get<{ content: string }>(
+  return requestClient.get<{ content: string; masked: boolean }>(
     `/config-files/${fileId}/versions/${versionId}`,
+    { params: reveal ? { reveal: true } : {} },
   );
 }
 
@@ -120,8 +120,14 @@ export async function getMergedConfigApi(
   projectId: number,
   env: string,
   format: 'json' | 'yaml' = 'json',
+  reveal = false,
 ) {
   return requestClient.get<MergedConfig>('/config-files/merged', {
-    params: { env, format, project_id: projectId },
+    params: {
+      env,
+      format,
+      project_id: projectId,
+      ...(reveal ? { reveal: true } : {}),
+    },
   });
 }

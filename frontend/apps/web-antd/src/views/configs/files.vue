@@ -41,8 +41,10 @@ defineOptions({ name: 'ConfigsFiles' });
 /**
  * 配置文件管理器（R2）：左侧目录树 + 顶部地址栏（面包屑/一键跳转）+
  * 右侧编辑器（语言按钮组切换高亮）+ 版本侧栏（双选 diff / 回滚）。
- * 层级语义：relPath 首段 = 环境（prod/canary/test，须项目已绑定部署目标），
- * 深层子目录自由（test/dev1/... 对应槽位目录）。
+ * 层级语义（2026-11-09 返工对齐）：relPath 首段 = prod 或槽位名 dev1..devN
+ * （N=项目槽位数；devN 须项目已绑 test 部署目标）；canary 全面引用 prod，
+ * 树中无 canary 目录。脱敏为字段级自动识别（token/secret/pwd/password）：
+ * 测试槽位任何登录用户可看明文，正式环境需 config.reveal 权限（均落审计）。
  */
 
 const loading = ref(false);
@@ -50,10 +52,28 @@ const allFiles = ref<ConfigFile[]>([]);
 const servers = ref<Array<{ id: number; name: string }>>([]);
 const projects = ref<Array<{ id: number; name: string }>>([]);
 const envTargets = ref<Array<{ envType: string; serverId: number }>>([]);
+const testSlotCount = ref(3);
 const currentProject = ref<number | undefined>(undefined);
 const currentProjectName = computed(
   () => projects.value.find((p) => p.id === currentProject.value)?.name,
 );
+
+// 环境首段集合：prod + dev1..devN（联动项目槽位数）
+const slotEnvs = computed(() =>
+  Array.from({ length: testSlotCount.value }, (_, i) => `dev${i + 1}`),
+);
+const envSegments = computed(() => ['prod', ...slotEnvs.value]);
+
+function isSlotEnv(seg: string) {
+  return /^dev[1-9][0-9]*$/.test(seg);
+}
+
+// 首段 → 部署目标环境族（目标主机预填用）
+function envTypeOf(seg: string): string {
+  if (seg === 'prod') return 'prod';
+  if (isSlotEnv(seg)) return 'test';
+  return '';
+}
 
 const FORMAT_LANG: Record<string, string> = {
   env: 'ini',
@@ -97,7 +117,7 @@ async function load() {
 
 onMounted(load);
 
-// 项目切换 → 拉环境绑定（层级校验/下发默认目标用）
+// 项目切换 → 拉环境绑定与槽位数（层级校验/下发默认目标/槽位目录生成用）
 watch(currentProject, async (id) => {
   selected.value = null;
   expandedKeys.value = [];
@@ -111,6 +131,7 @@ watch(currentProject, async (id) => {
       envType: t.envType,
       serverId: t.serverId,
     }));
+    testSlotCount.value = r.project.testSlotCount || 3;
   } catch {
     envTargets.value = [];
   }
@@ -134,6 +155,16 @@ const ephemeralDirs = ref<string[]>([]);
 
 const treeData = computed<TreeNode[]>(() => {
   const root: TreeNode = { key: '', title: '', isLeaf: false, children: [] };
+  // 环境层固化：prod + dev1..devN（空槽位目录也展示，便于右键预建）；
+  // canary 不出现（全面引用 prod，合并视图/拉取侧读 prod）
+  for (const seg of envSegments.value) {
+    root.children!.push({
+      key: `/${seg}`,
+      title: seg,
+      isLeaf: false,
+      children: [],
+    });
+  }
   for (const f of projectFiles.value) {
     const segs = (f.relPath || f.name).split('/').filter(Boolean);
     let dir = root;
@@ -310,6 +341,9 @@ async function reveal() {
     content.value = r.content;
     contentMasked.value = false;
     message.info('已显示明文（本次查看已落审计）');
+  } catch {
+    // 403（正式环境无 config.reveal）等：全局拦截器已弹具体提示，
+    // 此处吞掉防 unhandled rejection（编辑器页不额外处理）
   } finally {
     revealLoading.value = false;
   }
@@ -418,8 +452,15 @@ function confirmNewFolder() {
     '',
   );
   const segs = full.split('/').filter(Boolean);
-  if (!/^(prod|canary|test)(\/|$)/.test(full)) {
-    message.warning('首段须为环境名（prod/canary/test）');
+  const first = segs[0] ?? '';
+  if (first !== 'prod' && !isSlotEnv(first)) {
+    message.warning('首段须为 prod 或槽位名（dev1、dev2…）');
+    return;
+  }
+  if (isSlotEnv(first) && !envSegments.value.includes(first)) {
+    message.warning(
+      `槽位 ${first} 超出项目槽位数（共 ${testSlotCount.value} 个）`,
+    );
     return;
   }
   if (!ephemeralDirs.value.includes(full)) ephemeralDirs.value.push(full);
@@ -443,7 +484,6 @@ function openCreateIn(dirKey: string) {
     path: '',
     relPath: dirKey.replaceAll(/^\/+|\/+$/g, ''),
     format: 'yaml',
-    sensitive: false,
     content: '',
     applyAction: 'none',
     applyTarget: '',
@@ -491,7 +531,7 @@ function exportFile() {
     ) + ext;
   a.click();
   URL.revokeObjectURL(url);
-  message.success('已导出（敏感文件为脱敏内容，明文需先查看）');
+  message.success('已导出（含敏感字段时为脱敏内容，明文需先查看）');
 }
 
 async function onImportFile(ev: Event) {
@@ -589,9 +629,15 @@ async function refreshDiff() {
 
 async function viewVersion(v: ConfigVersion) {
   if (!selected.value) return;
-  const r = await getConfigVersionContentApi(selected.value.id, v.id);
+  // 版本查看跟随当前明文状态（已 reveal 的会话版本查看也免打码；
+  // 后端仍按环境分流：正式环境无权限 reveal 返回脱敏内容）
+  const r = await getConfigVersionContentApi(
+    selected.value.id,
+    v.id,
+    !contentMasked.value,
+  );
   content.value = r.content;
-  contentMasked.value = selected.value.sensitive;
+  contentMasked.value = r.masked;
 }
 
 async function doRollback(v: ConfigVersion) {
@@ -611,25 +657,25 @@ const form = reactive({
   path: '',
   relPath: '',
   format: 'yaml' as 'env' | 'ini' | 'json' | 'toml' | 'yaml',
-  sensitive: false,
   content: '',
   applyAction: 'none' as 'http' | 'none' | 'restart' | 'sighup',
   applyTarget: '',
   remark: '',
 });
 
+// 环境同步/层级提示的环境选项：prod + 槽位名（canary 引用 prod 不在列）
 const envOptions = computed(() =>
-  envTargets.value.map((t) => ({
-    label: t.envType,
-    value: t.envType,
+  envSegments.value.map((e) => ({
+    label: e,
+    value: e,
   })),
 );
-// 环境段变化 → 下发目标默认带出（可覆盖）
+// 环境段变化 → 下发目标默认带出（首段映射环境族：devN→test；可覆盖）
 watch(
   () => form.relPath.split('/')[0],
   (env, old) => {
     if (!editingId.value && env && env !== old) {
-      const t = envTargets.value.find((x) => x.envType === env);
+      const t = envTargets.value.find((x) => x.envType === envTypeOf(env));
       if (t && !form.serverId) form.serverId = t.serverId;
     }
   },
@@ -643,7 +689,6 @@ function openEdit(f: ConfigFile) {
     path: f.path,
     relPath: f.relPath,
     format: f.format,
-    sensitive: f.sensitive,
     content: '',
     applyAction: f.applyAction,
     applyTarget: f.applyTarget,
@@ -690,11 +735,18 @@ async function remove(f: ConfigFile) {
 
 // ---- 合并视图（AgileConfig 式 UI 适配）：项目×环境聚合最终生效配置，只读 ----
 const mergedOpen = ref(false);
-const mergedEnv = ref<'canary' | 'prod' | 'test'>('prod');
+const mergedEnv = ref<string>('prod');
 const mergedFormat = ref<'json' | 'yaml'>('json');
+// canary（引用 prod）附在末尾——读侧后端映射到 prod 内容
+const mergedEnvOptions = computed(() => [
+  ...envSegments.value.map((e) => ({ label: e, value: e })),
+  { label: 'canary（引用 prod）', value: 'canary' },
+]);
 const mergedBody = ref('');
 const mergedMeta = ref<null | { files: number; version: string }>(null);
 const mergedLoading = ref(false);
+// 敏感字段默认脱敏；查看明文走后端 reveal 分流（正式环境需 config.reveal）
+const mergedReveal = ref(false);
 
 async function loadMerged() {
   if (!currentProject.value) return;
@@ -704,6 +756,7 @@ async function loadMerged() {
       currentProject.value,
       mergedEnv.value,
       mergedFormat.value,
+      mergedReveal.value,
     );
     mergedBody.value = r.body;
     mergedMeta.value = { files: r.files, version: r.version };
@@ -718,7 +771,13 @@ async function loadMerged() {
 
 function openMerged() {
   mergedOpen.value = true;
+  mergedReveal.value = false;
   loadMerged();
+}
+
+async function toggleMergedReveal() {
+  mergedReveal.value = !mergedReveal.value;
+  await loadMerged();
 }
 </script>
 
@@ -755,14 +814,13 @@ function openMerged() {
     </div>
 
     <div class="flex min-h-0 flex-1 gap-2">
-      <!-- 左：目录树 -->
+      <!-- 左：目录树（环境层固化：prod + 槽位目录） -->
       <div
         class="w-64 shrink-0 overflow-auto rounded border p-1"
         @contextmenu.prevent="onRootRightClick"
       >
         <a-spin :spinning="loading">
           <a-tree
-            v-if="treeData.length > 0"
             v-model:expanded-keys="expandedKeys"
             :field-names="{ title: 'title', key: 'key', children: 'children' }"
             :tree-data="treeData"
@@ -777,11 +835,6 @@ function openMerged() {
               </span>
             </template>
           </a-tree>
-          <a-empty
-            v-else
-            description="暂无文件（新建时路径首段为环境名）"
-            :image-style="{ height: '40px' }"
-          />
         </a-spin>
       </div>
 
@@ -795,7 +848,6 @@ function openMerged() {
                 {{ serverName(selected.serverId) }}
               </a-tag>
               <a-tag>{{ selected.path }}</a-tag>
-              <a-tag v-if="selected.sensitive" color="red">敏感</a-tag>
               <span class="text-muted-foreground text-xs">
                 {{ actionText(selected.applyAction, selected.applyTarget) }}
               </span>
@@ -851,7 +903,7 @@ function openMerged() {
                 仅保存
               </a-button>
               <a-button
-                v-if="selected.sensitive && contentMasked"
+                v-if="contentMasked"
                 :loading="revealLoading"
                 size="small"
                 @click="reveal"
@@ -877,7 +929,7 @@ function openMerged() {
                 <a-button danger size="small">删除</a-button>
               </a-popconfirm>
               <a-tag v-if="contentMasked" class="ml-auto" color="orange">
-                脱敏视图（编辑禁用）
+                脱敏视图（敏感字段；编辑禁用）
               </a-tag>
             </div>
           </template>
@@ -902,7 +954,7 @@ function openMerged() {
           <a-empty
             v-if="!selected"
             class="m-auto"
-            description="从左侧选择文件（目录树按 环境/子目录 组织）"
+            description="从左侧选择文件（目录树按 prod/槽位/子目录 组织）"
           />
         </div>
       </div>
@@ -984,13 +1036,9 @@ function openMerged() {
         <span class="text-xs text-muted-foreground">环境</span>
         <a-select
           v-model:value="mergedEnv"
-          :options="[
-            { value: 'prod', label: 'prod' },
-            { value: 'canary', label: 'canary' },
-            { value: 'test', label: 'test' },
-          ]"
+          :options="mergedEnvOptions"
           size="small"
-          style="width: 100px"
+          style="width: 140px"
           @change="loadMerged"
         />
         <a-segmented
@@ -1006,7 +1054,11 @@ function openMerged() {
           {{ mergedMeta.files }} 个文件聚合 · 版本
           {{ mergedMeta.version.slice(0, 12) }}
         </span>
+        <a-tag v-if="!mergedReveal" color="orange">敏感字段已脱敏</a-tag>
         <div class="flex-1"></div>
+        <a-button size="small" @click="toggleMergedReveal">
+          {{ mergedReveal ? '恢复脱敏' : '查看明文（审计）' }}
+        </a-button>
         <a-button size="small" @click="loadMerged">刷新</a-button>
       </div>
       <a-spin :spinning="mergedLoading">
@@ -1034,7 +1086,7 @@ function openMerged() {
     >
       <a-form layout="vertical">
         <a-form-item
-          extra="把源环境（可选子前缀）下的全部配置文件内容完整同步到目标环境：已存在则生成新版本，不存在则建档（目标主机自动取目标环境部署目标）。仅同步内容，不自动下发。"
+          extra="把源环境（可选子前缀）下的全部配置文件内容完整同步到目标环境（prod ↔ 槽位）：已存在则生成新版本，不存在则建档（目标主机自动取目标环境族部署目标）。仅同步内容，不自动下发。"
           label="同步范围"
           required
         >
@@ -1105,9 +1157,9 @@ function openMerged() {
     >
       <a-form-item
         :extra="
-          ctxMenu.dirKey && !/^(prod|canary|test)(\/|$)/.test(ctxMenu.dirKey)
-            ? '首段须为环境名（prod/canary/test）'
-            : '可多级（a/b）；首段为环境名'
+          ctxMenu.dirKey && !/^(prod|dev[1-9][0-9]*)(\/|$)/.test(ctxMenu.dirKey)
+            ? '首段须为 prod 或槽位名（dev1、dev2…）'
+            : '可多级（a/b）；首段为 prod 或槽位名'
         "
         label="文件夹名"
         required
@@ -1138,14 +1190,14 @@ function openMerged() {
     >
       <a-form layout="vertical">
         <a-form-item
-          :extra="`首段为环境名（${envOptions.map((e) => e.label).join(' / ') || '该项目未绑定环境'}），更深层层级自由`"
+          :extra="`首段为 prod 或槽位名（${envOptions.map((e) => e.label).join(' / ')}），更深层级自由；槽位目录须项目已绑定 test 部署目标`"
           label="层级路径"
           required
         >
           <a-input
             v-model:value="form.relPath"
             addon-before="层级"
-            placeholder="prod/sub/app.yaml（首段=环境）"
+            placeholder="prod/app.yaml 或 dev1/app.yaml（首段=prod/槽位）"
           />
         </a-form-item>
         <a-form-item label="名称" required>
@@ -1155,7 +1207,7 @@ function openMerged() {
           <a-select
             v-model:value="form.serverId"
             :options="servers.map((s) => ({ label: s.name, value: s.id }))"
-            placeholder="选择主机（按环境段自动带出该环境部署目标，可改）"
+            placeholder="选择主机（按路径首段自动带出环境族部署目标，可改）"
           />
         </a-form-item>
         <a-form-item label="远端绝对路径" required>
@@ -1205,9 +1257,6 @@ function openMerged() {
                   : 'myapp-container'
             "
           />
-        </a-form-item>
-        <a-form-item label="敏感文件（默认脱敏，明文查看落审计）">
-          <a-switch v-model:checked="form.sensitive" />
         </a-form-item>
         <a-form-item label="备注">
           <a-input v-model:value="form.remark" />

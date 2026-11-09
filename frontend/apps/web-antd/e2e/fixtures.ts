@@ -21,7 +21,11 @@ export const test = base.extend({
     //   请求偶发早于 handler 注册。仅 dev 竞速（生产 build 为单文件 worker
     //   无此窗口）；不影响功能（校验稍后到达）。
     const knownNoise = pageErrors.filter(
-      (e) => !e.includes('Missing requestHandler or method: doValidation'),
+      (e) =>
+        !e.includes('Missing requestHandler or method: doValidation') &&
+        // 同因：monaco 语言服务 worker 注册竞速的另一方法名（2026-11-09
+        // config-reveal 用例首见，dev-only）
+        !e.includes('Missing requestHandler or method: resetSchema'),
     );
     expect(
       knownNoise,

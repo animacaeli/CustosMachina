@@ -24,7 +24,8 @@ test('配置中心文件页结构渲染（v0.12.14 加深：原用例仅查页�
   page,
 }) => {
   await page.goto('/configs/files');
-  // 空库下的结构断言：文件管理器三件套——页标题 + 地址栏 + 合并视图入口
+  // 空库下的结构断言：文件管理器三件套——页标题 + 地址栏 + 合并视图入口；
+  // 环境层固化（2026-11-09 返工）：prod 与槽位目录恒显示（无项目时仅 prod+空态树）
   await expect(page.getByText('配置文件').first()).toBeVisible({
     timeout: 10_000,
   });
@@ -36,5 +37,5 @@ test('配置中心文件页结构渲染（v0.12.14 加深：原用例仅查页�
     page.getByRole('button', { name: /合并视图/ }),
     '合并视图入口（M7）应渲染',
   ).toBeVisible();
-  await expect(page.getByText(/暂无文件/).first()).toBeVisible();
+  await expect(page.getByText('prod').first()).toBeVisible();
 });

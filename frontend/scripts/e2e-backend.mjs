@@ -25,7 +25,14 @@ if (!bin) {
 const dir = mkdtempSync(join(tmpdir(), 'custos-e2e-'));
 const child = spawn(bin, {
   stdio: 'inherit',
-  env: { ...process.env, CUSTOS_DATABASE_DSN: join(dir, 'e2e.db') },
+  env: {
+    ...process.env,
+    CUSTOS_DATABASE_DSN: join(dir, 'e2e.db'),
+    // 与 make dev 的 DEV_MASTER_KEY 同值：server 凭据等 AES 落库依赖
+    // cipher（缺省时 CreateServer 等直接 400，用例无法造资源数据）
+    CUSTOS_SECRETS_MASTER_KEY:
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  },
 });
 const cleanup = () => rmSync(dir, { recursive: true, force: true });
 child.on('exit', (code) => {
