@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/shellx"
 	"github.com/custos-machina/backend/internal/pkg/strx"
@@ -60,13 +62,16 @@ type File struct {
 	// 定义
 	Name     string `gorm:"size:64;not null" json:"name"`
 	ServerID uint   `gorm:"index;not null" json:"serverId"`
-	// R2 文件管理器：项目归属 + 层级路径（首段=环境 prod/canary/test，
-	// 更深层自由；旧数据 project_id=0 树根展示待迁移）
-	ProjectID   uint      `gorm:"index;not null;default:0" json:"projectId"`
-	RelPath     string    `gorm:"size:512" json:"relPath"`
-	Path        string    `gorm:"size:512;not null" json:"path"` // 远端绝对路径
-	Format      string    `gorm:"size:8;not null;default:yaml" json:"format"`
-	Sensitive   bool      `gorm:"not null;default:false" json:"sensitive"`
+	// R2 文件管理器：项目归属 + 层级路径。环境语义（2026-11-09 返工对齐，
+	// 迁移 0011）：首段 = prod 或槽位名 dev1..devN（N=项目 TestSlotCount），
+	// 深层子目录自由；canary 不再有独立目录——全面引用 prod（读侧映射）。
+	ProjectID uint   `gorm:"index;not null;default:0" json:"projectId"`
+	RelPath   string `gorm:"size:512" json:"relPath"`
+	Path      string `gorm:"size:512;not null" json:"path"` // 远端绝对路径
+	Format    string `gorm:"size:8;not null;default:yaml" json:"format"`
+	// Sensitive 已废弃（2026-11-09）：脱敏改字段级自动识别（键名含
+	// token/secret/pwd/password），列保留防 schema 迁移，恒 false。
+	Sensitive   bool      `gorm:"not null;default:false" json:"-"`
 	Content     string    `gorm:"type:text" json:"-"` // 当前内容（内容经专用接口取，列表瘦身）
 	ApplyAction string    `gorm:"size:8;not null;default:none" json:"applyAction"`
 	ApplyTarget string    `gorm:"size:512" json:"applyTarget"` // 进程名 / refresh URL / 容器名
@@ -99,28 +104,29 @@ type Executor interface {
 	RecordEvent(ctx context.Context, serverID uint, typ, msg string)
 }
 
-// Service 配置中心。
+// Service 配置中心（proj：槽位首段校验联动项目 TestSlotCount）。
 type Service struct {
 	db     *gorm.DB
 	exec   Executor
 	cipher *crypto.Cipher
+	proj   projects.Reader
 }
 
-func NewService(db *gorm.DB, exec Executor, cipher *crypto.Cipher) *Service {
-	return &Service{db: db, exec: exec, cipher: cipher}
+func NewService(db *gorm.DB, exec Executor, cipher *crypto.Cipher, proj projects.Reader) *Service {
+	return &Service{db: db, exec: exec, cipher: cipher, proj: proj}
 }
 
 // ---- CRUD ----
 
 type SaveFileInput struct {
-	Name        string `json:"name" binding:"required,max=64"`
-	ServerID    uint   `json:"serverId" binding:"required"`
-	ProjectID   uint   `json:"projectId"`
-	RelPath     string `json:"relPath" binding:"omitempty,max=512"`
-	Path        string `json:"path" binding:"required,max=512"`
-	Format      string `json:"format" binding:"required,oneof=yaml json toml env ini"`
-	Sensitive   bool   `json:"sensitive"`
-	Content     string `json:"content" binding:"max=1048576"` // 1MB（与 SFTP 上限一致）
+	Name      string `json:"name" binding:"required,max=64"`
+	ServerID  uint   `json:"serverId" binding:"required"`
+	ProjectID uint   `json:"projectId"`
+	RelPath   string `json:"relPath" binding:"omitempty,max=512"`
+	Path      string `json:"path" binding:"required,max=512"`
+	Format    string `json:"format" binding:"required,oneof=yaml json toml env ini"`
+	Content   string `json:"content" binding:"max=1048576"` // 1MB（与 SFTP 上限一致）
+	// Sensitive 已移除（2026-11-09）：脱敏按字段名自动识别；旧载荷多传的字段被忽略
 	ApplyAction string `json:"applyAction" binding:"required,oneof=none sighup http restart"`
 	ApplyTarget string `json:"applyTarget" binding:"omitempty,max=512"`
 	Remark      string `json:"remark" binding:"max=255"`
@@ -157,8 +163,60 @@ func validateTarget(action, target string) error {
 	return nil
 }
 
-// validateRelPath 层级路径强语义：首段=环境（prod/canary/test）且项目已配置
-// 该环境部署目标（project_env_targets）；深层子目录自由（test/dev1/... 对应槽位目录）。
+// ---- 环境语义（2026-11-09 返工对齐，迁移 0011） ----
+// rel_path 首段 = prod 或槽位名 dev1..devN（N=项目 TestSlotCount，管理员可改）；
+// canary 不再有独立配置目录——全面引用 prod；旧 test/devN/... 前缀已迁移重写。
+
+// slotSegRe 槽位名形态：dev1、dev2…（dev0 不合法，两位数起允许 dev10）。
+var slotSegRe = regexp.MustCompile(`^dev[1-9][0-9]*$`)
+
+func isSlotSeg(seg string) bool { return slotSegRe.MatchString(seg) }
+
+func slotNum(seg string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(seg, "dev"))
+	return n
+}
+
+// EnvTypeOf 环境首段 → 部署目标环境类型（project_env_targets.env_type）：
+// prod→prod；devN（测试槽位）→test。canary 传入时映射 prod（引用语义）。
+func EnvTypeOf(env string) string {
+	switch {
+	case env == "prod" || env == "canary":
+		return "prod"
+	case isSlotSeg(env):
+		return "test"
+	default:
+		return ""
+	}
+}
+
+// validEnvSeg 拉取/同步/合并视图的环境入参：prod、canary（引用 prod）或槽位名。
+func validEnvSeg(env string) bool { return EnvTypeOf(env) != "" }
+
+// IsTestPath 测试族文件（首段=槽位名）——敏感字段明文查看免权限（2026-11-09
+// 用户定档：测试环境任何人可看，正式环境需 config.reveal）。
+// 无层级的旧形态裸文件按正式环境最严处理（fail-closed）。
+func IsTestPath(relPath string) bool { return isSlotSeg(firstSeg(relPath)) }
+
+// checkSlotCap 槽位首段上限校验（联动项目 TestSlotCount）——validateRelPath
+// 与 EnvSync 建档两路共用（防同步路径绕过上限）。
+func (s *Service) checkSlotCap(ctx context.Context, projectID uint, env string) error {
+	if !isSlotSeg(env) || s.proj == nil {
+		return nil
+	}
+	v, err := s.proj.ViewByID(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("查询项目槽位失败: %w", err)
+	}
+	if slotNum(env) > v.TestSlotCount {
+		return fmt.Errorf("槽位 %s 超出项目槽位数（该项目共 %d 个槽位）", env, v.TestSlotCount)
+	}
+	return nil
+}
+
+// validateRelPath 层级路径强语义：首段 = prod 或槽位名 dev1..devN（联动项目
+// TestSlotCount），且项目已配置对应环境部署目标（prod→prod；devN→test）；
+// 深层子目录自由。
 func (s *Service) validateRelPath(ctx context.Context, projectID uint, relPath string) error {
 	relPath = strings.Trim(strings.TrimSpace(relPath), "/")
 	if relPath == "" {
@@ -166,19 +224,23 @@ func (s *Service) validateRelPath(ctx context.Context, projectID uint, relPath s
 	}
 	segs := strings.Split(relPath, "/")
 	env := segs[0]
-	if env != "prod" && env != "canary" && env != "test" {
-		return fmt.Errorf("层级路径首段须为环境名（prod/canary/test），got %q", env)
+	if env != "prod" && !isSlotSeg(env) {
+		return fmt.Errorf("层级路径首段须为 prod 或槽位名（dev1、dev2…），got %q", env)
 	}
 	if projectID == 0 {
 		return fmt.Errorf("层级路径需要先选择归属项目")
 	}
+	if err := s.checkSlotCap(ctx, projectID, env); err != nil {
+		return err
+	}
+	envType := EnvTypeOf(env)
 	var n int64
 	if err := s.db.WithContext(ctx).Table("project_env_targets").
-		Where("project_id = ? AND env_type = ?", projectID, env).Count(&n).Error; err != nil {
+		Where("project_id = ? AND env_type = ?", projectID, envType).Count(&n).Error; err != nil {
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("项目未配置 %s 环境的部署目标（先在环境管理绑定）", env)
+		return fmt.Errorf("项目未配置 %s 环境的部署目标（先在环境管理绑定）", envType)
 	}
 	for _, seg := range segs {
 		if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, " \\") {
@@ -196,7 +258,7 @@ func (s *Service) Create(ctx context.Context, in SaveFileInput, by string) (*Fil
 		return nil, err
 	}
 	f := File{Name: in.Name, ServerID: in.ServerID, Path: in.Path, Format: in.Format,
-		Sensitive: in.Sensitive, Content: in.Content, ApplyAction: in.ApplyAction,
+		Content: in.Content, ApplyAction: in.ApplyAction,
 		ApplyTarget: in.ApplyTarget, Remark: in.Remark,
 		ProjectID: in.ProjectID, RelPath: strings.Trim(strings.TrimSpace(in.RelPath), "/")}
 	if err := s.db.WithContext(ctx).Create(&f).Error; err != nil {
@@ -221,7 +283,7 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveFileInput) error {
 	}
 	updates := map[string]any{
 		"name": in.Name, "server_id": in.ServerID, "path": in.Path, "format": in.Format,
-		"sensitive": in.Sensitive, "apply_action": in.ApplyAction,
+		"apply_action": in.ApplyAction,
 		"apply_target": in.ApplyTarget, "remark": in.Remark,
 		"project_id": in.ProjectID, "rel_path": strings.Trim(strings.TrimSpace(in.RelPath), "/"),
 	}
@@ -264,12 +326,54 @@ func (s *Service) List(ctx context.Context) ([]FileOut, error) {
 	return out, nil
 }
 
-// ---- 内容（脱敏/明文） ----
+// ---- 内容（字段级脱敏/明文） ----
 
-// sensitiveLineRe 匹配带值行（yaml `k: v` / env/ini `k=v`），值整体替换。
-var sensitiveLineRe = regexp.MustCompile(`^(\s*[^\s#=:]+(\s*[:=]\s*))(.*\S.*)$`)
+// sensitiveWords 敏感键字表（2026-11-09 用户定档）：键名含任一子串
+// （大小写不敏感）即脱敏该值——不是所有字段，仅凭据类字段。
+var sensitiveWords = []string{"token", "secret", "pwd", "password"}
 
-// MaskSensitive 按行脱敏：保留键与结构，值替换为 ***。
+func isSensitiveKey(key string) bool {
+	k := strings.ToLower(strings.Trim(strings.TrimSpace(key), `"'`))
+	for _, w := range sensitiveWords {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// sensitiveLineRe 匹配带标量值的键值行：yaml/json/toml `k: v` 与 env/ini `k=v`。
+// group(1)=缩进 group(2)=键 group(3)=分隔符 group(4)=值（原分隔符保留，env 的
+// = 不被改写成 yaml 的 :）。
+var sensitiveLineRe = regexp.MustCompile(`^(\s*)([^\s#=:]+)(\s*[:=]\s*)(.*\S.*)$`)
+
+// structuralValueRe 值是结构指示（对象/数组开闭、yaml block 竖线）而非标量——
+// 整行替换会破坏结构，跳过（其下的缩进行键未知，同样不打码，与旧实现一致保守）。
+var structuralValueRe = regexp.MustCompile(`^[{}\[\]|>][{}\[\]|>&*\s,]*$`)
+
+// inlinePairRe 单行紧凑 JSON 等多对形态的行内键值对（key/sep/value）——
+// 主正则把首对之后的内容都当值，行内第二对起会漏；此兜底逐对判定
+// （sep 含两侧空格重建不丢格式；值含扁平对象/数组整段——否则对象值
+// 替换后会残留闭合 } 破坏 JSON）。
+var inlinePairRe = regexp.MustCompile(`("[^"]+"|'[^']+'|[^\s:={},]+)(\s*:\s*)("[^"]*"|'[^']*'|\{[^{}]*\}|\[[^\[\]]*\]|[^,}\s][^,}]*)`)
+
+// maskSensitiveValue 值替换为 ***，保留成对引号形态（JSON 合法性）。
+func maskSensitiveValue(val string) string {
+	if len(val) >= 2 && (val[0] == '"' && val[len(val)-1] == '"' || val[0] == '\'' && val[len(val)-1] == '\'') {
+		return string(val[0]) + "***" + string(val[len(val)-1])
+	}
+	return "***"
+}
+
+// jsonPairBoundary 值内出现 `"…":`/`'…':` 对边界（引号紧邻冒号）——
+// 单行紧凑 JSON 多对形态的判定：整值替换会吞掉首对之后的对，须走逐对。
+var jsonPairBoundary = regexp.MustCompile(`["'][^"']*:\s*["']|"\s*:`)
+
+// MaskSensitive 字段级脱敏：仅敏感键（含 token/secret/pwd/password）的值替换
+// 为 ***，其余行原样保留；无敏感键的文件输出与输入相同（幂等，兼作判定）。
+// 值带成对引号（JSON 行 `"k": "v",`）时保留引号与行尾分隔（,/}）形态，
+// 输出仍是合法 JSON；单行紧凑 JSON 多对行逐对兜底替换（主正则贪婪到行尾，
+// 整值替换会吞后续对——2026-11-09 审核实测坐实）。
 func MaskSensitive(content string) string {
 	lines := strings.Split(content, "\n")
 	for i, l := range lines {
@@ -277,24 +381,82 @@ func MaskSensitive(content string) string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || trimmed == "---" {
 			continue
 		}
-		if m := sensitiveLineRe.FindStringSubmatch(l); m != nil {
-			lines[i] = m[1] + "***"
+		m := sensitiveLineRe.FindStringSubmatch(l)
+		multiPair := jsonPairBoundary.MatchString(l) ||
+			len(inlinePairRe.FindAllStringSubmatch(l, -1)) > 1
+		if m != nil && isSensitiveKey(m[2]) && !multiPair &&
+			!structuralValueRe.MatchString(strings.TrimSpace(m[4])) {
+			val := strings.TrimSpace(m[4])
+			tail := ""
+			// JSON 行尾分隔符不属于值
+			if strings.HasSuffix(val, ",") || strings.HasSuffix(val, "}") {
+				tail = val[len(val)-1:]
+				val = val[:len(val)-1]
+			}
+			lines[i] = m[1] + m[2] + m[3] + maskSensitiveValue(val) + tail
+			continue
 		}
+		if !multiPair {
+			continue // 单对且键非敏感/结构值：原样
+		}
+		// 多对行：逐对替换敏感键（非敏感对原样；纯结构值不打码防破坏；
+		// 对象/数组值整体降为字符串 "***"——保持 JSON 合法且内部值不泄漏）
+		lines[i] = inlinePairRe.ReplaceAllStringFunc(l, func(pair string) string {
+			pm := inlinePairRe.FindStringSubmatch(pair)
+			if pm == nil || !isSensitiveKey(pm[1]) {
+				return pair
+			}
+			v := strings.TrimSpace(pm[3])
+			if structuralValueRe.MatchString(v) {
+				return pair
+			}
+			if strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[") {
+				return pm[1] + pm[2] + `"***"`
+			}
+			return pm[1] + pm[2] + maskSensitiveValue(v)
+		})
 	}
 	return strings.Join(lines, "\n")
 }
 
-// GetContent 取内容：敏感文件默认脱敏；reveal=true 返回明文并落审计。
+// hasSensitiveFields 内容是否含敏感键（与 MaskSensitive 同一判定——
+// 对比实现防两套行逻辑漂移：多对行首对非敏感时曾在此误判 false 泄漏明文）。
+func hasSensitiveFields(content string) bool {
+	return MaskSensitive(content) != content
+}
+
+// IsSensitive 文件当前内容是否含敏感键（handler 输出 masked 标记用）。
+func (s *Service) IsSensitive(ctx context.Context, id uint) (bool, error) {
+	var f File
+	if err := s.db.WithContext(ctx).Select("content").First(&f, id).Error; err != nil {
+		return false, ErrNotFound
+	}
+	return hasSensitiveFields(f.Content), nil
+}
+
+// IsTestFile 文件是否测试族（槽位首段）——reveal 免权限分流判定。
+func (s *Service) IsTestFile(ctx context.Context, id uint) (bool, error) {
+	var f File
+	if err := s.db.WithContext(ctx).Select("rel_path").First(&f, id).Error; err != nil {
+		return false, ErrNotFound
+	}
+	return IsTestPath(f.RelPath), nil
+}
+
+// GetContent 取内容：默认敏感字段脱敏；reveal=true 返回明文并落审计
+// （权限分流在 handler：devN 免 config.reveal，prod 需要）。
 func (s *Service) GetContent(ctx context.Context, id uint, reveal bool, by string) (string, *File, error) {
 	var f File
 	if err := s.db.WithContext(ctx).First(&f, id).Error; err != nil {
 		return "", nil, ErrNotFound
 	}
-	if f.Sensitive && !reveal {
+	sensitive := hasSensitiveFields(f.Content)
+	if sensitive && !reveal {
 		return MaskSensitive(f.Content), &f, nil
 	}
-	if f.Sensitive && reveal && s.exec != nil {
-		s.exec.RecordEvent(ctx, f.ServerID, "config_reveal", fmt.Sprintf("配置 %q 明文查看 by %s", f.Name, by))
+	if sensitive && reveal && s.exec != nil {
+		s.exec.RecordEvent(ctx, f.ServerID, "config_reveal",
+			fmt.Sprintf("配置 %q 敏感字段明文查看 by %s", f.Name, by))
 	}
 	return f.Content, &f, nil
 }
@@ -349,7 +511,7 @@ func (s *Service) ListVersions(ctx context.Context, fileID uint) ([]VersionOut, 
 	return out, nil
 }
 
-// GetVersionContent 版本内容（敏感文件同样默认脱敏）。
+// GetVersionContent 版本内容（含敏感键时同样默认字段级脱敏）。
 func (s *Service) GetVersionContent(ctx context.Context, versionID uint, reveal bool) (string, *Version, error) {
 	var v Version
 	if err := s.db.WithContext(ctx).First(&v, versionID).Error; err != nil {
@@ -359,10 +521,19 @@ func (s *Service) GetVersionContent(ctx context.Context, versionID uint, reveal 
 	if err := s.db.WithContext(ctx).First(&f, v.FileID).Error; err != nil {
 		return "", nil, ErrNotFound
 	}
-	if f.Sensitive && !reveal {
+	if hasSensitiveFields(v.Content) && !reveal {
 		return MaskSensitive(v.Content), &v, nil
 	}
 	return v.Content, &v, nil
+}
+
+// VersionIsTest 版本所属文件是否测试族（reveal 免权限分流判定）。
+func (s *Service) VersionIsTest(ctx context.Context, versionID uint) (bool, error) {
+	var v Version
+	if err := s.db.WithContext(ctx).Select("file_id").First(&v, versionID).Error; err != nil {
+		return false, gorm.ErrRecordNotFound
+	}
+	return s.IsTestFile(ctx, v.FileID)
 }
 
 // Rollback 回滚：内容回到指定版本（记 rollback 快照，不自动下发——下发独立按钮）。
@@ -449,12 +620,13 @@ func truncate(s string, n int) string {
 }
 
 // EnvSyncInput 环境同步：把源环境（可选子前缀）下的配置文件内容完整同步到
-// 目标环境——目标已存在则生成新版本，不存在则建档（目标主机自动取目标环境
-// 的部署目标，远端路径沿用源文件）。
+// 目标环境（prod ↔ devN 或 devN ↔ devN'；canary 引用 prod 无独立目录，不参与）——
+// 目标已存在则生成新版本，不存在则建档（目标主机自动取目标环境族的部署目标，
+// 远端路径沿用源文件）。
 type EnvSyncInput struct {
 	ProjectID uint   `json:"projectId" binding:"required"`
-	SourceEnv string `json:"sourceEnv" binding:"required,oneof=prod canary test"`
-	TargetEnv string `json:"targetEnv" binding:"required,oneof=prod canary test"`
+	SourceEnv string `json:"sourceEnv" binding:"required"`
+	TargetEnv string `json:"targetEnv" binding:"required"`
 	SubPath   string `json:"subPath" binding:"omitempty,max=512"`
 }
 
@@ -462,6 +634,12 @@ type EnvSyncInput struct {
 func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (created, updated int, err error) {
 	if in.SourceEnv == in.TargetEnv {
 		return 0, 0, fmt.Errorf("源与目标环境相同")
+	}
+	// 环境入参：prod 或槽位名（canary 无独立配置目录，拒绝——引用 prod 即是）
+	for _, env := range []string{in.SourceEnv, in.TargetEnv} {
+		if env == "canary" || !isSlotSeg(env) && env != "prod" {
+			return 0, 0, fmt.Errorf("环境 %q 不合法（prod 或槽位名 devN；canary 引用 prod 无独立目录）", env)
+		}
 	}
 	sub := strings.Trim(strings.TrimSpace(in.SubPath), "/")
 	for _, seg := range strings.Split(sub, "/") {
@@ -472,15 +650,19 @@ func (s *Service) EnvSync(ctx context.Context, in EnvSyncInput, by string) (crea
 			return 0, 0, fmt.Errorf("子路径不合法: %q", seg)
 		}
 	}
-	// 目标环境须已绑定部署目标（新建文件的主机来源）
+	// 目标槽位同样受项目槽位数约束（建档路径与手工创建一致）
+	if err := s.checkSlotCap(ctx, in.ProjectID, in.TargetEnv); err != nil {
+		return 0, 0, err
+	}
+	// 目标环境族须已绑定部署目标（新建文件的主机来源：prod→prod、devN→test）
 	var targetServer uint
 	if err := s.db.WithContext(ctx).Table("project_env_targets").
-		Select("server_id").Where("project_id = ? AND env_type = ?", in.ProjectID, in.TargetEnv).
+		Select("server_id").Where("project_id = ? AND env_type = ?", in.ProjectID, EnvTypeOf(in.TargetEnv)).
 		Scan(&targetServer).Error; err != nil {
 		return 0, 0, err
 	}
 	if targetServer == 0 {
-		return 0, 0, fmt.Errorf("项目未配置 %s 环境的部署目标", in.TargetEnv)
+		return 0, 0, fmt.Errorf("项目未配置 %s 环境的部署目标", EnvTypeOf(in.TargetEnv))
 	}
 	prefix := in.SourceEnv
 	if sub != "" {
@@ -553,15 +735,16 @@ func (s *Service) RecentChanges(ctx context.Context, limit int) (string, error) 
 	for _, v := range rows {
 		f := fmap[v.FileID]
 		fmt.Fprintf(&sb, "%s %s[%s] by %s（%s）\n",
-			v.CreatedAt.Format("01-02 15:04"), f.Name, envOfPath(f.Path), orDash(v.CreatedBy), v.Source)
+			v.CreatedAt.Format("01-02 15:04"), f.Name, envOfRel(f.RelPath), orDash(v.CreatedBy), v.Source)
 	}
 	return strings.TrimSpace(sb.String()), nil
 }
 
-func envOfPath(path string) string {
-	seg := strings.Split(strings.Trim(path, "/"), "/")
-	if len(seg) > 1 {
-		return seg[0]
+// envOfRel 环境=层级路径首段（prod/devN）；旧形态裸文件显 '-'。
+// （此前误取远端绝对路径 Path 首段——恒为 etc/opt 等，2026-11-09 顺手修正）
+func envOfRel(relPath string) string {
+	if seg := firstSeg(relPath); seg != "" {
+		return seg
 	}
 	return "-"
 }

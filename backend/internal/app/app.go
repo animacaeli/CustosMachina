@@ -110,6 +110,14 @@ func init() {
 		}
 		return db.Exec("UPDATE ci_global_config SET gitee_webhook = ? WHERE id = 1", ci.HashWebhookPass(row.GiteeWebhook)).Error
 	})
+	// 0011：配置文件环境语义返工（2026-11-09 用户定档）——
+	// test/devN/* → devN/*（版本链按 file_id 关联无需动）；test/ 其余子路径
+	//（含直接文件，如旧演示形态 test/demo/app.yaml）→ dev1/*（测试族默认槽位，
+	// 不丢内容不中止启动）；canary/* 与对应 prod 文件逐个对比：内容一致或
+	// canary 无内容 → 删除 canary 行（读侧全面引用 prod 覆盖），prod 缺对应
+	// 或内容有异 → 返回错误中止迁移等人工定夺（fail-closed，防静默丢配置）。
+	// 同时清零已废弃的 sensitive 列（脱敏改字段级自动识别）。
+	database.RegisterGoHook("0011", migrateConfigEnvSemantics)
 }
 
 // ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。

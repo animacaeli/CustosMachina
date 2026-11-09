@@ -136,23 +136,43 @@ func (h *Handler) remove(c *gin.Context) {
 	httpx.OK(c, gin.H{"deleted": true})
 }
 
+// revealAllowed 敏感字段明文查看的环境分流（2026-11-09 用户定档）：
+// 测试族（槽位 devN）任何登录用户可看；正式环境（prod/旧形态裸文件）需
+// 独立权限 config.reveal（P7-M1 与编辑分离的 gate 保留）。
+func (h *Handler) revealAllowed(c *gin.Context, isTest bool) bool {
+	if isTest {
+		return true
+	}
+	return rbac.Can(c, "config.reveal")
+}
+
 func (h *Handler) getContent(c *gin.Context) {
 	id, ok := httpx.ParamID(c)
 	if !ok {
 		return
 	}
 	reveal := c.Query("reveal") == "true"
-	// P7-M1：密钥明文查看是独立动作（与配置编辑分离），reveal 请求一律过 gate
-	if reveal && !rbac.Can(c, "config.reveal") {
-		httpx.Fail(c, http.StatusForbidden, 403, "密钥明文查看需独立权限（config.reveal）")
-		return
+	if reveal {
+		isTest, err := h.svc.IsTestFile(c.Request.Context(), id)
+		if err != nil {
+			httpx.FailNotFound(c, err.Error())
+			return
+		}
+		if !h.revealAllowed(c, isTest) {
+			httpx.Fail(c, http.StatusForbidden, 403, "正式环境明文查看需独立权限（config.reveal）")
+			return
+		}
 	}
 	content, f, err := h.svc.GetContent(c.Request.Context(), id, reveal, actor(c))
 	if err != nil {
 		httpx.FailNotFound(c, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"content": content, "masked": f.Sensitive && !reveal, "sensitive": f.Sensitive})
+	httpx.OK(c, gin.H{
+		"content":   content,
+		"masked":    !reveal && hasSensitiveFields(f.Content),
+		"sensitive": hasSensitiveFields(f.Content),
+	})
 }
 
 func (h *Handler) putContent(c *gin.Context) {
@@ -213,16 +233,23 @@ func (h *Handler) getVersionContent(c *gin.Context) {
 	}
 	vid := uint(vid64)
 	reveal := c.Query("reveal") == "true"
-	if reveal && !rbac.Can(c, "config.reveal") {
-		httpx.Fail(c, http.StatusForbidden, 403, "密钥明文查看需独立权限（config.reveal）")
-		return
+	if reveal {
+		isTest, err := h.svc.VersionIsTest(c.Request.Context(), vid)
+		if err != nil {
+			httpx.FailNotFound(c, err.Error())
+			return
+		}
+		if !h.revealAllowed(c, isTest) {
+			httpx.Fail(c, http.StatusForbidden, 403, "正式环境明文查看需独立权限（config.reveal）")
+			return
+		}
 	}
 	content, _, err := h.svc.GetVersionContent(c.Request.Context(), vid, reveal)
 	if err != nil {
 		httpx.FailNotFound(c, err.Error())
 		return
 	}
-	httpx.OK(c, gin.H{"content": content})
+	httpx.OK(c, gin.H{"content": content, "masked": hasSensitiveFields(content) && !reveal})
 }
 
 func (h *Handler) rollback(c *gin.Context) {
@@ -250,6 +277,9 @@ func (h *Handler) rollback(c *gin.Context) {
 }
 
 // envSync POST /config-files/env-sync 环境同步（admin/ops 写权限由 rbac 矩阵约束）。
+// 源=prod 时加 config.reveal gate：同步把正式配置（含敏感字段）复制进测试
+// 槽位版本链，devN 侧 reveal 免权限——不拦就是「deploy 权限绕过 reveal 看
+// 正式密钥」的旁路（2026-11-09 二轮审核：自定义角色 deploy-without-reveal）。
 func (h *Handler) envSync(c *gin.Context) {
 	var in EnvSyncInput
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -259,6 +289,10 @@ func (h *Handler) envSync(c *gin.Context) {
 	// P7-M1：env 同步即下发语义
 	if !rbac.Can(c, "config.deploy") {
 		httpx.Fail(c, http.StatusForbidden, 403, "环境同步需下发权限（config.deploy）")
+		return
+	}
+	if in.SourceEnv == "prod" && !rbac.Can(c, "config.reveal") {
+		httpx.Fail(c, http.StatusForbidden, 403, "同步正式环境配置需明文查看权限（config.reveal）")
 		return
 	}
 	created, updated, err := h.svc.EnvSync(c.Request.Context(), in, actor(c))
@@ -396,10 +430,15 @@ func (h *Handler) pullConfig(c *gin.Context) {
 func (h *Handler) syncKV(c *gin.Context) {
 	var in struct {
 		ProjectID uint   `json:"projectId" binding:"required"`
-		Env       string `json:"env" binding:"required,oneof=prod canary test"`
+		Env       string `json:"env" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	// 环境入参：prod / canary（引用 prod）/ 槽位名 devN（迁移 0011 后的值域）
+	if !validEnvSeg(in.Env) {
+		httpx.FailBadRequest(c, "env 须为 prod、canary 或槽位名（dev1、dev2…）")
 		return
 	}
 	n, err := h.svc.SyncAgile(c.Request.Context(), in.ProjectID, in.Env, actor(c))
@@ -413,10 +452,14 @@ func (h *Handler) syncKV(c *gin.Context) {
 func (h *Handler) reconcileKV(c *gin.Context) {
 	var in struct {
 		ProjectID uint   `json:"projectId" binding:"required"`
-		Env       string `json:"env" binding:"required,oneof=prod canary test"`
+		Env       string `json:"env" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if !validEnvSeg(in.Env) {
+		httpx.FailBadRequest(c, "env 须为 prod、canary 或槽位名（dev1、dev2…）")
 		return
 	}
 	diff, err := h.svc.ReconcileAgile(c.Request.Context(), in.ProjectID, in.Env, actor(c))
@@ -449,6 +492,8 @@ func (h *Handler) saveKVSettings(c *gin.Context) {
 }
 
 // mergedPreview 合并视图：项目×环境聚合最终生效配置（JSON/YAML，只读预览）。
+// 敏感字段默认脱敏；reveal 走与单文件一致的环境分流（2026-11-09：合并视图
+// 曾把 prod 凭据明文渲染给仅有 config.view 的角色——reveal 旁路，已收紧）。
 func (h *Handler) mergedPreview(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Query("project_id"), 10, 64)
 	if pid == 0 {
@@ -459,7 +504,16 @@ func (h *Handler) mergedPreview(c *gin.Context) {
 	if env == "" {
 		env = "prod"
 	}
-	out, err := h.svc.MergedPreview(c.Request.Context(), uint(pid), env, c.Query("format"))
+	if !validEnvSeg(env) {
+		httpx.FailBadRequest(c, "env 须为 prod、canary 或槽位名（dev1、dev2…）")
+		return
+	}
+	reveal := c.Query("reveal") == "true"
+	if reveal && !h.revealAllowed(c, isSlotSeg(env)) {
+		httpx.Fail(c, http.StatusForbidden, 403, "正式环境明文查看需独立权限（config.reveal）")
+		return
+	}
+	out, err := h.svc.MergedPreview(c.Request.Context(), uint(pid), env, c.Query("format"), reveal, actor(c))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return

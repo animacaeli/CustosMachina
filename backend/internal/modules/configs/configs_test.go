@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/custos-machina/backend/internal/modules/projects"
 	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/glebarez/sqlite"
 	"gopkg.in/yaml.v3"
@@ -48,6 +49,22 @@ func (f *fakeExec) RecordEvent(_ context.Context, _ uint, typ, msg string) {
 	f.events = append(f.events, typ+": "+msg)
 }
 
+// fakeProj 槽位数联动校验的 projects.Reader 假实现（仅 ViewByID 有值）。
+type fakeProj struct {
+	slots int
+}
+
+func (f *fakeProj) ViewByID(_ context.Context, id uint) (*projects.View, error) {
+	if f.slots == 0 && id == 0 {
+		return nil, projects.ErrViewNotFound
+	}
+	return &projects.View{ID: id, Name: "demo", TestSlotCount: f.slots}, nil
+}
+func (f *fakeProj) ViewByRepoPath(context.Context, string) (*projects.View, error) {
+	return nil, projects.ErrViewNotFound
+}
+func (f *fakeProj) EncryptedCIToken(context.Context, string) string { return "" }
+
 func testSvc(t *testing.T) (*Service, *gorm.DB, *fakeExec) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -60,26 +77,52 @@ func testSvc(t *testing.T) (*Service, *gorm.DB, *fakeExec) {
 		t.Fatal(err)
 	}
 	exec := newFakeExec()
-	return NewService(db, exec, nil), db, exec
+	return NewService(db, exec, nil, &fakeProj{slots: 3}), db, exec
 }
 
+// 字段级脱敏（2026-11-09 用户定档）：仅凭据类键（token/secret/pwd/password）
+// 打码，其余字段明文；分隔符保留（env 的 = 不被改写）。
 func TestMaskSensitive(t *testing.T) {
 	in := `# 注释保留
 server:
   host: db.prod.internal
   password: s3cret-token
+  secret: another-one
 PORT=8080
+DB_PWD=topsecret
 API_KEY=abcd1234
+"auth_token": "json-style"
+block: |
+  multi
+  lines
+struct_key: {nested}
 plain line
 ---`
 	out := MaskSensitive(in)
-	for _, keep := range []string{"host: ***", "password: ***", "PORT=***", "API_KEY=***", "# 注释保留", "plain line", "---"} {
+	for _, keep := range []string{
+		"password: ***", "secret: ***", "DB_PWD=***", `"auth_token": "***"`,
+		// 非凭据键保留明文
+		"host: db.prod.internal", "PORT=8080", "API_KEY=abcd1234",
+		// 结构行与 block 指示不被打码
+		"block: |", "struct_key: {nested}",
+		"# 注释保留", "plain line", "---",
+	} {
 		if !strings.Contains(out, keep) {
-			t.Errorf("脱敏输出应含 %q:\n%s", keep, out)
+			t.Errorf("输出应含 %q:\n%s", keep, out)
 		}
 	}
-	if strings.Contains(out, "s3cret") || strings.Contains(out, "abcd1234") || strings.Contains(out, "db.prod") {
+	if strings.Contains(out, "s3cret") || strings.Contains(out, "another-one") || strings.Contains(out, "topsecret") {
 		t.Errorf("敏感值泄漏:\n%s", out)
+	}
+	if strings.Contains(out, "abcd1234") && strings.Contains(out, "***") && strings.Contains(out, "API_KEY=***") {
+		t.Error("非凭据键不应被打码")
+	}
+	// 无敏感键的文件幂等（原样返回）
+	if got := MaskSensitive("a: 1\nb=2\n"); got != "a: 1\nb=2\n" {
+		t.Errorf("无敏感键应原样返回: %q", got)
+	}
+	if !hasSensitiveFields("k: 1\npassword: x\n") || hasSensitiveFields("k: 1\n") {
+		t.Error("hasSensitiveFields 判定异常")
 	}
 }
 
@@ -134,28 +177,60 @@ func TestLifecycleAndVersions(t *testing.T) {
 }
 
 func TestSensitiveMaskAndReveal(t *testing.T) {
-	svc, _, exec := testSvc(t)
+	svc, db, exec := testSvc(t)
 	ctx := context.Background()
+	// 敏感键自动识别（不再有文件级开关）：password 打码、普通键明文
 	f, err := svc.Create(ctx, SaveFileInput{
 		Name: "env", ServerID: 1, Path: "/etc/app/.env", Format: FormatEnv,
-		Sensitive: true, Content: "DB_PASS=topsecret\n", ApplyAction: ApplyNone,
+		Content: "DB_PWD=topsecret\nDB_HOST=127.0.0.1\n", ApplyAction: ApplyNone,
 	}, "op")
 	if err != nil {
 		t.Fatal(err)
 	}
 	masked, _, _ := svc.GetContent(ctx, f.ID, false, "x")
-	if strings.TrimSpace(masked) != "DB_PASS=***" {
-		t.Errorf("默认应脱敏: %q", masked)
+	if !strings.Contains(masked, "DB_PWD=***") || !strings.Contains(masked, "DB_HOST=127.0.0.1") {
+		t.Errorf("默认仅敏感字段脱敏: %q", masked)
+	}
+	if strings.Contains(masked, "topsecret") {
+		t.Errorf("敏感值泄漏: %q", masked)
 	}
 	if len(exec.events) != 0 {
 		t.Error("未 reveal 不应落审计")
 	}
 	clear, _, _ := svc.GetContent(ctx, f.ID, true, "op-x")
-	if clear != "DB_PASS=topsecret\n" {
+	if clear != "DB_PWD=topsecret\nDB_HOST=127.0.0.1\n" {
 		t.Errorf("reveal 应返回明文: %q", clear)
 	}
 	if len(exec.events) != 1 || !strings.Contains(exec.events[0], "op-x") {
 		t.Errorf("reveal 应落审计: %v", exec.events)
+	}
+	// 环境分流判定：槽位文件免权限、prod/裸文件需权限
+	if ok, _ := svc.IsTestFile(ctx, f.ID); ok {
+		t.Error("裸文件（无层级）按正式环境最严处理")
+	}
+	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'test', 1)`)
+	f2, err := svc.Create(ctx, SaveFileInput{
+		Name: "slot", ServerID: 1, Path: "/etc/app/dev.yaml", Format: FormatYAML,
+		ProjectID: 1, RelPath: "dev1/app.yaml", Content: "k: v\n", ApplyAction: ApplyNone,
+	}, "op")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := svc.IsTestFile(ctx, f2.ID); !ok {
+		t.Error("dev1 首段应判定为测试族")
+	}
+	// 无敏感键的文件 reveal 不落审计（无密可泄）
+	f3, _ := svc.Create(ctx, SaveFileInput{
+		Name: "plain", ServerID: 1, Path: "/etc/app/plain.yaml", Format: FormatYAML,
+		Content: "k: v\n", ApplyAction: ApplyNone,
+	}, "op")
+	before := len(exec.events)
+	_, _, _ = svc.GetContent(ctx, f3.ID, true, "op-y")
+	if len(exec.events) != before {
+		t.Error("无敏感键 reveal 不应落审计")
 	}
 }
 
@@ -205,36 +280,44 @@ func TestDeployFailureKeepsAudit(t *testing.T) {
 	}
 }
 
-// R2 层级路径强语义：首段环境校验 + 项目环境绑定检查 + 深层自由。
+// R2 层级路径强语义（2026-11-09 返工）：首段 = prod 或槽位名 dev1..devN
+// （联动 TestSlotCount，fakeProj=3）；canary/test 旧枚举拒绝（迁移 0011 已重写存量）。
 func TestValidateRelPath(t *testing.T) {
 	svc, db, _ := testSvc(t)
 	ctx := context.Background()
 	if err := db.Exec(`CREATE TABLE project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'prod', 1)`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'prod', 1), (1, 'test', 2)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 合法：已配置环境 + 深层子目录（槽位）
-	if err := svc.validateRelPath(ctx, 1, "prod/application.yaml"); err != nil {
-		t.Fatalf("合法路径被拒: %v", err)
-	}
-	if err := svc.validateRelPath(ctx, 1, "prod/sub/dev1/app.env"); err != nil {
-		t.Fatalf("深层路径被拒: %v", err)
+	// 合法：prod + 槽位首段（3 槽位内）
+	for _, p := range []string{"prod/application.yaml", "dev1/app.yaml", "dev3/app.yaml", "dev2/sub/app.env"} {
+		if err := svc.validateRelPath(ctx, 1, p); err != nil {
+			t.Fatalf("合法路径 %q 被拒: %v", p, err)
+		}
 	}
 	// 空路径（旧形态）放行
 	if err := svc.validateRelPath(ctx, 0, ""); err != nil {
 		t.Fatalf("空路径应放行: %v", err)
 	}
-	// 首段非环境
-	if err := svc.validateRelPath(ctx, 1, "dev1/app.yaml"); err == nil {
-		t.Fatal("首段非环境应拒绝")
+	// 超出槽位数（fakeProj=3）
+	for _, p := range []string{"dev4/app.yaml", "dev10/app.yaml"} {
+		if err := svc.validateRelPath(ctx, 1, p); err == nil {
+			t.Fatalf("超槽位路径 %q 应拒绝", p)
+		}
 	}
-	// 项目未配置该环境
-	if err := svc.validateRelPath(ctx, 1, "canary/app.yaml"); err == nil {
-		t.Fatal("未配置环境应拒绝")
+	// 非法槽位形态与旧枚举
+	for _, p := range []string{"dev0/app.yaml", "devx/app.yaml", "test/app.yaml", "canary/app.yaml", "staging/app.yaml"} {
+		if err := svc.validateRelPath(ctx, 1, p); err == nil {
+			t.Fatalf("非法首段 %q 应拒绝", p)
+		}
 	}
-	// 有项目环境但未挂项目
+	// 未绑定环境族（项目 2 无 env target）
+	if err := svc.validateRelPath(ctx, 2, "dev1/app.yaml"); err == nil {
+		t.Fatal("未绑定 test 目标应拒绝")
+	}
+	// 无项目归属
 	if err := svc.validateRelPath(ctx, 0, "prod/app.yaml"); err == nil {
 		t.Fatal("无项目归属应拒绝")
 	}
@@ -258,7 +341,7 @@ func TestValidateRelPath(t *testing.T) {
 	}
 }
 
-// 环境同步：覆盖生成新版本 + 缺失建档（目标主机跟随目标环境）。
+// 环境同步：prod → 槽位建档（目标主机跟随 test 部署目标）+ 覆盖生成新版本。
 func TestEnvSync(t *testing.T) {
 	svc, db, _ := testSvc(t)
 	ctx := context.Background()
@@ -275,17 +358,17 @@ func TestEnvSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 同 prod → test：新建
-	c1, u1, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "test"}, "t")
+	// 同 prod → dev1：新建（主机跟随 test 目标）
+	c1, u1, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
 	if err != nil || c1 != 1 || u1 != 0 {
 		t.Fatalf("首次同步: c=%d u=%d err=%v", c1, u1, err)
 	}
 	var dst File
-	if err := db.Where("project_id = 1 AND rel_path = ?", "test/app.yaml").First(&dst).Error; err != nil {
+	if err := db.Where("project_id = 1 AND rel_path = ?", "dev1/app.yaml").First(&dst).Error; err != nil {
 		t.Fatal("目标文件未建档", err)
 	}
 	if dst.ServerID != 20 {
-		t.Fatalf("目标主机应跟随目标环境: %d", dst.ServerID)
+		t.Fatalf("目标主机应跟随 test 部署目标: %d", dst.ServerID)
 	}
 	if dst.Content != "v: 1" {
 		t.Fatalf("内容未同步: %q", dst.Content)
@@ -294,7 +377,7 @@ func TestEnvSync(t *testing.T) {
 	if err := svc.SaveContent(ctx, src.ID, "v: 2", "t"); err != nil {
 		t.Fatal(err)
 	}
-	c2, u2, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "test"}, "t")
+	c2, u2, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev1"}, "t")
 	if err != nil || c2 != 0 || u2 != 1 {
 		t.Fatalf("二次同步: c=%d u=%d err=%v", c2, u2, err)
 	}
@@ -311,12 +394,15 @@ func TestEnvSync(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("env_sync 版本数不符: %d", n)
 	}
-	// 同环境拒绝 / 未绑定环境拒绝
+	// 同环境拒绝 / canary 拒绝（引用 prod 无独立目录）/ 未绑定环境族拒绝
 	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "prod"}, "t"); err == nil {
 		t.Fatal("同环境应拒绝")
 	}
 	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "canary"}, "t"); err == nil {
-		t.Fatal("未绑定目标环境应拒绝")
+		t.Fatal("canary 应拒绝（引用 prod）")
+	}
+	if _, _, err := svc.EnvSync(ctx, EnvSyncInput{ProjectID: 1, SourceEnv: "prod", TargetEnv: "dev9"}, "t"); err == nil {
+		t.Fatal("未绑定环境族应拒绝")
 	}
 }
 
@@ -389,19 +475,44 @@ func TestPullConflictKey(t *testing.T) {
 func TestPullFlatENV(t *testing.T) {
 	db := pullTestDB(t)
 	pullSeed(t, db,
-		File{Name: "a", RelPath: "test/a.env", Path: "/x/a.env", Format: "env", Content: "DB_HOST=localhost\n# 注释\nDB_PORT=5432\n"},
-		File{Name: "b", RelPath: "test/b.env", Path: "/x/b.env", Format: "env", Content: "CACHE=redis\n"},
+		File{Name: "a", RelPath: "dev1/a.env", Path: "/x/a.env", Format: "env", Content: "DB_HOST=localhost\n# 注释\nDB_PORT=5432\n"},
+		File{Name: "b", RelPath: "dev1/b.env", Path: "/x/b.env", Format: "env", Content: "CACHE=redis\n"},
 	)
 	svc := &Service{db: db}
-	out, err := svc.PullConfig(t.Context(), "demo", "test")
+	out, err := svc.PullConfig(t.Context(), "demo", "dev1")
 	if err != nil {
 		t.Fatalf("拉取失败: %v", err)
 	}
 	body := string(out.Body)
 	for _, kv := range []string{"DB_HOST=localhost", "DB_PORT=5432", "CACHE=redis"} {
 		if !strings.Contains(body, kv) {
-			t.Fatalf("平铺合并缺 %s: %s", kv, body)
+			t.Fatalf("平铺合并缺 %s: %s", body, kv)
 		}
+	}
+}
+
+// canary 全面引用 prod（2026-11-09）：拉取/合并视图选 canary 返回 prod 内容。
+func TestPullCanaryReferencesProd(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "a", RelPath: "prod/a.yaml", Path: "/x/a.yaml", Format: FormatYAML, Content: "port: 1\n"},
+		File{Name: "legacy", RelPath: "canary/a.yaml", Path: "/x/c.yaml", Format: FormatYAML, Content: "port: 9\n"},
+	)
+	svc := &Service{db: db}
+	out, err := svc.PullConfig(t.Context(), "demo", "canary")
+	if err != nil {
+		t.Fatalf("canary 拉取失败: %v", err)
+	}
+	// 只聚合 prod 首段（残留 canary 目录数据不参与——迁移 0011 会清理）
+	if out.Files != 1 || !strings.Contains(string(out.Body), "port: 1") {
+		t.Fatalf("canary 应引用 prod: files=%d body=%s", out.Files, out.Body)
+	}
+	if strings.Contains(string(out.Body), "port: 9") {
+		t.Fatal("canary 残留目录不应参与聚合")
+	}
+	merged, err := svc.MergedPreview(t.Context(), 1, "canary", "yaml", false, "t")
+	if err != nil || !strings.Contains(merged.Body, "port: 1") {
+		t.Fatalf("合并视图 canary 应引用 prod: %v %s", err, merged.Body)
 	}
 }
 
@@ -666,7 +777,7 @@ func TestMergedPreview(t *testing.T) {
 		File{Name: "参数", RelPath: "prod/app.env", Path: "/x/b.env", Format: "env", Content: "feature_x=true\nnested.key=v\n"},
 	)
 	svc := &Service{db: db}
-	out, err := svc.MergedPreview(t.Context(), 1, "prod", "json")
+	out, err := svc.MergedPreview(t.Context(), 1, "prod", "json", false, "t")
 	if err != nil {
 		t.Fatalf("合并视图失败: %v", err)
 	}
@@ -684,9 +795,71 @@ func TestMergedPreview(t *testing.T) {
 		t.Fatalf("聚合结果异常: %s", out.Body)
 	}
 	// yaml 输出同树
-	out2, err := svc.MergedPreview(t.Context(), 1, "prod", "yaml")
+	out2, err := svc.MergedPreview(t.Context(), 1, "prod", "yaml", false, "t")
 	if err != nil || !strings.Contains(out2.Body, "feature_x: \"true\"") && !strings.Contains(out2.Body, "feature_x: true") {
 		t.Fatalf("yaml 输出异常: %v %s", err, out2.Body)
+	}
+}
+
+// 合并视图默认脱敏（2026-11-09：UI 侧 reveal 旁路收紧）——敏感键值打码且
+// JSON 输出保留引号形态（仍合法 JSON）；reveal=true 返回明文。
+func TestMergedPreviewMasked(t *testing.T) {
+	db := pullTestDB(t)
+	pullSeed(t, db,
+		File{Name: "a", RelPath: "prod/a.env", Path: "/x/a.env", Format: "env", Content: "DB_HOST=10.0.0.1\nDB_PASSWORD=prodsecret\n"},
+	)
+	svc := &Service{db: db}
+	out, err := svc.MergedPreview(t.Context(), 1, "prod", "json", false, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.Body, "prodsecret") {
+		t.Fatalf("合并视图默认应脱敏: %s", out.Body)
+	}
+	if !strings.Contains(out.Body, `"DB_PASSWORD": "***"`) {
+		t.Fatalf("JSON 脱敏应保留引号形态: %s", out.Body)
+	}
+	if !strings.Contains(out.Body, `"DB_HOST": "10.0.0.1"`) {
+		t.Fatalf("非敏感键应明文: %s", out.Body)
+	}
+	if err := json.Unmarshal([]byte(out.Body), &map[string]any{}); err != nil {
+		t.Fatalf("脱敏后应仍是合法 JSON: %v %s", err, out.Body)
+	}
+	// 行中元素（值后带逗号）同样保留合法形态
+	if got := MaskSensitive("{\"k\": 1, \"api_token\": \"abc\", \"z\": 2}"); got != `{"k": 1, "api_token": "***", "z": 2}` {
+		t.Errorf("行内 JSON 尾逗号形态: %q", got)
+	}
+	clear, err := svc.MergedPreview(t.Context(), 1, "prod", "json", true, "t")
+	if err != nil || !strings.Contains(clear.Body, "prodsecret") {
+		t.Fatalf("reveal 应返回明文: %v %s", err, clear.Body)
+	}
+}
+
+// 审核边界（2026-11-09 第二轮）：单行紧凑 JSON 的多对形态——首对敏感不吞
+// 后续对、结构值不被打码、整体仍是合法 JSON；env `=` 行不受影响。
+func TestMaskSensitiveInlineEdges(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// 首对敏感的多对行：后续对保留
+		{`{"api_token": "abc", "z": 2}`, `{"api_token": "***", "z": 2}`},
+		// 首对非敏感、行内第二对敏感：逐对打码
+		{`{"k": 1, "password": "x", "z": 2}`, `{"k": 1, "password": "***", "z": 2}`},
+		// 敏感键的值是对象：整体打码为字符串（合法 JSON，不泄漏内部值）
+		{`{"k": 1, "secret": {"inner": "x"}, "z": 2}`, `{"k": 1, "secret": "***", "z": 2}`},
+		// 单对带花括号闭合：尾 } 保留
+		{`{"token": "abc"}`, `{"token": "***"}`},
+		// env `=` 行（inline 正则只认冒号）不受多对判定影响
+		{`DB_PWD=topsecret`, `DB_PWD=***`},
+		// 值含裸冒号（URL）不是对边界：整值替换
+		{`token: http://a:8080/x`, `token: ***`},
+	}
+	for _, c := range cases {
+		if got := MaskSensitive(c.in); got != c.want {
+			t.Errorf("MaskSensitive(%q)\n got  %q\n want %q", c.in, got, c.want)
+		}
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(MaskSensitive(`{"api_token": "abc", "z": 2}`)), &m); err != nil {
+		t.Errorf("多对行脱敏后应合法 JSON: %v", err)
 	}
 }
 

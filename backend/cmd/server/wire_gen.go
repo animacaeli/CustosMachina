@@ -95,7 +95,7 @@ func InitializeServer() (*server.Server, func(), error) {
 	canaryHandler := canary.NewHandler(canaryService)
 	observService := observ.NewService(db, resourcesService, cipher)
 	observHandler := observ.NewHandler(observService, userRepository)
-	configsService := configs.NewService(db, resourcesService, cipher)
+	configsService := configs.NewService(db, resourcesService, cipher, projectsService)
 	slotsService := slots.NewService(db, ciService, resourcesService, notifyService, projectsService, configsService)
 	slotsHandler := slots.NewHandler(slotsService)
 	cronService := cron.NewService(db, resourcesService)

@@ -29,7 +29,7 @@ var ActionCatalog = []ActionDef{
 		// 由 handler gate 按动作分派（deploy/env-sync=deploy，版本回退=edit）
 		{Path: "/config-files/*", Act: "POST"},
 	}},
-	{Key: "config.reveal", Category: "密钥", Desc: "敏感文件明文查看（独立于编辑权限）", Routes: nil},
+	{Key: "config.reveal", Category: "密钥", Desc: "正式环境敏感字段明文查看（测试槽位 devN 任何登录用户可看，均落审计）", Routes: nil},
 	{Key: "release.publish.test", Category: "发布", Desc: "发布到 test 环境", Routes: publishRoutes},
 	{Key: "release.publish.canary", Category: "发布", Desc: "灰度发布", Routes: publishRoutes},
 	{Key: "release.publish.prod", Category: "发布", Desc: "正式环境发布（高危）", Routes: publishRoutes},

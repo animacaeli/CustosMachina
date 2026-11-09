@@ -322,7 +322,11 @@ func (s *Service) envAgileItems(ctx context.Context, projectID uint, env string)
 // SyncAgile 文件→AgileConfig 单向推送（group=env）：新增/改值（不删除远端——
 // 删除属破坏性，交由对账报告）；改动后逐条 publish 上线。
 // 入口：下发动作自动触发 + 管理后台手动全量同步。
+// canary 引用 prod（2026-11-09）：canary 请求等效 prod（同组同源，无独立灰度组）。
 func (s *Service) SyncAgile(ctx context.Context, projectID uint, env, by string) (int, error) {
+	if env == "canary" {
+		env = "prod"
+	}
 	items, appName, err := s.envAgileItems(ctx, projectID, env)
 	if err != nil {
 		return 0, err
@@ -388,7 +392,11 @@ func (s *Service) SyncAgile(ctx context.Context, projectID uint, env, by string)
 }
 
 // ReconcileAgile 对账：远端 vs 文件派生键值 → 差异即漂移（告警不覆盖）。
+// canary 同 SyncAgile：等效 prod 组对账。
 func (s *Service) ReconcileAgile(ctx context.Context, projectID uint, env, by string) (*DiffOut, error) {
+	if env == "canary" {
+		env = "prod"
+	}
 	items, appName, err := s.envAgileItems(ctx, projectID, env)
 	if err != nil {
 		return nil, err

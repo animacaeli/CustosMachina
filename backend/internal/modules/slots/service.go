@@ -288,6 +288,8 @@ func (s *Service) SlotCallback(ctx context.Context, in SlotCallbackInput, token 
 	if s.tokens == nil {
 		return nil, fmt.Errorf("回调鉴权未装配（平台配置）")
 	}
+	// env 参数是拉取凭证的 Envs 范围标记（字符串匹配），与配置目录语义无关
+	//——沿用 "test"（存量凭证 Envs 含 test 的继续可用；配置目录首段已改槽位名）
 	if _, err := s.tokens.VerifyPullToken(ctx, token, in.App, "test"); err != nil {
 		return nil, err
 	}

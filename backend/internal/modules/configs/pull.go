@@ -124,7 +124,11 @@ type PullOut struct {
 }
 
 // fetchEnvFiles 项目×环境（rel_path 首段）有内容的配置文件（拉取与合并视图共用）。
+// canary 全面引用 prod（2026-11-09 返工对齐）：灰度无独立配置目录，读 prod 首段。
 func (s *Service) fetchEnvFiles(ctx context.Context, projectID uint, env string) ([]File, error) {
+	if env == "canary" {
+		env = "prod"
+	}
 	var files []File
 	if err := s.db.WithContext(ctx).Where("project_id = ?", projectID).Order("rel_path").Find(&files).Error; err != nil {
 		return nil, err
@@ -346,7 +350,11 @@ type MergedOut struct {
 
 // MergedPreview 合并视图（管理端，只读）：项目×环境全部文件按 M5 同一合并
 // 语义聚合成一棵树，输出 JSON/YAML——即拉取 API 返回内容的可视化预览。
-func (s *Service) MergedPreview(ctx context.Context, projectID uint, env, format string) (*MergedOut, error) {
+// 与拉取 API 的差异：UI 侧默认对敏感字段脱敏（reveal=false），明文须走
+// 与单文件一致的环境分流 gate（2026-11-09 合并视图曾被用作 reveal 旁路），
+// reveal 明文同样落审计。应用侧拉取 PullConfig 始终明文——token 已限定
+// app×env，服务要的是真值。
+func (s *Service) MergedPreview(ctx context.Context, projectID uint, env, format string, reveal bool, by string) (*MergedOut, error) {
 	if format != "json" && format != "yaml" {
 		format = "json"
 	}
@@ -414,6 +422,13 @@ func (s *Service) MergedPreview(ctx context.Context, projectID uint, env, format
 	}
 	if serr != nil {
 		return nil, serr
+	}
+	// 字段级脱敏作用于序列化文本（JSON/YAML 的 `k: v` 行与脱敏正则同构）
+	if !reveal {
+		return &MergedOut{Body: MaskSensitive(string(body)), Version: version, Files: len(files), Format: format}, nil
+	}
+	if hasSensitiveFields(string(body)) {
+		s.kvAudit(ctx, "config_reveal", fmt.Sprintf("合并视图 project#%d[%s] 敏感字段明文查看 by %s", projectID, env, by))
 	}
 	return &MergedOut{Body: string(body), Version: version, Files: len(files), Format: format}, nil
 }
