@@ -37,12 +37,14 @@ type PushEvent struct {
 	Pusher   string
 }
 
-// BuildRef CI 查询定位：gitea Actions 按 SHA；Jenkins 按 job + tag 参数。
+// BuildRef CI 查询定位：gitea Actions 按 SHA；Jenkins 按 job + tag 参数，
+// 或 Number>0 时按构建号直连（test 记录的 CIRef 已知 job#number，免扫描）。
 type BuildRef struct {
 	RepoPath string
 	SHA      string
 	Tag      string
 	Job      string // Jenkins job 名（项目级配置，gitea 路径忽略）
+	Number   int    // Jenkins 构建号（>0 优先生效；0=按 TAG 参数扫描定位）
 }
 
 // GitProvider git 托管适配器。

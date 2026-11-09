@@ -116,12 +116,17 @@ const columns = computed(() => {
 // ---- 内嵌日志：增量轮询实时滚动 ----
 // 构建中（pending/running）每 2s 拉增量（Jenkins progressiveText / 槽位部署输出），
 // 终态一次拉全（more=false）自动停；关窗或换行后旧轮询按会话令牌自止。
-// 槽位记录（test）= 平台部署输出；tag 记录（prod/canary）= CI 构建日志。
+// tag 记录（prod/canary）= CI 构建日志；槽位记录（test）有 ciRef（回调带
+// BUILD_NUMBER）时双视图：CI 构建（Jenkins console）/ 部署输出（平台 compose），
+// 存量无 ciRef 只有部署输出。
 const logOpen = ref(false);
 const logText = ref('');
 const logTitle = ref('');
 const logLoading = ref(false);
 const logStreaming = ref(false); // 增量轮询进行中（构建未结束）
+const logDual = ref(false); // test + ciRef：显示 CI 构建/部署输出切换
+const logKind = ref<'ci' | 'deploy'>('ci');
+let logRecord: Build | null = null;
 let logToken = 0;
 const logPreRef = ref<HTMLElement | null>(null);
 // 增量追加后滚到底部（实时跟进）
@@ -135,10 +140,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function openLog(record: Build) {
+async function openLog(record: Build, kind?: 'ci' | 'deploy') {
+  logRecord = record;
   const live = record.status === 'pending' || record.status === 'running';
-  const kind = record.envType === 'test' ? '部署日志' : 'CI 构建日志';
-  logTitle.value = `${record.tag} ${kind}${live ? '（实时）' : ''}`;
+  logDual.value = record.envType === 'test' && !!record.ciRef;
+  logKind.value = kind ?? (logDual.value ? 'ci' : 'deploy');
+  const kindLabel =
+    record.envType === 'test'
+      ? logKind.value === 'deploy'
+        ? '部署日志'
+        : 'CI 构建日志'
+      : 'CI 构建日志';
+  logTitle.value = `${record.tag} ${kindLabel}${live ? '（实时）' : ''}`;
   logOpen.value = true;
   logText.value = '';
   logLoading.value = true;
@@ -146,8 +159,12 @@ async function openLog(record: Build) {
   let start = 0;
   try {
     for (;;) {
-      const chunk = await getBuildLogStreamApi(record.id, start);
-      if (token !== logToken) return; // 已关窗/查看其他记录
+      const chunk = await getBuildLogStreamApi(
+        record.id,
+        start,
+        logKind.value === 'deploy' ? 'deploy' : undefined,
+      );
+      if (token !== logToken) return; // 已关窗/查看其他记录/切换视图
       if (chunk.text) logText.value += chunk.text;
       start = chunk.next;
       if (!chunk.more) break;
@@ -164,6 +181,11 @@ async function openLog(record: Build) {
       logStreaming.value = false;
     }
   }
+}
+
+function onLogKindChange() {
+  // 视图切换：重开会话（token 自增止掉旧轮询，从游标 0 重拉）
+  if (logRecord) openLog(logRecord, logKind.value);
 }
 
 function fmtTime(v: string) {
@@ -236,6 +258,17 @@ function fmtTime(v: string) {
       :width="820"
       @close="logOpen = false"
     >
+      <a-radio-group
+        v-if="logDual"
+        v-model:value="logKind"
+        button-style="solid"
+        size="small"
+        style="margin-bottom: 0.5rem"
+        @change="onLogKindChange"
+      >
+        <a-radio-button value="ci">CI 构建</a-radio-button>
+        <a-radio-button value="deploy">部署输出</a-radio-button>
+      </a-radio-group>
       <a-spin :spinning="logLoading">
         <div v-if="logStreaming" class="mb-1 text-xs text-blue-400">
           ⏳ 实时获取中（每 2 秒增量）…

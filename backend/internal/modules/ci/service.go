@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -638,22 +639,56 @@ func (s *Service) RawFile(ctx context.Context, provider, repoPath, path, ref str
 	return gp.RawFile(ctx, repoPath, path, ref)
 }
 
+// ciRefParts 解析 Build.CIRef（job#number）。
+func ciRefParts(ref string) (job string, number int, ok bool) {
+	i := strings.LastIndexByte(ref, '#')
+	if i <= 0 || i == len(ref)-1 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(ref[i+1:])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return ref[:i], n, true
+}
+
+// deployOutputOf test 构建对应的部署输出（releases 按 tag 取最新）。
+func (s *Service) deployOutputOf(ctx context.Context, b *Build) (string, error) {
+	var out struct{ Output string }
+	if err := s.db.WithContext(ctx).Table("releases").
+		Select("output").Where("project_id = ? AND tag = ?", b.ProjectID, b.Tag).
+		Order("id DESC").First(&out).Error; err != nil {
+		return "", errors.New("该构建没有对应的部署输出记录")
+	}
+	return out.Output, nil
+}
+
 // BuildLog 展示某次构建的流水线日志（gitea 按 SHA 找 run；Jenkins 按 job+TAG 参数定位）。
-func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
+// kind=deploy：test 记录强制返回部署输出（有 CIRef 时默认拉 CI 日志，双 tab 各取所需）。
+func (s *Service) BuildLog(ctx context.Context, buildID uint, kind string) (string, error) {
 	var b Build
 	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
 		return "", errors.New("构建记录不存在")
 	}
-	// 测试环境槽位构建没有外部流水线（部署由平台直接执行），
-	// 其"日志"= 对应的部署输出（releases 按 tag 取最新）
+	// 测试环境槽位构建：CI 回调带构建号时直拉外部流水线日志；否则（存量/手动）
+	// 日志 = 平台部署输出（releases 按 tag 取最新）
 	if b.EnvType == "test" {
-		var out struct{ Output string }
-		if err := s.db.WithContext(ctx).Table("releases").
-			Select("output").Where("project_id = ? AND tag = ?", b.ProjectID, b.Tag).
-			Order("id DESC").First(&out).Error; err != nil {
-			return "", errors.New("该构建没有对应的部署输出记录")
+		if job, num, ok := ciRefParts(b.CIRef); ok && kind != "deploy" {
+			pv, err := s.proj.ViewByID(ctx, b.ProjectID)
+			if err != nil {
+				return "", errors.New("项目不存在")
+			}
+			cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
+			if err != nil {
+				return "", err
+			}
+			return cip.Log(ctx, BuildRef{RepoPath: pv.RepoPath, Job: job, Number: num})
 		}
-		return "（槽位部署输出，无独立流水线）\n" + out.Output, nil
+		out, err := s.deployOutputOf(ctx, &b)
+		if err != nil {
+			return "", err
+		}
+		return "（槽位部署输出，无独立流水线）\n" + out, nil
 	}
 	if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
 		return "", errors.New("该记录无关联提交（手动重放的测试数据）")
@@ -672,20 +707,37 @@ func (s *Service) BuildLog(ctx context.Context, buildID uint) (string, error) {
 // BuildLogProgressive 构建日志增量拉取（前端 2s 轮询实时滚动）。
 // test 记录（槽位部署输出为平台本地文本）同样按字节游标裁剪，三个环境语义统一；
 // more 按构建记录状态推导（pending/running 时还有后续），provider 层不感知状态。
-func (s *Service) BuildLogProgressive(ctx context.Context, buildID uint, start int) (string, int, bool, error) {
+// kind=deploy：test 记录强制走部署输出分支（默认有 CIRef 时拉 CI 日志）。
+func (s *Service) BuildLogProgressive(ctx context.Context, buildID uint, start int, kind string) (string, int, bool, error) {
 	var b Build
 	if err := s.db.WithContext(ctx).First(&b, buildID).Error; err != nil {
 		return "", 0, false, errors.New("构建记录不存在")
 	}
 	more := b.Status == BuildPending || b.Status == BuildRunning
 	if b.EnvType == "test" {
-		var out struct{ Output string }
-		if err := s.db.WithContext(ctx).Table("releases").
-			Select("output").Where("project_id = ? AND tag = ?", b.ProjectID, b.Tag).
-			Order("id DESC").First(&out).Error; err != nil {
-			return "", 0, false, errors.New("该构建没有对应的部署输出记录")
+		if job, num, ok := ciRefParts(b.CIRef); ok && kind != "deploy" {
+			pv, err := s.proj.ViewByID(ctx, b.ProjectID)
+			if err != nil {
+				return "", 0, false, errors.New("项目不存在")
+			}
+			cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
+			if err != nil {
+				return "", 0, false, err
+			}
+			chunk, err := cip.LogProgressive(ctx, BuildRef{RepoPath: pv.RepoPath, Job: job, Number: num}, start)
+			if err != nil {
+				return "", 0, false, err
+			}
+			if chunk.Next < start { // Jenkins 游标回退防重播（同非 test 分支）
+				return "", start, more, nil
+			}
+			return chunk.Text, chunk.Next, more, nil
 		}
-		full := "（槽位部署输出，无独立流水线）\n" + out.Output
+		out, err := s.deployOutputOf(ctx, &b)
+		if err != nil {
+			return "", 0, false, err
+		}
+		full := "（槽位部署输出，无独立流水线）\n" + out
 		if start >= len(full) {
 			return "", len(full), false, nil
 		}
@@ -783,8 +835,8 @@ func (s *Service) RecentBuildLogsText(ctx context.Context, projectID uint, limit
 			sb.WriteString("\n")
 			continue
 		}
-		// 回退：实时拉 consoleText（test 环境走部署输出）
-		if logTxt, err := s.BuildLog(ctx, b.ID); err == nil {
+		// 回退：实时拉 consoleText（test 环境优先 CI 日志、无关联走部署输出）
+		if logTxt, err := s.BuildLog(ctx, b.ID, ""); err == nil {
 			sb.WriteString(tailLines(logTxt, 40))
 			sb.WriteString("\n")
 		} else {

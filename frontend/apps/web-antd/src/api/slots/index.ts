@@ -17,12 +17,14 @@ export interface SlotRow {
 }
 
 export type SlotView =
-  | { occupied: false; slotName: string }
   | {
+      /** 过期后宽限截止（expireAt + 项目宽限天数，超时自动回收；后端统一下发） */
+      graceUntil: string;
       occupied: true;
       slot: SlotRow;
       slotName: string;
-    };
+    }
+  | { occupied: false; slotName: string };
 
 export async function getSlotsApi(projectId: number) {
   return requestClient.get<SlotView[]>(`/slots/${projectId}`);

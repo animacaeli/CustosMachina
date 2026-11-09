@@ -178,7 +178,7 @@ function fmtTime(v: string) {
         { title: '分支', key: 'branch' },
         { title: '使用人', key: 'user', width: 100 },
         { title: '占用时间', key: 'at', width: 160 },
-        { title: '预估释放', key: 'expire', width: 160 },
+        { title: '到期时间', key: 'expire', width: 160 },
         { title: '操作', key: 'action', width: 140 },
       ]"
       :data-source="list"
@@ -204,7 +204,16 @@ function fmtTime(v: string) {
           {{ record.occupied ? fmtTime(record.slot.occupiedAt) : '-' }}
         </template>
         <template v-else-if="column.key === 'expire'">
-          {{ record.occupied ? fmtTime(record.slot.expireAt) : '-' }}
+          <template v-if="record.occupied">
+            <div>{{ fmtTime(record.slot.expireAt) }}</div>
+            <div
+              v-if="record.slot.status === 'expired' && record.graceUntil"
+              class="text-muted-foreground text-xs"
+            >
+              宽限至 {{ fmtTime(record.graceUntil) }}，超时自动回收
+            </div>
+          </template>
+          <span v-else>-</span>
         </template>
         <template v-else-if="column.key === 'action'">
           <template v-if="canOperate(record)">

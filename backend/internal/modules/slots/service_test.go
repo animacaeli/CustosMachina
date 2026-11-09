@@ -97,6 +97,38 @@ func TestReleasePermission(t *testing.T) {
 	}
 }
 
+func TestRenewExtends(t *testing.T) {
+	db := testDB(t)
+	svc := NewService(db, nil, nil, nil, newFakeReader(), nil)
+	// 占用 7 天后立即续期 1 天：应顺延（原 expireAt + 1d），不得从 now 重新起算缩短
+	s1, err := svc.Occupy(t.Context(), 1, OccupyInput{SlotName: "dev1", Branch: "b", DurationValue: 7, DurationUnit: "days"}, 7, "张三")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Renew(t.Context(), 1, "dev1", DurationInput{DurationValue: 1, DurationUnit: "days"}, 7, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ExpireAt.After(s1.ExpireAt) || got.ExpireAt.Sub(s1.ExpireAt) < 23*time.Hour {
+		t.Fatalf("提前续期应顺延原到期时间: 原 %v 续后 %v", s1.ExpireAt, got.ExpireAt)
+	}
+	// 他人续期被拒
+	if _, err := svc.Renew(t.Context(), 1, "dev1", DurationInput{DurationValue: 1, DurationUnit: "days"}, 8, false); err == nil {
+		t.Fatal("他人续期应被拒")
+	}
+	// 已过期槽位续期：从当前时间起算（宽限期内可救回，Status 复位 occupied）
+	db.Model(&Slot{}).Where("id = ?", got.ID).Updates(map[string]any{
+		"expire_at": time.Now().Add(-time.Hour), "status": StatusExpired,
+	})
+	got2, err := svc.Renew(t.Context(), 1, "dev1", DurationInput{DurationValue: 1, DurationUnit: "days"}, 7, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2.Status != StatusOccupied || time.Until(got2.ExpireAt) < 23*time.Hour {
+		t.Fatalf("过期后续期应从 now 起算并复位: %+v", got2)
+	}
+}
+
 func TestSweepExpireMarksAndRecycles(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil, nil, nil, newFakeReader(), nil)

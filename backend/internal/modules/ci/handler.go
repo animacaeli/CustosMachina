@@ -229,7 +229,7 @@ func (h *Handler) buildLog(c *gin.Context) {
 	if !ok {
 		return
 	}
-	logs, err := h.svc.BuildLog(c.Request.Context(), id)
+	logs, err := h.svc.BuildLog(c.Request.Context(), id, c.Query("kind"))
 	if err != nil {
 		httpx.FailUpstream(c, err.Error())
 		return
@@ -237,8 +237,9 @@ func (h *Handler) buildLog(c *gin.Context) {
 	httpx.OK(c, logs)
 }
 
-// buildLogStream GET /builds/:id/log/stream?start=N 增量日志（前端轮询实时滚动）。
-// 返回 {text, next, more}：more=构建仍在途（还有后续），next=下一轮游标。
+// buildLogStream GET /builds/:id/log/stream?start=N&kind=deploy 增量日志（前端轮询实时滚动）。
+// 返回 {text, next, more}：more=构建仍在途（还有后续），next=下一轮游标；
+// kind=deploy 供 test 记录双 tab 切换部署输出。
 func (h *Handler) buildLogStream(c *gin.Context) {
 	id, ok := httpx.ParamID(c)
 	if !ok {
@@ -248,7 +249,7 @@ func (h *Handler) buildLogStream(c *gin.Context) {
 	if start < 0 {
 		start = 0
 	}
-	text, next, more, err := h.svc.BuildLogProgressive(c.Request.Context(), id, start)
+	text, next, more, err := h.svc.BuildLogProgressive(c.Request.Context(), id, start, c.Query("kind"))
 	if err != nil {
 		httpx.FailUpstream(c, err.Error())
 		return

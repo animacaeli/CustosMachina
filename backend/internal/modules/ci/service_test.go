@@ -59,6 +59,25 @@ type notifyGroupRow struct {
 
 func (notifyGroupRow) TableName() string { return "notify_groups" }
 
+func TestCIRefParts(t *testing.T) {
+	// 合法 job#number
+	job, num, ok := ciRefParts("starveil-drama-server#123")
+	if !ok || job != "starveil-drama-server" || num != 123 {
+		t.Fatalf("合法 CIRef 解析异常: %q %d %v", job, num, ok)
+	}
+	// 非法形态：无 #、number 非正整数、空段
+	for _, bad := range []string{"", "123", "job#", "#123", "job#0", "job#-5", "job#abc"} {
+		if _, _, ok := ciRefParts(bad); ok {
+			t.Fatalf("%q 应解析失败", bad)
+		}
+	}
+	// job 名含 #：取最后一个 # 为分隔（number 段必须是纯数字）
+	job, num, ok = ciRefParts("a#b#7")
+	if !ok || job != "a#b" || num != 7 {
+		t.Fatalf("多 # CIRef 应取末段: %q %d %v", job, num, ok)
+	}
+}
+
 func TestValidCanaryTag(t *testing.T) {
 	for tag, ok := range map[string]bool{
 		"canary-20260923-gh": true,

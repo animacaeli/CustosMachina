@@ -77,12 +77,20 @@ type jenkinsBuild struct {
 	} `json:"actions"`
 }
 
-// locateBuild 按参数 TAG 定位目标构建；返回 nil 表示尚未出现（排队中）。
-// 倒序查最近 maxScan 次（webhook 与 Jenkins 触发几乎同时，目标 build 必在近端）；
-// 若这些构建都无 TAG 参数（非参数化 job）则退化为最新一次构建。
+// locateBuild 定位目标构建：Number>0 直连（CIRef 场景，免扫描）；否则按参数
+// TAG 定位。返回 nil 表示尚未出现（排队中）。倒序查最近 maxScan 次（webhook 与
+// Jenkins 触发几乎同时，目标 build 必在近端）；若这些构建都无 TAG 参数
+// （非参数化 job）则退化为最新一次构建。
 func (j *jenkinsClient) locateBuild(ctx context.Context, ref BuildRef) (*jenkinsBuild, error) {
 	if ref.Job == "" {
 		return nil, errors.New("项目未配置 Jenkins job 名（项目管理 → CI job）")
+	}
+	if ref.Number > 0 {
+		var jb jenkinsBuild
+		if err := j.do(ctx, fmt.Sprintf("/job/%s/%d/api/json", ref.Job, ref.Number), &jb); err != nil {
+			return nil, err
+		}
+		return &jb, nil
 	}
 	var list struct {
 		Builds []struct {

@@ -85,6 +85,8 @@ export interface Build {
   logUrl: string;
   projectId: number;
   provider: 'gitea' | 'gitee';
+  /** 外部构建定位 job#number（test 记录由 CI 回调携带；有值可拉 Jenkins 日志） */
+  ciRef?: string;
   sha: string;
   source: string;
   status: 'failed' | 'pending' | 'running' | 'success';
@@ -114,10 +116,15 @@ export interface BuildLogChunk {
   text: string; // 自 start 起的新增文本
 }
 
-/** 增量拉取构建日志：start=上一轮 next；终态构建一次拉全（more=false） */
-export async function getBuildLogStreamApi(buildId: number, start: number) {
+/** 增量拉取构建日志：start=上一轮 next；终态构建一次拉全（more=false）；
+ * kind='deploy' 供 test 记录切到部署输出（默认有 ciRef 时拉 CI 构建） */
+export async function getBuildLogStreamApi(
+  buildId: number,
+  start: number,
+  kind?: 'deploy',
+) {
   return requestClient.get<BuildLogChunk>(`/builds/${buildId}/log/stream`, {
-    params: { start },
+    params: { kind, start },
   });
 }
 
