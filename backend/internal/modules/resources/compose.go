@@ -365,8 +365,17 @@ func (s *Service) DeployComposeTo(ctx context.Context, serverID uint, name, yaml
 // image 填充 PLATFORM_IMAGE；域名注入 PLATFORM_CONTAINER。
 // 第三个返回值为渲染出的入口容器名（占位符形态 <域名>-1；无占位符返回空——
 // 容器名由 compose 默认规则决定，调用方按需用 域名-server-1 兜底推断）。
+// envSeg 传空 = 不渲染 {env}（存量 compose 零影响）。
 func (s *Service) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, string, error) {
-	rendered, container, err := RenderCompose(yamlContent, name, image)
+	return s.DeployComposeToImageEnv(ctx, serverID, name, yamlContent, image, "")
+}
+
+// DeployComposeToImageEnv 同 DeployComposeToImage，额外渲染 compose 全文的
+// {env} 占位符（v0.14.1：宿主挂载路径环境隔离——多环境共用一份 compose，
+// 挂载 /opt/x/{env}/config.yaml 各归其位）。envSeg：prod 部署传 "prod"；
+// canary 同传 "prod"（配置引用 prod 同源）；测试槽位传槽位名 devN。
+func (s *Service) DeployComposeToImageEnv(ctx context.Context, serverID uint, name, yamlContent, image, envSeg string) (string, string, string, error) {
+	rendered, container, err := RenderComposeEnv(yamlContent, name, image, envSeg)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -389,11 +398,19 @@ func (s *Service) RenameContainer(ctx context.Context, serverID uint, oldName, n
 	return nil
 }
 
-// RenderCompose 占位符渲染：image: PLATFORM_IMAGE → 镜像全名；
-// container_name: PLATFORM_CONTAINER → <域名>-1（单实例；多副本服务勿用占位符）。
-// 无占位符原样返回（存量项目零影响）；有 image 占位符但未提供镜像 → 明确报错
-// （防止把字面量当镜像名部署出去）。
+// RenderCompose 占位符渲染（不渲染 {env}——存量语义）。
 func RenderCompose(yamlContent, domain, image string) (string, string, error) {
+	return RenderComposeEnv(yamlContent, domain, image, "")
+}
+
+// RenderComposeEnv 占位符渲染：image: PLATFORM_IMAGE → 镜像全名；
+// container_name: PLATFORM_CONTAINER → <域名>-1（单实例；多副本服务勿用占位符）；
+// envSeg 非空时全文 {env} → 环境段（宿主挂载路径隔离，如
+// /opt/x/{env}/config.yaml → /opt/x/dev1/config.yaml）。
+// 无占位符原样返回（存量项目零影响）；有 image 占位符但未提供镜像 → 明确报错
+// （防止把字面量当镜像名部署出去）。envSeg 为空且 compose 含 {env} → 原样
+// （调用方未启用环境隔离时不误伤；三处部署调用方均显式传段）。
+func RenderComposeEnv(yamlContent, domain, image, envSeg string) (string, string, error) {
 	out := yamlContent
 	container := ""
 	// 行级匹配（容忍缩进/引号/空白差异）；注释里出现占位符字样不误判——
@@ -409,6 +426,9 @@ func RenderCompose(yamlContent, domain, image string) (string, string, error) {
 	if ctRe.MatchString(out) {
 		container = domain + "-1"
 		out = ctRe.ReplaceAllString(out, "${1}"+container+"${2}")
+	}
+	if envSeg != "" {
+		out = strings.ReplaceAll(out, "{env}", envSeg)
 	}
 	return out, container, nil
 }

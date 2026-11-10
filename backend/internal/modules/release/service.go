@@ -318,8 +318,10 @@ func (s *Service) Execute(ctx context.Context, in ReleaseInput, operator string,
 	}
 
 	startedAt := time.Now()
-	out, _, container, err := s.res.DeployComposeToImage(ctx, target.ServerID, deployName, yamlContent,
-		s.imageFor(ctx, in.ProjectID, in.Tag))
+	// {env} 挂载段（v0.14.1）：prod→prod；canary 引用 prod 配置同源
+	envSeg := "prod"
+	out, _, container, err := s.res.DeployComposeToImageEnv(ctx, target.ServerID, deployName, yamlContent,
+		s.imageFor(ctx, in.ProjectID, in.Tag), envSeg)
 	rel.DurationSecs = int(time.Since(startedAt).Seconds())
 	rel.Output = truncate(out, 8000)
 	if err == nil {

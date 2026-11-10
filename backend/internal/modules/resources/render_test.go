@@ -65,3 +65,37 @@ services:
 		t.Fatalf("原文兼容破坏: ct=%q err=%v", ct5, err5)
 	}
 }
+
+func TestRenderComposeEnv(t *testing.T) {
+	const tpl = `services:
+  server:
+    image: PLATFORM_IMAGE
+    container_name: PLATFORM_CONTAINER
+    volumes:
+      - /opt/app/{env}/config.yaml:/app/config.yaml:ro
+      - /opt/app/{env}/logs:/app/logs
+`
+	// 1) envSeg=dev1：{env} 全替换（多处）、镜像/容器占位符照常
+	out, ct, err := RenderComposeEnv(tpl, "demo-dev1", "reg/demo:20261111", "dev1")
+	if err != nil || ct != "demo-dev1-1" {
+		t.Fatalf("容器名: ct=%q err=%v", ct, err)
+	}
+	if !strings.Contains(out, "/opt/app/dev1/config.yaml") || !strings.Contains(out, "/opt/app/dev1/logs") {
+		t.Fatalf("{env} 未全替换: %s", out)
+	}
+	if strings.Contains(out, "{env}") || strings.Contains(out, "PLATFORM_") {
+		t.Fatalf("占位符残留: %s", out)
+	}
+
+	// 2) envSeg=prod：prod 段渲染
+	outP, _, errP := RenderComposeEnv(tpl, "demo-prod-blue", "reg/demo:v1", "prod")
+	if errP != nil || !strings.Contains(outP, "/opt/app/prod/config.yaml") {
+		t.Fatalf("prod 段: err=%v out=%s", errP, outP)
+	}
+
+	// 3) envSeg 空：{env} 原样保留（存量语义——未启用环境隔离不误伤）
+	outE, _, errE := RenderComposeEnv(tpl, "d", "x:1", "")
+	if errE != nil || !strings.Contains(outE, "{env}") {
+		t.Fatalf("空段应原样: err=%v out=%s", errE, outE)
+	}
+}

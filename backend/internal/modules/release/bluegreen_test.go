@@ -17,6 +17,7 @@ type fakeDeployer struct {
 	confProjs []string
 	waitErr   map[string]error // 按域名注入健康门禁失败
 	confErr   error
+	envSegs   []string // v0.14.1：{env} 段记录（断言 prod 恒 prod）
 }
 
 func (f *fakeDeployer) RenameContainer(_ context.Context, _ uint, _, _ string) error { return nil }
@@ -24,6 +25,15 @@ func (f *fakeDeployer) RenameContainer(_ context.Context, _ uint, _, _ string) e
 func (f *fakeDeployer) DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, _ string) (string, string, string, error) {
 	out, dir, err := f.DeployComposeTo(ctx, serverID, name, yamlContent)
 	return out, dir, "", err
+}
+
+// v0.14.1：{env} 渲染版（记录段供断言；渲染本身由 RenderComposeEnv 单测覆盖）
+func (f *fakeDeployer) DeployComposeToImageEnv(ctx context.Context, serverID uint, name, yamlContent, image, envSeg string) (string, string, string, error) {
+	out, dir, cont, err := f.DeployComposeToImage(ctx, serverID, name, yamlContent, image)
+	if err == nil {
+		f.envSegs = append(f.envSegs, envSeg)
+	}
+	return out, dir, cont, err
 }
 
 func (f *fakeDeployer) DeployComposeTo(_ context.Context, _ uint, name, _ string) (string, string, error) {

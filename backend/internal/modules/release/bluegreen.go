@@ -58,6 +58,8 @@ func hasHealthcheck(yamlContent string) bool {
 type Deployer interface {
 	DeployComposeTo(ctx context.Context, serverID uint, name, yamlContent string) (string, string, error)
 	DeployComposeToImage(ctx context.Context, serverID uint, name, yamlContent, image string) (string, string, string, error)
+	// v0.14.1：{env} 挂载段渲染版（蓝绿恒 prod；mock 实现转发旧方法即可）
+	DeployComposeToImageEnv(ctx context.Context, serverID uint, name, yamlContent, image, envSeg string) (string, string, string, error)
 	WaitComposeHealthy(ctx context.Context, serverID uint, name string, timeout time.Duration) error
 	DeployNginxConf(ctx context.Context, serverID uint, projName, content string) (string, error)
 	DestroyCompose(ctx context.Context, serverID uint, name string) (string, error)
@@ -232,10 +234,11 @@ func (s *Service) executeBlueGreen(ctx context.Context, p *projectRow, target *E
 		step("警告：compose 未定义任何 healthcheck，健康门禁将只校验容器 running（建议为入口服务补 healthcheck）")
 	}
 
-	// 1. 部署新颜色域（先起容器再写 conf：upstream 引用的容器名必须已可解析）
+	// 1. 部署新颜色域（先起容器再写 conf：upstream 引用的容器名必须已可解析）；
+	// {env} 挂载段恒 prod（蓝绿是 prod 环境形态，与 canary 同源 prod 配置）
 	step("部署新颜色域 %s（标签 %s）", newDomain, in.Tag)
-	out, _, activeContainer, err := s.res.DeployComposeToImage(ctx, target.ServerID, newDomain, yamlContent,
-		s.imageFor(ctx, in.ProjectID, in.Tag))
+	out, _, activeContainer, err := s.res.DeployComposeToImageEnv(ctx, target.ServerID, newDomain, yamlContent,
+		s.imageFor(ctx, in.ProjectID, in.Tag), "prod")
 	if err == nil {
 		s.recordActiveContainer(ctx, in.ProjectID, newDomain, activeContainer)
 	}
