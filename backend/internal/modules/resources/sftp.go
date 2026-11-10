@@ -11,6 +11,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -125,7 +126,24 @@ func (s *Service) SftpRead(serverID uint, name string) (string, error) {
 
 // backupAndSwap 覆盖写的安全序列：写 tmp → 时间戳备份原文件 → tmp 换到原名。
 // tmp 先落盘保证"写失败原文件不动"（直接 rename 原文件后 Create 失败会丢原文件）。
+// 父目录不存在时逐级创建（{env} 模板路径首下发子目录尚不存在——mkdirp 幂等，
+// 已存在无操作；目录已存在但无权限时 Create 报错不变）。
 func backupAndSwap(client *sftp.Client, name string, write func(*sftp.File) error) error {
+	if dir := path.Dir(name); dir != "" && dir != "." && dir != "/" {
+		if _, err := client.Stat(dir); err != nil {
+			cur := ""
+			for _, seg := range strings.Split(strings.Trim(dir, "/"), "/") {
+				cur += "/" + seg
+				if _, serr := client.Stat(cur); serr != nil {
+					if mkErr := client.Mkdir(cur); mkErr != nil {
+						if _, serr2 := client.Stat(cur); serr2 != nil {
+							return fmt.Errorf("创建目录 %s 失败（无权限?）: %w", cur, mkErr)
+						}
+					}
+				}
+			}
+		}
+	}
 	tmp := name + ".custos-tmp"
 	tf, err := client.Create(tmp)
 	if err != nil {
