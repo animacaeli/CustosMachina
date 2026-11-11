@@ -62,6 +62,13 @@ export async function deleteConfigFileApi(id: number) {
   return requestClient.delete(`/config-files/${id}`);
 }
 
+/** 按层级前缀批量删除（目录树右键「删除」）：删该前缀下全部文件及版本链 */
+export async function deleteConfigDirApi(projectId: number, relPath: string) {
+  return requestClient.delete<{ deleted: number }>('/config-files/dir', {
+    data: { projectId, relPath },
+  });
+}
+
 export async function getConfigContentApi(id: number, reveal = false) {
   return requestClient.get<{
     content: string;

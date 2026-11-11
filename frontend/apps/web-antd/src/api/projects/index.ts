@@ -136,6 +136,8 @@ export interface Project {
   repoUrl: string;
   slotGraceDays: number;
   testSlotCount: number;
+  /** 槽位数历史峰值（只增不减）——配置目录树环境层固化依据 */
+  testSlotPeak: number;
   trafficCap: number;
 }
 

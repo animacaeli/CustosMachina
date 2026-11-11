@@ -22,7 +22,10 @@ export namespace AuthApi {
 
   /** GET /auth/permissions 返回 */
   export interface PermissionResult {
+    /** casbin 策略形态 path:act（菜单级） */
     permissions: string[];
+    /** 业务动作 key（role_actions 语义，超管=全量目录）——按钮显隐用这个 */
+    actions: string[];
     roles: string[];
   }
 }
@@ -86,5 +89,7 @@ export async function refreshTokenApi(): Promise<{
 export async function getAccessCodesApi() {
   const result =
     await requestClient.get<AuthApi.PermissionResult>('/auth/permissions');
-  return result.permissions;
+  // v0.14.2：取 action key（config.edit 等，与后端 rbac.Can 同语义；
+  // permissions 是 casbin path:act 形态，对不上业务动作）
+  return result.actions ?? [];
 }

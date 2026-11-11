@@ -262,3 +262,456 @@ export function convertView(
     return null;
   }
 }
+
+// ---- v0.14.2 注释感知转换（注释随键走） ----
+// 中间表示 CDoc/CNode：有序键值树 + 每键注释块。解析时注释行归属其后首个
+// 非注释行的键（文件头注释归根）；序列化时各格式用自身注释语法输出在键上方
+// （toml/ini/env 用 #，json/jsonc 用 // —— JSON 视图即 JSONC）。
+// 边界：数组元素内注释与行尾注释不迁移；往返注释保留但空行/缩进细节会变。
+
+interface CNode {
+  key: string;
+  comments: string[];
+  /** 叶子标量（children 为空时有效） */
+  value?: unknown;
+  children?: CNode[];
+}
+
+interface CDoc {
+  headComments: string[];
+  root: CNode[];
+}
+
+function newCNode(key: string): CNode {
+  return { key, comments: [] };
+}
+
+// ---- 各格式 → CDoc ----
+
+// yaml：parseDocument AST 保留键序与键注释（yaml v2：键前置注释块挂在
+// Pair.value.commentBefore）；顶部注释 AST 落点不稳定（toString 可还原但
+// 字段随版本漂移），改用行扫描兜底收集
+function yamlToCDoc(text: string): CDoc {
+  const headComments: string[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (!line.startsWith('#')) break;
+    headComments.push(line.replace(/^#\s?/, '').trimEnd());
+  }
+  const doc = YAML.parseDocument(text);
+  const walkPairs = (items: any[]): CNode[] =>
+    items
+      .filter((p) => p?.key?.value !== undefined)
+      .map((p) => {
+        const n = newCNode(String(p.key.value));
+        const before = p.value?.commentBefore ?? p.key?.commentBefore ?? '';
+        n.comments = String(before)
+          .split('\n')
+          .map((l: string) => l.replace(/^#?\s?/, '').trimEnd())
+          .filter(Boolean);
+        const v = p.value;
+        if (v?.items && v.items[0]?.key !== undefined) {
+          n.children = walkPairs(v.items); // YAMLMap（第一项是 Pair）
+        } else if (v?.items) {
+          n.value = v.items.map((it: any) =>
+            it.value === undefined ? YAML.parse(String(it).trim()) : it.value,
+          );
+        } else {
+          n.value = v?.value;
+        }
+        return n;
+      });
+  return {
+    headComments,
+    root: walkPairs(((doc.contents as any)?.items ?? []) as any[]),
+  };
+}
+
+// 行式格式（toml/ini/env）共用扫描：注释行缓冲 → 挂到下一非注释行所属键
+interface FlatEntry {
+  path: string;
+  value: unknown;
+  comments: string[];
+}
+
+function lineScan(
+  text: string,
+  opts: { sectionAware: boolean; commentPrefixes: string[] },
+): { entries: FlatEntry[]; head: string[]; inlineArrays: boolean } {
+  const entries: FlatEntry[] = [];
+  const head: string[] = [];
+  let pending: string[] = [];
+  let section = '';
+  let sawContent = false;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const isComment = opts.commentPrefixes.some((p) => line.startsWith(p));
+    if (isComment) {
+      const c = line.replace(/^[#;]\s?/, '').trimEnd();
+      if (sawContent) {
+        pending.push(c);
+      } else {
+        head.push(c);
+      }
+      continue;
+    }
+    sawContent = true;
+    const sec = line.match(/^\[(.+)\]$/);
+    if (sec && opts.sectionAware) {
+      section = (sec[1] ?? '').trim();
+      pending = [];
+      continue;
+    }
+    const eq = line.indexOf('=');
+    if (eq <= 0) {
+      pending = [];
+      continue;
+    }
+    const key = line.slice(0, eq).trim();
+    const rawVal = line.slice(eq + 1).trim();
+    // 标量数组 [a, b, 1]（toml/env 常见形态）
+    const value: unknown = /^\[.*\]$/.test(rawVal)
+      ? rawVal
+          .slice(1, -1)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => inferScalar(unquote(s)))
+      : inferScalar(unquote(rawVal));
+    entries.push({
+      path: section ? `${section}.${key}` : key,
+      value,
+      comments: pending,
+    });
+    pending = [];
+  }
+  return { entries, head, inlineArrays: true };
+}
+
+function flatToCDoc(flat: { entries: FlatEntry[]; head: string[] }): CDoc {
+  const root: CNode[] = [];
+  const findOrCreate = (nodes: CNode[], key: string): CNode => {
+    for (const n of nodes) if (n.key === key) return n;
+    const n = newCNode(key);
+    nodes.push(n);
+    return n;
+  };
+  for (const e of flat.entries) {
+    const segs = e.path.split('.');
+    let nodes = root;
+    let node: CNode | undefined;
+    for (const seg of segs) {
+      node = findOrCreate(nodes, seg);
+      node.children ??= [];
+      nodes = node.children;
+    }
+    if (node) {
+      // 叶子：抹掉占位 children（后建同路径覆盖先建）
+      node.value = e.value;
+      node.comments = e.comments;
+    }
+  }
+  // 清理：value 已设且 children 全空的节点去掉 children
+  const prune = (nodes: CNode[]) => {
+    for (const n of nodes) {
+      if (n.children && (n.value !== undefined || n.children.length === 0)) {
+        if (
+          n.children.every((c) => c.value === undefined && !c.children?.length)
+        ) {
+          delete n.children;
+        } else {
+          delete n.value;
+          prune(n.children);
+        }
+      } else if (n.children) {
+        prune(n.children);
+      }
+    }
+  };
+  prune(root);
+  return { headComments: flat.head, root };
+}
+
+// jsonc：注释行收集 + 栈路径重建（标准 2 空格缩进或常规手写形态）
+function jsonToCDoc(text: string): CDoc {
+  const stripped = stripJsonComments(text).replaceAll(/,(\s*[\]}])/g, '$1');
+  const obj = JSON.parse(stripped);
+  // 注释收集：行扫描（字符串感知简版——引号内的 // 不当注释）
+  const comments: Record<string, string[]> = {};
+  const stack: string[] = [];
+  let pending: string[] = [];
+  const head: string[] = [];
+  let sawKey = false;
+  for (const raw of text.split('\n')) {
+    let line = raw.trim();
+    // 去掉行内字符串部分后再判注释，避免 URL "https://..." 误伤
+    const noStr = line.replaceAll(/"(?:[^"\\]|\\.)*"/g, '""');
+    const ci = noStr.indexOf('//');
+    if (ci !== -1) {
+      const c = line.slice(ci + 2).trim();
+      line = line.slice(0, ci).trim();
+      const bucket = sawKey || stack.length > 0 ? pending : head;
+      if (c) bucket.push(c);
+    }
+    if (!line) continue;
+    for (const ch of line) {
+      if (ch === '{' || ch === '[') {
+        // 进入对象：下一行的键属于这一层——先把 pending 挂到即将出现的键
+        continue;
+      }
+      if (ch === '}' || ch === ']') {
+        stack.pop();
+        continue;
+      }
+    }
+    const km = line.match(/^"((?:[^"\\]|\\.)*)"\s*:/);
+    if (km) {
+      const key = km[1] ?? '';
+      const path = [...stack, key].join('.');
+      if (pending.length > 0) {
+        comments[path] = pending;
+        pending = [];
+      }
+      sawKey = true;
+      // 值为对象开头时入栈
+      if (/:\s*\{\s*$/.test(line) || /:\s*\[\s*\{\s*$/.test(line))
+        stack.push(key);
+      continue;
+    }
+    // 独立对象收尾行（} 或 ]）：已在上面 pop；对象结尾同时携带下一键的场景由下一行处理
+  }
+  // 深度重建：valueToCNodes 只支持一层 comments map——改为全路径映射递归
+  const buildNodes = (src: unknown, prefix: string): CNode[] => {
+    const obj2 = src as Record<string, unknown>;
+    if (typeof obj2 !== 'object' || obj2 === null || Array.isArray(obj2))
+      return [];
+    return Object.entries(obj2).map(([k, v]) => {
+      const n = newCNode(k);
+      n.comments = comments[`${prefix}${k}`] ?? [];
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        n.children = buildNodes(v, `${prefix}${k}.`);
+      } else {
+        n.value = v;
+      }
+      return n;
+    });
+  };
+  return { headComments: head, root: buildNodes(obj, '') };
+}
+
+function parseToCDoc(fmt: ConfigFormat, text: string): CDoc {
+  switch (fmt) {
+    case 'yaml': {
+      return yamlToCDoc(text);
+    }
+    case 'json': {
+      return jsonToCDoc(text);
+    }
+    case 'toml': {
+      return flatToCDoc(
+        lineScan(text, { sectionAware: true, commentPrefixes: ['#'] }),
+      );
+    }
+    case 'ini': {
+      return flatToCDoc(
+        lineScan(text, { sectionAware: true, commentPrefixes: ['#', ';'] }),
+      );
+    }
+    case 'env': {
+      return flatToCDoc(
+        lineScan(text, { sectionAware: false, commentPrefixes: ['#'] }),
+      );
+    }
+  }
+}
+
+// ---- CDoc → 各格式 ----
+
+function yamlScalar(v: unknown): string {
+  return YAML.stringify(v, { lineWidth: 0 }).trim();
+}
+
+function cDocToYaml(doc: CDoc): string {
+  const lines: string[] = [];
+  for (const c of doc.headComments) lines.push(`# ${c}`);
+  const emit = (nodes: CNode[], depth: number) => {
+    for (const n of nodes) {
+      for (const c of n.comments) lines.push(`${'  '.repeat(depth)}# ${c}`);
+      const indent = '  '.repeat(depth);
+      if (n.children && n.children.length > 0) {
+        lines.push(`${indent}${n.key}:`);
+        emit(n.children, depth + 1);
+      } else if (Array.isArray(n.value)) {
+        lines.push(`${indent}${n.key}:`);
+        for (const item of n.value)
+          lines.push(`${indent}  - ${yamlScalar(item)}`);
+      } else {
+        lines.push(`${indent}${n.key}: ${yamlScalar(n.value)}`);
+      }
+    }
+  };
+  emit(doc.root, 0);
+  return `${lines.join('\n')}\n`;
+}
+
+function cDocToJsonc(doc: CDoc): string {
+  const lines: string[] = [];
+  const headDepth = 0;
+  for (const c of doc.headComments)
+    lines.push(`${'  '.repeat(headDepth)}// ${c}`);
+  lines.push('{');
+  const emit = (nodes: CNode[], depth: number) => {
+    const pad = '  '.repeat(depth);
+    nodes.forEach((n, i) => {
+      for (const c of n.comments) lines.push(`${pad}  // ${c}`);
+      const comma = i === nodes.length - 1 ? '' : ',';
+      if (n.children && n.children.length > 0) {
+        lines.push(`${pad}  "${n.key}": {`);
+        emit(n.children, depth + 1);
+        lines.push(`${pad}  }${comma}`);
+      } else {
+        lines.push(
+          `${pad}  "${n.key}": ${JSON.stringify(n.value ?? null)}${comma}`,
+        );
+      }
+    });
+  };
+  emit(doc.root, 0);
+  lines.push('}');
+  return `${lines.join('\n')}\n`;
+}
+
+function tomlScalar(v: unknown): string {
+  if (Array.isArray(v)) {
+    return `[${v.map((x) => tomlScalar(x)).join(', ')}]`;
+  }
+  if (typeof v === 'string') return JSON.stringify(v);
+  return String(v);
+}
+
+function cDocToToml(doc: CDoc): string {
+  const lines: string[] = [];
+  for (const c of doc.headComments) lines.push(`# ${c}`);
+  const emitTable = (nodes: CNode[], path: string) => {
+    const scalars = nodes.filter((n) => !n.children?.length);
+    const tables = nodes.filter((n) => n.children?.length);
+    for (const n of scalars) {
+      for (const c of n.comments) lines.push(`# ${c}`);
+      const v = tomlScalar(n.value);
+      lines.push(`${n.key} = ${v}`);
+    }
+    for (const n of tables) {
+      lines.push('');
+      for (const c of n.comments) lines.push(`# ${c}`);
+      lines.push(`[${path}${path ? '.' : ''}${n.key}]`);
+      emitTable(n.children ?? [], `${path}${path ? '.' : ''}${n.key}`);
+    }
+  };
+  emitTable(doc.root, '');
+  return `${lines.join('\n')}\n`;
+}
+
+function cDocToIni(doc: CDoc): string {
+  const lines: string[] = [];
+  for (const c of doc.headComments) lines.push(`# ${c}`);
+  const scalars = doc.root.filter((n) => !n.children?.length);
+  const sections = doc.root.filter((n) => n.children?.length);
+  for (const n of scalars) {
+    for (const c of n.comments) lines.push(`# ${c}`);
+    lines.push(`${n.key}=${scalarToFlat(n.value)}`);
+  }
+  const emit = (n: CNode, prefix: string) => {
+    const name = `${prefix}${n.key}`;
+    for (const c of n.comments) lines.push(`# ${c}`);
+    lines.push('', `[${name}]`);
+    const leaf = (nodes: CNode[]) => {
+      for (const c of nodes) {
+        for (const cm of c.comments) lines.push(`# ${cm}`);
+        if (c.children?.length) {
+          leaf(c.children);
+        } else {
+          lines.push(`${c.key}=${scalarToFlat(c.value)}`);
+        }
+      }
+    };
+    leaf(n.children ?? []);
+  };
+  for (const n of sections) emit(n, '');
+  return `${lines.join('\n')}\n`;
+}
+
+function cDocToEnv(doc: CDoc): string {
+  const lines: string[] = [];
+  for (const c of doc.headComments) lines.push(`# ${c}`);
+  const emit = (
+    nodes: CNode[],
+    prefix: string,
+    parentComments: string[] = [],
+  ) => {
+    let firstLeaf = true;
+    for (const n of nodes) {
+      const path = `${prefix}${n.key}`;
+      if (n.children?.length) {
+        // 父节点注释下放到其首个叶子（扁平格式无父键可挂）
+        emit(
+          n.children,
+          `${path}.`,
+          firstLeaf ? [...parentComments, ...n.comments] : n.comments,
+        );
+        firstLeaf = false;
+      } else {
+        const comments = firstLeaf
+          ? [...parentComments, ...n.comments]
+          : n.comments;
+        for (const c of comments) lines.push(`# ${c}`);
+        firstLeaf = false;
+        if (Array.isArray(n.value)) {
+          n.value.forEach((v, i) =>
+            lines.push(`${path}.${i}=${scalarToFlat(v)}`),
+          );
+        } else {
+          lines.push(`${path}=${scalarToFlat(n.value)}`);
+        }
+      }
+    }
+  };
+  emit(doc.root, '');
+  return `${lines.join('\n')}\n`;
+}
+
+function serializeCDoc(fmt: ConfigFormat, doc: CDoc): string {
+  switch (fmt) {
+    case 'yaml': {
+      return cDocToYaml(doc);
+    }
+    case 'json': {
+      return cDocToJsonc(doc);
+    }
+    case 'toml': {
+      return cDocToToml(doc);
+    }
+    case 'ini': {
+      return cDocToIni(doc);
+    }
+    case 'env': {
+      return cDocToEnv(doc);
+    }
+  }
+}
+
+/** 视图转换（v0.14.2 注释感知）：注释随键迁移到目标格式；失败返回 null。
+ * json 视图输出 JSONC（// 注释，Monaco 以 jsonc 高亮）。 */
+export function convertViewWithComments(
+  from: ConfigFormat,
+  to: ConfigFormat,
+  text: string,
+): null | string {
+  if (from === to) return text;
+  try {
+    return serializeCDoc(to, parseToCDoc(from, text));
+  } catch {
+    return null;
+  }
+}

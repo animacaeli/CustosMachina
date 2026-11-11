@@ -11,11 +11,14 @@ import {
   watch,
 } from 'vue';
 
+import { useAccessStore } from '@vben/stores';
+
 import { DownOutlined } from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 
 import {
   createConfigFileApi,
+  deleteConfigDirApi,
   deleteConfigFileApi,
   deployConfigApi,
   envSyncConfigApi,
@@ -33,7 +36,7 @@ import { getServerListApi } from '#/api/resources/server';
 import AiAssist from '#/components/ai-assist.vue';
 import DiffEditor from '#/components/diff-editor.vue';
 import YamlEditor from '#/components/yaml-editor.vue';
-import { CONFIG_FORMATS, convertView } from '#/utils/config-format';
+import { CONFIG_FORMATS, convertViewWithComments } from '#/utils/config-format';
 import { extractErrMsg } from '#/utils/extract-err';
 
 defineOptions({ name: 'ConfigsFiles' });
@@ -53,16 +56,24 @@ const servers = ref<Array<{ id: number; name: string }>>([]);
 const projects = ref<Array<{ id: number; name: string }>>([]);
 const envTargets = ref<Array<{ envType: string; serverId: number }>>([]);
 const testSlotCount = ref(3);
+// 槽位峰值（只增不减）：目录树环境层固化——槽数缩减后既有 dev1..peak 目录不消失
+const testSlotPeak = ref(3);
 const currentProject = ref<number | undefined>(undefined);
 const currentProjectName = computed(
   () => projects.value.find((p) => p.id === currentProject.value)?.name,
 );
 
-// 环境首段集合：prod + dev1..devN（联动项目槽位数）
-const slotEnvs = computed(() =>
-  Array.from({ length: testSlotCount.value }, (_, i) => `dev${i + 1}`),
-);
+// 环境首段集合：prod + dev1..max(当前槽位数, 峰值)——扩容跟随、缩容保留
+const slotEnvs = computed(() => {
+  const n = Math.max(testSlotCount.value, testSlotPeak.value);
+  return Array.from({ length: n }, (_, i) => `dev${i + 1}`);
+});
 const envSegments = computed(() => ['prod', ...slotEnvs.value]);
+
+// 配置编辑动作权限（action key 与后端 rbac.Can 同语义；超管登录时为全量）
+const canEditConfig = computed(() =>
+  useAccessStore().accessCodes.includes('config.edit'),
+);
 
 function isSlotEnv(seg: string) {
   return /^dev[1-9][0-9]*$/.test(seg);
@@ -78,7 +89,7 @@ function envTypeOf(seg: string): string {
 const FORMAT_LANG: Record<string, string> = {
   env: 'ini',
   ini: 'ini',
-  json: 'json',
+  json: 'jsonc', // JSON 视图带注释（JSONC，v0.14.2）
   toml: 'ini',
   yaml: 'yaml',
 };
@@ -132,6 +143,7 @@ watch(currentProject, async (id) => {
       serverId: t.serverId,
     }));
     testSlotCount.value = r.project.testSlotCount || 3;
+    testSlotPeak.value = r.project.testSlotPeak || r.project.testSlotCount || 3;
   } catch {
     envTargets.value = [];
   }
@@ -302,7 +314,7 @@ function refreshEditorText() {
     editorText.value = content.value;
     return;
   }
-  const converted = convertView(
+  const converted = convertViewWithComments(
     selected.value.format,
     viewFormat.value,
     content.value,
@@ -322,7 +334,7 @@ async function openContent(f: ConfigFile) {
   viewFormat.value = f.format;
   contentMasked.value = false;
   contentLoading.value = true;
-  diffPair.value = [];
+  closeDiff();
   try {
     const r = await getConfigContentApi(f.id);
     content.value = r.content;
@@ -355,7 +367,11 @@ async function saveContent() {
   const fmt = selected.value.format;
   let toSave = editorText.value;
   if (viewFormat.value !== fmt) {
-    const back = convertView(viewFormat.value, fmt, editorText.value);
+    const back = convertViewWithComments(
+      viewFormat.value,
+      fmt,
+      editorText.value,
+    );
     if (back === null) {
       message.error(
         `${viewFormat.value.toUpperCase()} 视图内容转换回 ${fmt.toUpperCase()} 失败（语法错误？）`,
@@ -440,6 +456,47 @@ function ctxNewFolder() {
   closeCtxMenu();
   newFolderName.value = '';
   folderModalOpen.value = true;
+}
+
+// 目录删除（v0.14.2）：前缀批量删文件+版本链；confirm 明示数量与范围
+function ctxDeleteDir() {
+  closeCtxMenu();
+  const prefix = ctxMenu.dirKey.replaceAll(/^\/+|\/+$/g, '');
+  if (!prefix) {
+    message.warning('根目录不可整体删除（在文件上单独删除）');
+    return;
+  }
+  if (!currentProject.value) return;
+  const n = projectFiles.value.filter((f) =>
+    (f.relPath || '').startsWith(`${prefix}/`),
+  ).length;
+  if (n === 0) {
+    message.info('该目录下没有配置文件（空目录随树自动消失或保留为虚拟目录）');
+    return;
+  }
+  Modal.confirm({
+    title: `删除目录 ${prefix} ？`,
+    content: `将删除该目录下全部 ${n} 个配置文件及其历史版本，不可恢复。`,
+    okButtonProps: { danger: true },
+    okText: '删 除',
+    cancelText: '取 消',
+    async onOk() {
+      try {
+        const r = await deleteConfigDirApi(currentProject.value!, prefix);
+        message.success(`已删除 ${r.deleted} 个配置文件`);
+        if (
+          selected.value &&
+          (selected.value.relPath || '').startsWith(`${prefix}/`)
+        ) {
+          selected.value = null;
+        }
+        ephemeralDirs.value = ephemeralDirs.value.filter((d) => d !== prefix);
+        await load();
+      } catch (error: any) {
+        message.error(error?.response?.data?.message ?? '删除失败');
+      }
+    },
+  });
 }
 
 function confirmNewFolder() {
@@ -592,11 +649,29 @@ async function doEnvSync() {
   }
 }
 
-// ---- 版本侧栏：双选 diff + 回滚 ----
+// ---- 版本侧栏：单选查看（vs 当前）/ 双选对比 + 回滚（同一 diff 区互斥，v0.14.2） ----
 const versions = ref<ConfigVersion[]>([]);
 const diffPair = ref<ConfigVersion[]>([]);
+// diff 视图：''=无；'single'=单版本 → 当前；'pair'=勾选两版本对比
+const diffMode = ref<'' | 'pair' | 'single'>('');
+const singleVersion = ref<ConfigVersion | null>(null);
 const diffOriginal = ref('');
 const diffModified = ref('');
+const versionDiffLang = computed(() =>
+  selected.value ? (FORMAT_LANG[selected.value.format] ?? 'yaml') : 'yaml',
+);
+const diffHeadline = computed(() =>
+  diffMode.value === 'single'
+    ? `版本对比 · ${singleVersion.value?.hash ?? ''} → 当前已保存内容`
+    : `${diffPair.value[0]?.hash ?? ''} → ${diffPair.value[1]?.hash ?? ''}`,
+);
+const fmtVersionAt = computed(() =>
+  singleVersion.value?.createdAt
+    ? new Date(singleVersion.value.createdAt).toLocaleString('zh-CN', {
+        hour12: false,
+      })
+    : '',
+);
 
 async function loadVersions(id: number) {
   versions.value = await getConfigVersionsApi(id);
@@ -611,13 +686,16 @@ async function toggleDiff(v: ConfigVersion, checked: any) {
   } else {
     diffPair.value = diffPair.value.filter((x) => x.id !== v.id);
   }
+  diffMode.value = diffPair.value.length === 2 ? 'pair' : '';
   await refreshDiff();
 }
 
 async function refreshDiff() {
-  if (!selected.value || diffPair.value.length !== 2) {
-    diffOriginal.value = '';
-    diffModified.value = '';
+  if (!selected.value || diffMode.value !== 'pair') {
+    if (diffMode.value !== 'single') {
+      diffOriginal.value = '';
+      diffModified.value = '';
+    }
     return;
   }
   const [a, b] = diffPair.value as [ConfigVersion, ConfigVersion];
@@ -629,23 +707,8 @@ async function refreshDiff() {
   diffModified.value = rb.content;
 }
 
-// 单版本查看：与当前内容做 diff（不再覆盖主编辑器——此前历史内容可被直接
-// 编辑/保存，且无「正在查看历史版本」标记，易误操作）
-const versionDiffOpen = ref(false);
-const versionDiffMeta = ref<null | { createdAt: string; hash: string }>(null);
-const versionDiffOriginal = ref(''); // 历史版本
-const versionDiffModified = ref(''); // 当前已保存内容
-const versionDiffLang = computed(() =>
-  selected.value ? (FORMAT_LANG[selected.value.format] ?? 'yaml') : 'yaml',
-);
-const fmtVersionAt = computed(() =>
-  versionDiffMeta.value?.createdAt
-    ? new Date(versionDiffMeta.value.createdAt).toLocaleString('zh-CN', {
-        hour12: false,
-      })
-    : '',
-);
-
+// 单版本「查看」：与当前内容 diff，显示在抽屉内版本表下方（v0.14.2 起不再
+// 弹窗；也不再覆盖主编辑器——历史内容曾被直接编辑/保存，易误操作）
 async function viewVersion(v: ConfigVersion) {
   if (!selected.value) return;
   // 版本查看跟随当前明文状态（已 reveal 的会话版本查看也免打码；
@@ -655,10 +718,19 @@ async function viewVersion(v: ConfigVersion) {
     v.id,
     !contentMasked.value,
   );
-  versionDiffOriginal.value = r.content;
-  versionDiffModified.value = content.value;
-  versionDiffMeta.value = { hash: v.hash, createdAt: v.createdAt };
-  versionDiffOpen.value = true;
+  diffPair.value = []; // 与双选互斥
+  singleVersion.value = v;
+  diffMode.value = 'single';
+  diffOriginal.value = r.content;
+  diffModified.value = content.value;
+}
+
+function closeDiff() {
+  diffMode.value = '';
+  diffPair.value = [];
+  singleVersion.value = null;
+  diffOriginal.value = '';
+  diffModified.value = '';
 }
 
 async function doRollback(v: ConfigVersion) {
@@ -975,7 +1047,7 @@ async function toggleMergedReveal() {
             v-if="isConvertedView || viewConvertError"
             :message="
               viewConvertError ||
-              `结构视图：由 ${selected?.format.toUpperCase()} 转换渲染为 ${viewFormat.toUpperCase()}；保存将回写为 ${selected?.format.toUpperCase()}（注释与键序不保留）`
+              `结构视图：由 ${selected?.format.toUpperCase()} 转换渲染为 ${viewFormat.toUpperCase()}；保存将回写为 ${selected?.format.toUpperCase()}（注释随键保留，空行/缩进细节不保留）`
             "
             :type="viewConvertError ? 'error' : 'warning'"
             class="shrink-0"
@@ -984,7 +1056,7 @@ async function toggleMergedReveal() {
           <div v-show="selected" class="editor-host min-h-0 flex-1">
             <YamlEditor
               v-model="editorText"
-              height="calc(100vh - 320px)"
+              height="100%"
               :language="editorLang"
               :read-only="contentMasked"
             />
@@ -998,7 +1070,7 @@ async function toggleMergedReveal() {
       </div>
     </div>
 
-    <!-- 历史版本抽屉（宽，diff 并排） -->
+    <!-- 历史版本抽屉（宽，diff 并排；单选查看与双选对比同一区域互斥，v0.14.2） -->
     <a-drawer
       v-model:open="historyOpen"
       :title="`历史版本 · ${selected?.name ?? ''}`"
@@ -1006,7 +1078,7 @@ async function toggleMergedReveal() {
     >
       <div class="flex flex-col gap-3">
         <div class="text-muted-foreground text-xs">
-          勾选任意两个版本对比差异（git diff
+          「查看」对比该版本与当前内容；勾选任意两个版本互相对比（git diff
           视图，并排/行内可切）；回滚会生成新版本，需手动下发
         </div>
         <a-table
@@ -1049,12 +1121,20 @@ async function toggleMergedReveal() {
             </template>
           </template>
         </a-table>
-        <template v-if="diffPair.length === 2">
-          <div class="text-muted-foreground text-xs">
-            {{ diffPair[0]?.hash }} → {{ diffPair[1]?.hash }}
+        <template v-if="diffMode">
+          <div class="flex items-center gap-2">
+            <div class="text-muted-foreground text-xs">
+              {{ diffHeadline }}
+              <template v-if="diffMode === 'single'">
+                （{{ fmtVersionAt }}）
+              </template>
+            </div>
+            <a-button size="small" type="link" @click="closeDiff">
+              关闭对比
+            </a-button>
           </div>
           <DiffEditor
-            :language="editorLang"
+            :language="versionDiffLang"
             :original="diffOriginal"
             :value="diffModified"
             height="380px"
@@ -1062,26 +1142,6 @@ async function toggleMergedReveal() {
         </template>
       </div>
     </a-drawer>
-
-    <!-- 单版本 × 当前内容对比（历史版本抽屉「查看」入口） -->
-    <a-modal
-      v-model:open="versionDiffOpen"
-      :footer="null"
-      :title="`版本对比 · ${versionDiffMeta?.hash ?? ''} → 当前`"
-      :width="880"
-    >
-      <div class="text-muted-foreground mb-2 text-xs">
-        左侧=历史版本 {{ versionDiffMeta?.hash }}（{{
-          fmtVersionAt
-        }}），右侧=当前已保存内容；需整体恢复用「回滚」（生成新版本，手动下发）
-      </div>
-      <DiffEditor
-        :language="versionDiffLang"
-        :original="versionDiffOriginal"
-        :value="versionDiffModified"
-        height="420px"
-      />
-    </a-modal>
 
     <!-- 合并视图（只读）：项目×环境聚合最终生效配置 = 拉取 API 返回内容预览 -->
     <a-modal
@@ -1178,7 +1238,7 @@ async function toggleMergedReveal() {
       </a-form>
     </a-modal>
 
-    <!-- 目录右键菜单（Windows 风格：新建文件/新建文件夹） -->
+    <!-- 目录右键菜单（Windows 风格：新建/删除按 config.edit 权限显隐） -->
     <teleport to="body">
       <div
         v-if="ctxMenu.open"
@@ -1190,17 +1250,29 @@ async function toggleMergedReveal() {
         }"
         class="border-border bg-popover text-popover-foreground min-w-36 rounded border py-1 shadow-lg"
       >
-        <div
-          class="hover:bg-accent cursor-pointer px-3 py-1.5"
-          @click="ctxNewFile"
-        >
-          新建文件
-        </div>
-        <div
-          class="hover:bg-accent cursor-pointer px-3 py-1.5"
-          @click="ctxNewFolder"
-        >
-          新建文件夹
+        <template v-if="canEditConfig">
+          <div
+            class="hover:bg-accent cursor-pointer px-3 py-1.5"
+            @click="ctxNewFile"
+          >
+            新建文件
+          </div>
+          <div
+            class="hover:bg-accent cursor-pointer px-3 py-1.5"
+            @click="ctxNewFolder"
+          >
+            新建文件夹
+          </div>
+          <div
+            v-if="ctxMenu.dirKey"
+            class="hover:bg-accent text-destructive cursor-pointer px-3 py-1.5"
+            @click="ctxDeleteDir"
+          >
+            删除目录
+          </div>
+        </template>
+        <div v-else class="text-muted-foreground px-3 py-1.5 text-xs">
+          无编辑权限（只读）
         </div>
       </div>
     </teleport>

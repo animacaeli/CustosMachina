@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { convertView, parseConfig, serializeConfig } from './config-format';
+import {
+  convertView,
+  convertViewWithComments,
+  parseConfig,
+  serializeConfig,
+} from './config-format';
 
 describe('config-format 格式互转', () => {
   const sample = { db: { host: '127.0.0.1', password: 'p' }, 'server.port': 0 };
@@ -86,5 +91,96 @@ describe('config-format 格式互转', () => {
 
   it('同格式直通', () => {
     expect(convertView('yaml', 'yaml', 'a: 1')).toBe('a: 1');
+  });
+});
+
+// ---- v0.14.2 注释感知转换（注释随键走） ----
+const yamlWithComments = `# 顶部说明
+mysql:
+  # 数据库地址
+  host: 172.28.16.8
+  port: 3306
+redis:
+  host: redis
+services:
+  # 容器内监听 80
+  port: 80
+`;
+
+describe('convertViewWithComments（注释随键走）', () => {
+  it('yaml → json(JSONC)：注释转 // 且挂在对应键上方', () => {
+    const jsonc = convertViewWithComments('yaml', 'json', yamlWithComments);
+    expect(jsonc).toBeTruthy();
+    expect(jsonc).toContain('// 顶部说明');
+    expect(jsonc).toContain('// 数据库地址');
+    expect(jsonc).toContain('// 容器内监听 80');
+    // 注释归属：注释块挂在对应键上方（yaml 的 map 前置注释 → 父键上方）
+    const lines = (jsonc ?? '').split('\n');
+    const idx = lines.findIndex((l) => l.includes('"mysql"'));
+    expect(lines[idx - 1]).toContain('数据库地址');
+    // 结构完整：可被 JSONC 解析回去（strip 后合法）
+    expect(() =>
+      JSON.parse((jsonc ?? '').replaceAll(/\/\/[^\n]*/g, '')),
+    ).not.toThrow();
+  });
+
+  it('yaml → toml：注释保持 #，嵌套对象变 [section]', () => {
+    const toml = convertViewWithComments('yaml', 'toml', yamlWithComments);
+    expect(toml).toContain('# 数据库地址');
+    expect(toml).toContain('[mysql]');
+    expect(toml).toContain('host = "172.28.16.8"');
+  });
+
+  it('yaml → env：平铺点号键 + # 注释', () => {
+    const env = convertViewWithComments('yaml', 'env', yamlWithComments);
+    expect(env).toContain('# 数据库地址');
+    expect(env).toContain('mysql.host=172.28.16.8');
+    expect(env).toContain('services.port=80');
+  });
+
+  it('yaml → ini：section + 注释', () => {
+    const ini = convertViewWithComments('yaml', 'ini', yamlWithComments);
+    expect(ini).toContain('[mysql]');
+    expect(ini).toContain('# 容器内监听 80');
+  });
+
+  it('json(JSONC) → yaml：// 注释还原为 # 并挂回键上方', () => {
+    const jsonc =
+      convertViewWithComments('yaml', 'json', yamlWithComments) ?? '';
+    const back = convertViewWithComments('json', 'yaml', jsonc);
+    expect(back).toContain('# 顶部说明');
+    expect(back).toContain('# 数据库地址');
+    const lines = (back ?? '').split('\n');
+    const idx = lines.findIndex((l) => l.trim() === 'mysql:');
+    expect(lines[idx - 1]).toContain('数据库地址');
+  });
+
+  it('env → yaml：# 注释随平铺键重建挂到嵌套键', () => {
+    const env = `# 头注释
+# DB 主机
+db.host=1.2.3.4
+db.port=3306
+`;
+    const y = convertViewWithComments('env', 'yaml', env);
+    expect(y).toContain('# 头注释');
+    expect(y).toContain('# DB 主机');
+    expect(y).toContain('host: 1.2.3.4');
+  });
+
+  it('类型保真：数字/布尔不退化为字符串（yaml→json→yaml）', () => {
+    const y = 'a: 1\nb: true\nc: text\n';
+    const j = convertViewWithComments('yaml', 'json', y) ?? '';
+    expect(j).toContain('"a": 1');
+    expect(j).toContain('"b": true');
+    const back = convertViewWithComments('json', 'yaml', j);
+    expect(back).toBe('a: 1\nb: true\nc: text\n');
+  });
+
+  it('同格式原样返回', () => {
+    expect(convertViewWithComments('yaml', 'yaml', 'a: 1\n')).toBe('a: 1\n');
+  });
+
+  it('解析失败返回 null（语法错误 fail-closed）', () => {
+    expect(convertViewWithComments('json', 'yaml', '{bad json')).toBeNull();
   });
 });
