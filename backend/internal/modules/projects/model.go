@@ -46,6 +46,9 @@ type Project struct {
 
 	// 槽位（M5 使用，配置先行）：个数仅管理员可改
 	TestSlotCount int `gorm:"not null;default:3" json:"testSlotCount"`
+	// TestSlotPeak 槽位数历史峰值（只增不减）：配置目录树环境层固化用——
+	// 槽数缩减后既有目录（dev1..peak）不消失，等用户处理存量文件（v0.14.2）
+	TestSlotPeak int `gorm:"not null;default:3" json:"testSlotPeak"`
 
 	// 灰度（M4 使用）：流量策略比例总和上限
 	TrafficCap    int `gorm:"not null;default:50" json:"trafficCap"`

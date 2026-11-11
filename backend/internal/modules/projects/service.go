@@ -108,6 +108,7 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	if in.NotifyOnSuccess != nil {
 		onSuccess = *in.NotifyOnSuccess
 	}
+	slotCount := defaultInt(in.TestSlotCount, 3)
 	p := Project{
 		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
 		Provider: defaultStr(in.Provider, "gitea"), CIJob: in.CIJob,
@@ -115,7 +116,8 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 		NotifyProdGroupID:   in.NotifyProdGroupID,
 		NotifyCanaryGroupID: in.NotifyProdGroupID, // 灰度通知群恒等于正式（不分离）
 		NotifyTestGroupID:   in.NotifyTestGroupID, NotifyOnSuccess: onSuccess,
-		TestSlotCount: defaultInt(in.TestSlotCount, 3), TrafficCap: defaultInt(in.TrafficCap, 50),
+		TestSlotCount: slotCount, TestSlotPeak: slotCount, // 峰值随创建起步
+		TrafficCap:    defaultInt(in.TrafficCap, 50),
 		SlotGraceDays: defaultInt(in.SlotGraceDays, 3),
 	}
 	if in.CIToken != "" {
@@ -164,6 +166,10 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 	}
 	if in.TestSlotCount > 0 {
 		p.TestSlotCount = in.TestSlotCount
+		// 峰值只增不减：目录树固化的环境层依据（缩容不回收既有目录）
+		if in.TestSlotCount > p.TestSlotPeak {
+			p.TestSlotPeak = in.TestSlotCount
+		}
 	}
 	if in.TrafficCap > 0 {
 		p.TrafficCap = in.TrafficCap

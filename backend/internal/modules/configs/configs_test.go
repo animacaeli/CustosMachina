@@ -144,7 +144,7 @@ func TestLifecycleAndVersions(t *testing.T) {
 	if len(vs) != 2 {
 		t.Fatalf("应有 2 个版本, got %d", len(vs))
 	}
-	// 下发（v2 内容落盘 + deploy 快照）
+	// 下发（v2 内容落盘；v0.14.2 起不落 deploy 快照版本）
 	if err := svc.Deploy(ctx, f.ID, "op-b"); err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +169,15 @@ func TestLifecycleAndVersions(t *testing.T) {
 	if !found {
 		t.Error("下发应落审计事件")
 	}
-	// 版本链：edit/deploy/rollback
+	// 版本链：edit v1, edit v2, rollback（deploy 不再入链）
 	vs2, _ := svc.ListVersions(ctx, f.ID)
-	if len(vs2) != 4 { // edit v1, edit v2, deploy, rollback
+	if len(vs2) != 3 {
 		t.Errorf("版本链数量不符: %d", len(vs2))
+	}
+	for _, v := range vs2 {
+		if v.Source == SourceDeploy {
+			t.Error("deploy 来源版本不应出现在列表")
+		}
 	}
 }
 
@@ -1010,5 +1015,48 @@ func TestValidateTargetWhitelist(t *testing.T) {
 		if err := validateTarget(c.action, c.target); err == nil {
 			t.Errorf("非法目标未被拒: action=%s target=%q", c.action, c.target)
 		}
+	}
+}
+
+func TestDeleteByPrefix(t *testing.T) {
+	svc, db, _ := testSvc(t)
+	ctx := context.Background()
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'test', 1), (1, 'prod', 1)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, rp := range []string{"dev1/a.yaml", "dev1/sub/b.yaml", "dev2/c.yaml", "prod/d.yaml"} {
+		if _, err := svc.Create(ctx, SaveFileInput{
+			Name: rp, ServerID: 1, Path: "/x/" + rp, Format: FormatYAML,
+			Content: "k: 1\n", ApplyAction: ApplyNone, ProjectID: 1, RelPath: rp,
+		}, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 前缀匹配精确到段（dev1 不吃掉 dev2）
+	n, err := svc.DeleteByPrefix(ctx, 1, "dev1")
+	if err != nil || n != 2 {
+		t.Fatalf("dev1 前缀应删 2 个: n=%d err=%v", n, err)
+	}
+	var cnt int64
+	db.Model(&File{}).Where("project_id = ?", 1).Count(&cnt)
+	if cnt != 2 {
+		t.Fatalf("剩余文件数不符: %d", cnt)
+	}
+	// 空删报错
+	if _, err := svc.DeleteByPrefix(ctx, 1, "dev1"); err == nil {
+		t.Fatal("空删应报错")
+	}
+	// 根前缀拒绝
+	if _, err := svc.DeleteByPrefix(ctx, 1, ""); err == nil {
+		t.Fatal("空前缀应拒绝")
+	}
+	// 版本链随之清理
+	var vn int64
+	db.Model(&Version{}).Count(&vn)
+	if vn != 2 { // dev2 + prod 两个文件的初始版本
+		t.Fatalf("版本链未随删: %d", vn)
 	}
 }

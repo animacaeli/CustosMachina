@@ -43,6 +43,7 @@ type projectTbl struct {
 	ComposePath         string
 	DefaultBranch       string
 	TestSlotCount       int
+	TestSlotPeak        int
 	SlotGraceDays       int
 	TrafficCap          int
 	NotifyOnSuccess     bool

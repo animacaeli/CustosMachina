@@ -52,6 +52,8 @@ func (h *Handler) RegisterRoutes(r server.Router) {
 		g.GET("/:id/versions/:vid", h.getVersionContent)
 		g.POST("/:id/rollback", h.rollback)
 		g.POST("/env-sync", h.envSync)
+		// 按前缀批量删除（目录右键删除，v0.14.2）：config.edit gate
+		g.DELETE("/dir", h.removeDir)
 		// AgileConfig 式合并视图（只读预览，M5 同一合并语义）
 		g.GET("/merged", h.mergedPreview)
 	}
@@ -252,6 +254,31 @@ func (h *Handler) getVersionContent(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, gin.H{"content": content, "masked": hasSensitiveFields(content) && !reveal})
+}
+
+// removeDir DELETE /config-files/dir {projectId, relPath} 按前缀批量删除
+// （目录树右键「删除」，v0.14.2）：删该前缀下全部文件及其版本链。
+// 编辑语义 gate（config.edit）；前缀为环境段时可清空整个环境目录——
+// 明确按调用方 confirm 后的意图执行，不二次确认。
+func (h *Handler) removeDir(c *gin.Context) {
+	var in struct {
+		ProjectID uint   `json:"projectId" binding:"required"`
+		RelPath   string `json:"relPath" binding:"required,max=512"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if !rbac.Can(c, "config.edit") {
+		httpx.Fail(c, http.StatusForbidden, 403, "删除配置需编辑权限（config.edit）")
+		return
+	}
+	n, err := h.svc.DeleteByPrefix(c.Request.Context(), in.ProjectID, in.RelPath)
+	if err != nil {
+		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	httpx.OK(c, gin.H{"deleted": n})
 }
 
 func (h *Handler) rollback(c *gin.Context) {

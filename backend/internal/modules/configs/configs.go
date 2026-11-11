@@ -217,7 +217,8 @@ func validEnvSeg(env string) bool { return EnvTypeOf(env) != "" }
 // 无层级的旧形态裸文件按正式环境最严处理（fail-closed）。
 func IsTestPath(relPath string) bool { return isSlotSeg(firstSeg(relPath)) }
 
-// checkSlotCap 槽位首段上限校验（联动项目 TestSlotCount）——validateRelPath
+// checkSlotCap 槽位首段上限校验（v0.14.2 起按历史峰值放宽——目录树环境层固化，
+// 峰值内的 devN 存量目录可继续新建/编辑；扩容照常跟随）——validateRelPath
 // 与 EnvSync 建档两路共用（防同步路径绕过上限）。
 func (s *Service) checkSlotCap(ctx context.Context, projectID uint, env string) error {
 	if !isSlotSeg(env) || s.proj == nil {
@@ -227,8 +228,12 @@ func (s *Service) checkSlotCap(ctx context.Context, projectID uint, env string) 
 	if err != nil {
 		return fmt.Errorf("查询项目槽位失败: %w", err)
 	}
-	if slotNum(env) > v.TestSlotCount {
-		return fmt.Errorf("槽位 %s 超出项目槽位数（该项目共 %d 个槽位）", env, v.TestSlotCount)
+	cap := v.TestSlotCount
+	if v.TestSlotPeak > cap {
+		cap = v.TestSlotPeak
+	}
+	if slotNum(env) > cap {
+		return fmt.Errorf("槽位 %s 超出项目槽位数（当前 %d 个，历史峰值 %d）", env, v.TestSlotCount, v.TestSlotPeak)
 	}
 	return nil
 }
@@ -337,6 +342,32 @@ func (s *Service) Delete(ctx context.Context, id uint) error {
 	}
 	s.db.WithContext(ctx).Where("file_id = ?", id).Delete(&Version{})
 	return nil
+}
+
+// DeleteByPrefix 按层级前缀批量删除（目录树右键「删除」，v0.14.2）：
+// 删 project_id 下 rel_path 以 prefix/ 开头的全部文件及版本链。
+// 前缀归一化后必须匹配至少一个文件（空删报错防手滑）；调用方已 confirm。
+func (s *Service) DeleteByPrefix(ctx context.Context, projectID uint, relPath string) (int, error) {
+	prefix := strings.Trim(strings.TrimSpace(relPath), "/")
+	if prefix == "" {
+		return 0, fmt.Errorf("删除前缀不能为空（根目录不可整体删除）")
+	}
+	var ids []uint
+	if err := s.db.WithContext(ctx).Model(&File{}).
+		Where("project_id = ? AND rel_path LIKE ?", projectID, prefix+"/%").
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, fmt.Errorf("前缀 %s 下没有配置文件", prefix)
+	}
+	if err := s.db.WithContext(ctx).Where("file_id IN ?", ids).Delete(&Version{}).Error; err != nil {
+		return 0, err
+	}
+	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&File{}).Error; err != nil {
+		return 0, err
+	}
+	return len(ids), nil
 }
 
 // FileOut 列表瘦身视图。
@@ -539,7 +570,9 @@ type VersionOut struct {
 
 func (s *Service) ListVersions(ctx context.Context, fileID uint) ([]VersionOut, error) {
 	var vs []Version
-	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).
+	// deploy 来源版本默认隐藏（v0.14.2）：下发内容必然等于某编辑版本，
+	// deploy 快照只制造"无内容变更的版本"污染对比链；库保留供审计直查
+	if err := s.db.WithContext(ctx).Where("file_id = ? AND source != ?", fileID, SourceDeploy).
 		Order("id DESC").Limit(50).Find(&vs).Error; err != nil {
 		return nil, err
 	}
@@ -609,7 +642,8 @@ func (s *Service) Deploy(ctx context.Context, id uint, by string) error {
 		s.exec.RecordEvent(ctx, f.ServerID, "config_deploy", fmt.Sprintf("配置 %q 下发失败: %v", f.Name, err))
 		return fmt.Errorf("SFTP 写入失败: %w", err)
 	}
-	s.snapVersion(ctx, id, f.Content, SourceDeploy, by)
+	// 下发不落版本（v0.14.2）：版本=内容变更历史，下发内容必然等于某编辑版本，
+	// deploy 快照只制造无变更版本污染对比链；动作审计走 server_events
 
 	actionNote := "仅落盘"
 	if f.ApplyAction != ApplyNone {

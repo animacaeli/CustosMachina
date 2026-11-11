@@ -201,3 +201,37 @@ func TestSaveTargetsK3sValidation(t *testing.T) {
 		t.Error("不存在的集群应报错")
 	}
 }
+
+func TestSlotPeakOnlyGrows(t *testing.T) {
+	db := testDB(t)
+	svc := NewService(db, nil)
+	base := SaveProjectInput{
+		Name: "peak-demo", RepoURL: "https://git.internal/org/pd", RepoPath: "org/pd",
+		TestSlotCount: 10,
+	}
+	p, err := svc.Create(t.Context(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TestSlotPeak != 10 {
+		t.Fatalf("创建即峰值: %d", p.TestSlotPeak)
+	}
+	// 扩容 10→12：峰值跟随
+	base.TestSlotCount = 12
+	p, err = svc.Update(t.Context(), p.ID, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TestSlotPeak != 12 {
+		t.Fatalf("扩容峰值应跟随: %d", p.TestSlotPeak)
+	}
+	// 缩容 12→3：槽数降、峰值保持（目录树固化的环境层依据）
+	base.TestSlotCount = 3
+	p, err = svc.Update(t.Context(), p.ID, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TestSlotCount != 3 || p.TestSlotPeak != 12 {
+		t.Fatalf("缩容后峰值应保持: count=%d peak=%d", p.TestSlotCount, p.TestSlotPeak)
+	}
+}

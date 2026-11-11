@@ -125,6 +125,17 @@ func init() {
 		}
 		return addColIfMissing(&ci.Build{}, "CIRef", "ci_ref")(db)
 	})
+	// 0013：槽位数历史峰值（目录树固化）——补列 + 存量以当前槽数初始化
+	//（表不存在的异形库路径跳过 UPDATE：模型补齐后为空表，初始化无意义）
+	database.RegisterGoHook("0013", func(db *gorm.DB) error {
+		if err := addColIfMissing(&projects.Project{}, "TestSlotPeak", "test_slot_peak")(db); err != nil {
+			return err
+		}
+		if !db.Migrator().HasTable("projects") {
+			return nil
+		}
+		return db.Exec("UPDATE projects SET test_slot_peak = test_slot_count WHERE test_slot_peak = 0 OR test_slot_peak IS NULL").Error
+	})
 }
 
 // ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。
