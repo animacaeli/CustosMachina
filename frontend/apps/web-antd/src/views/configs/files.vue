@@ -4,6 +4,7 @@ import type { ConfigFormat } from '#/utils/config-format';
 
 import {
   computed,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   reactive,
@@ -89,7 +90,10 @@ function envTypeOf(seg: string): string {
 const FORMAT_LANG: Record<string, string> = {
   env: 'ini',
   ini: 'ini',
-  json: 'jsonc', // JSON 视图带注释（JSONC，v0.14.2）
+  // JSON 视图用 'json'（非 'jsonc'——精简入口下 jsonc 无任何模块注册=纯文本）：
+  // json 语言 tokenization 原生覆盖 // 行注释着色（comment.line.json），
+  // jsonDefaults.allowComments 已容忍注释语法（monaco-env）
+  json: 'json',
   toml: 'ini',
   yaml: 'yaml',
 };
@@ -328,6 +332,15 @@ function refreshEditorText() {
 }
 
 watch([content, viewFormat, selected], refreshEditorText);
+
+// Monaco 兜底重排版：编辑器创建于 v-show 隐藏容器时，automaticLayout 的
+// ResizeObserver 偶发不随显示触发（实测 5x5 空白）——显示后广播一次 resize
+watch(
+  () => selected.value,
+  () => {
+    nextTick(() => window.dispatchEvent(new Event('resize')));
+  },
+);
 
 async function openContent(f: ConfigFile) {
   selected.value = f;
@@ -1053,6 +1066,10 @@ async function toggleMergedReveal() {
             class="shrink-0"
             show-icon
           />
+          <!-- v-show（编辑器实例跨文件复用）。坑：Monaco 创建于 display:none
+               容器时 automaticLayout 的 ResizeObserver 偶发不随显示重排版
+               （实测 5x5 空白）——selected 变化后 nextTick 广播 resize 兜底
+               （见下方 watch，实测有效） -->
           <div v-show="selected" class="editor-host min-h-0 flex-1">
             <YamlEditor
               v-model="editorText"

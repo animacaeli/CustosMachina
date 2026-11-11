@@ -322,10 +322,15 @@ function yamlToCDoc(text: string): CDoc {
         }
         return n;
       });
-  return {
-    headComments,
-    root: walkPairs(((doc.contents as any)?.items ?? []) as any[]),
-  };
+  const root = walkPairs(((doc.contents as any)?.items ?? []) as any[]);
+  // 首键之前的连续注释块：行扫描已归 head（文档级）——AST 又会挂到首键
+  // commentBefore，双份重复（实测抓到）。规则定死：首个键上方的注释归 head，
+  // 键注释只保留与 head 不重复的部分
+  const first = root.at(0);
+  if (first && headComments.length > 0) {
+    first.comments = first.comments.filter((c) => !headComments.includes(c));
+  }
+  return { headComments, root };
 }
 
 // 行式格式（toml/ini/env）共用扫描：注释行缓冲 → 挂到下一非注释行所属键

@@ -114,6 +114,8 @@ describe('convertViewWithComments（注释随键走）', () => {
     expect(jsonc).toContain('// 顶部说明');
     expect(jsonc).toContain('// 数据库地址');
     expect(jsonc).toContain('// 容器内监听 80');
+    // 防重复：首键前的注释归 head 一份（不得再挂首键又一份）
+    expect((jsonc ?? '').split('// 顶部说明').length - 1).toBe(1);
     // 注释归属：注释块挂在对应键上方（yaml 的 map 前置注释 → 父键上方）
     const lines = (jsonc ?? '').split('\n');
     const idx = lines.findIndex((l) => l.includes('"mysql"'));
