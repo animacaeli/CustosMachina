@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // View 项目的只读投影：ci/release/canary/slots 等模块一律通过本结构取
@@ -46,45 +47,63 @@ func (s *Service) ViewByID(ctx context.Context, id uint) (*View, error) {
 
 // ViewByRepoPath 供 CI webhook 匹配：精确优先（走索引），大小写兜底全扫。
 // 找不到返回 ErrViewNotFound（调用方决定忽略或报错）。
-func (s *Service) ViewByRepoPath(ctx context.Context, repoPath string) (*View, error) {
+func (s *Service) ViewByRepoPath(ctx context.Context, repoPath, provider string) (*View, error) {
 	var v View
-	err := s.db.WithContext(ctx).Table("projects").
-		Select(viewCols).Where("repo_path = ?", repoPath).First(&v).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		err = s.db.WithContext(ctx).Table("projects").
-			Select(viewCols).Where("lower(repo_path) = ?", strings.ToLower(repoPath)).First(&v).Error
-	}
-	if err != nil {
+	if err := s.findByRepo(ctx, repoPath, provider, viewCols, &v); err != nil {
 		return nil, ErrViewNotFound
 	}
 	return &v, nil
 }
 
+// ViewsByRepoPath returns every project bound to the provider and repository,
+// including bindings that differ only in path casing.
+func (s *Service) ViewsByRepoPath(ctx context.Context, repoPath, provider string) ([]View, error) {
+	var views []View
+	err := s.db.WithContext(ctx).Model(&Project{}).Select(viewCols).
+		Where("provider = ? AND lower(repo_path) = ?", provider, strings.ToLower(repoPath)).
+		Order("id").Find(&views).Error
+	return views, err
+}
+
+func (s *Service) findByRepo(ctx context.Context, repoPath, provider, columns string, dest any) error {
+	q := s.db.WithContext(ctx).Model(&Project{}).Select(columns).Where("provider = ?", provider)
+	err := q.Session(&gorm.Session{}).Where("repo_path = ?", repoPath).First(dest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		err = q.Session(&gorm.Session{}).Where("lower(repo_path) = ?", strings.ToLower(repoPath)).First(dest).Error
+	}
+	return err
+}
+
 // EncryptedCIToken 项目级 token 密文（仅 ci 模块使用；解密归调用方）。
-func (s *Service) EncryptedCIToken(ctx context.Context, repoPath string) string {
-	var row struct{ CIToken string }
-	if err := s.db.WithContext(ctx).Model(&Project{}).
-		Where("repo_path = ?", repoPath).First(&row).Error; err != nil {
+func (s *Service) EncryptedCIToken(ctx context.Context, repoPath, provider string) string {
+	view, err := s.ViewByRepoPath(ctx, repoPath, provider)
+	if err != nil {
 		return ""
 	}
-	return row.CIToken
+	var token string
+	if err := s.db.WithContext(ctx).Model(&Project{}).
+		Where("id = ?", view.ID).Pluck("ci_token", &token).Error; err != nil {
+		return ""
+	}
+	return token
 }
 
 // Reader 消费方（ci/release/canary/slots）依赖的最小只读接口；
 // wire 将 *Service 绑定到它，替代跨模块直读表。
 type Reader interface {
 	ViewByID(ctx context.Context, id uint) (*View, error)
-	ViewByRepoPath(ctx context.Context, repoPath string) (*View, error)
-	EncryptedCIToken(ctx context.Context, repoPath string) string
+	ViewByRepoPath(ctx context.Context, repoPath, provider string) (*View, error)
+	ViewsByRepoPath(ctx context.Context, repoPath, provider string) ([]View, error)
+	EncryptedCIToken(ctx context.Context, repoPath, provider string) string
 }
 
-// ValidateTaskProject checks an optional task binding before it is persisted.
+// ValidateTaskProject locks the selected project until the task save transaction ends.
 func ValidateTaskProject(ctx context.Context, db *gorm.DB, id *uint) error {
 	if id == nil || *id == 0 {
 		return nil
 	}
 	var p Project
-	err := db.WithContext(ctx).Select("id").First(&p, *id).Error
+	err := db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&p, *id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.New("关联项目不存在")
 	}

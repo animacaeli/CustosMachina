@@ -40,10 +40,18 @@ const inboxItems = computed(() => [
 const next = ref(0);
 const inboxLoading = ref(false);
 let inboxRequest = 0;
+let inboxSession = 0;
+let pendingInboxChanges = 0;
+let inboxChanges = Promise.resolve();
 let inboxPoll: ReturnType<typeof setInterval> | undefined;
 
 async function loadInbox(older = false) {
-  if (!accessStore.accessToken || accessStore.loginExpired) return;
+  if (
+    !accessStore.accessToken ||
+    accessStore.loginExpired ||
+    pendingInboxChanges
+  )
+    return;
   if (older && (!next.value || inboxLoading.value)) return;
   const request = ++inboxRequest;
   inboxLoading.value = true;
@@ -54,7 +62,7 @@ async function loadInbox(older = false) {
       ...item,
       avatar: preferences.logo.source || preferences.app.defaultAvatar,
       date: new Date(item.createdAt).toLocaleString('zh-CN'),
-      link: item.projectId ? '/projects/' + item.projectId : undefined,
+      link: item.projectId ? `/projects/${item.projectId}` : undefined,
     }));
     unread.value = result.unread;
     if (older) {
@@ -74,8 +82,11 @@ async function loadInbox(older = false) {
 watch(
   () => userStore.userInfo?.userId,
   () => {
+    inboxSession++;
     inboxRequest++;
     inboxLoading.value = false;
+    pendingInboxChanges = 0;
+    inboxChanges = Promise.resolve();
     notifications.value = [];
     olderItems.value = [];
     unread.value = 0;
@@ -93,6 +104,7 @@ onMounted(() => {
   }, 30_000);
 });
 onUnmounted(() => {
+  inboxSession++;
   inboxRequest++;
   clearInterval(inboxPoll);
 });
@@ -129,13 +141,35 @@ async function handleLogout() {
   await authStore.logout(false);
 }
 
-async function changeInbox(action: InboxAction, id?: number) {
-  try {
-    await updateInboxApi(action, id);
-    await loadInbox();
-  } catch {
-    // 请求拦截器显示错误。
-  }
+function changeInbox(action: InboxAction, id?: number) {
+  const session = inboxSession;
+  pendingInboxChanges++;
+  inboxRequest++;
+  inboxLoading.value = false;
+  inboxChanges = inboxChanges.then(async () => {
+    if (session !== inboxSession) return;
+    try {
+      const result = await updateInboxApi(action, id);
+      if (session !== inboxSession) return;
+      for (const page of [notifications, olderItems]) {
+        if (action === 'clear') {
+          page.value = [];
+        } else if (action === 'remove') {
+          page.value = page.value.filter((item) => item.id !== id);
+        } else {
+          for (const item of page.value) {
+            if (action === 'read-all' || item.id === id) item.isRead = true;
+          }
+        }
+      }
+      unread.value = result.unread;
+      if (action === 'clear') next.value = 0;
+    } catch {
+      // 请求拦截器显示错误。
+    } finally {
+      if (session === inboxSession) pendingInboxChanges--;
+    }
+  });
 }
 
 const handleClick = (item: NotificationItem) => {

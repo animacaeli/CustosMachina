@@ -12,6 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
@@ -241,9 +242,6 @@ type JobInput struct {
 }
 
 func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator string) (*CronJob, error) {
-	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
-		return nil, err
-	}
 	var sc CronScript
 	if err := s.db.WithContext(ctx).First(&sc, in.ScriptID).Error; err != nil {
 		return nil, fmt.Errorf("脚本不存在")
@@ -267,53 +265,62 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	}
 
 	var job *CronJob
-	if id == 0 {
-		job = &CronJob{CreatedBy: operator, TimeoutSecs: 600}
-	} else {
-		if err := s.db.WithContext(ctx).First(&job, id).Error; err != nil {
-			return nil, ErrNotFound
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := projects.ValidateTaskProject(ctx, tx, in.ProjectID); err != nil {
+			return err
 		}
-	}
-	job.Name, job.ScriptID, job.Schedule, job.ServerID = in.Name, in.ScriptID, in.Schedule, in.ServerID
-	job.Carrier, job.Image, job.ProjectName, job.Service = in.Carrier, in.Image, in.ProjectName, in.Service
-	job.Command, job.Network = in.Command, in.Network
-	if in.ProjectID != nil {
-		job.ProjectID = *in.ProjectID
-	}
-	if in.TimeoutSecs > 0 {
-		job.TimeoutSecs = in.TimeoutSecs
-	}
-	job.Retry = in.Retry
-	if in.Enabled != nil {
-		job.Enabled = *in.Enabled
-	}
-	// 无表达式 = 仅手动任务：不推进 next_run_at（调度器按非空表达式排除）
-	if job.Enabled && job.Schedule != "" {
-		next, err := parseSchedule(job.Schedule, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		job.NextRunAt = &next
-	} else {
-		job.NextRunAt = nil
-	}
-	if id == 0 {
-		// GORM 坑：Create 跳过带 default 标签的零值字段且会把 default 回填进结构体
-		// ——enabled=false 落库吃 default true 且 job.Enabled 被改回 true（禁用任务
-		// 变启用、next_run_at 为 NULL 被调度器立即扫到，真机测试实测踩中）。
-		// 先记期望值，创建后按期望回写。
-		wantEnabled := job.Enabled
-		if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
-			return nil, err
-		}
-		if job.Enabled != wantEnabled {
-			if err := s.db.WithContext(ctx).Model(job).
-				Update("enabled", wantEnabled).Error; err != nil {
-				return nil, err
+		if id == 0 {
+			job = &CronJob{CreatedBy: operator, TimeoutSecs: 600}
+		} else {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, id).Error; err != nil {
+				return ErrNotFound
 			}
-			job.Enabled = wantEnabled
 		}
-	} else if err := s.db.WithContext(ctx).Save(job).Error; err != nil {
+		job.Name, job.ScriptID, job.Schedule, job.ServerID = in.Name, in.ScriptID, in.Schedule, in.ServerID
+		job.Carrier, job.Image, job.ProjectName, job.Service = in.Carrier, in.Image, in.ProjectName, in.Service
+		job.Command, job.Network = in.Command, in.Network
+		if in.ProjectID != nil {
+			job.ProjectID = *in.ProjectID
+		}
+		if in.TimeoutSecs > 0 {
+			job.TimeoutSecs = in.TimeoutSecs
+		}
+		job.Retry = in.Retry
+		if in.Enabled != nil {
+			job.Enabled = *in.Enabled
+		}
+		// 无表达式 = 仅手动任务：不推进 next_run_at（调度器按非空表达式排除）
+		if job.Enabled && job.Schedule != "" {
+			next, err := parseSchedule(job.Schedule, time.Now())
+			if err != nil {
+				return err
+			}
+			job.NextRunAt = &next
+		} else {
+			job.NextRunAt = nil
+		}
+		if id == 0 {
+			// GORM 坑：Create 跳过带 default 标签的零值字段且会把 default 回填进结构体
+			// ——enabled=false 落库吃 default true 且 job.Enabled 被改回 true（禁用任务
+			// 变启用、next_run_at 为 NULL 被调度器立即扫到，真机测试实测踩中）。
+			// 先记期望值，创建后按期望回写。
+			wantEnabled := job.Enabled
+			if err := tx.Create(job).Error; err != nil {
+				return err
+			}
+			if job.Enabled != wantEnabled {
+				if err := tx.Model(job).
+					Update("enabled", wantEnabled).Error; err != nil {
+					return err
+				}
+				job.Enabled = wantEnabled
+			}
+		} else if err := tx.Save(job).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return job, nil

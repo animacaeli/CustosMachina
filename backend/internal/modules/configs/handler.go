@@ -262,8 +262,9 @@ func (h *Handler) getVersionContent(c *gin.Context) {
 // 明确按调用方 confirm 后的意图执行，不二次确认。
 func (h *Handler) removeDir(c *gin.Context) {
 	var in struct {
-		ProjectID uint   `json:"projectId" binding:"required"`
-		RelPath   string `json:"relPath" binding:"required,max=512"`
+		ProjectID   uint    `json:"projectId" binding:"required"`
+		RelPath     string  `json:"relPath" binding:"required,max=512"`
+		ExpectedIDs *[]uint `json:"expectedIds" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
@@ -273,7 +274,11 @@ func (h *Handler) removeDir(c *gin.Context) {
 		httpx.Fail(c, http.StatusForbidden, 403, "删除配置需编辑权限（config.edit）")
 		return
 	}
-	n, err := h.svc.DeleteByPrefix(c.Request.Context(), in.ProjectID, in.RelPath)
+	if !rbac.InProjectScope(c, in.ProjectID) {
+		httpx.Fail(c, http.StatusForbidden, 403, "无该项目的操作权限")
+		return
+	}
+	n, err := h.svc.DeleteByPrefix(c.Request.Context(), in.ProjectID, in.RelPath, *in.ExpectedIDs)
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return

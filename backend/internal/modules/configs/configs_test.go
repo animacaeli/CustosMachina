@@ -61,10 +61,13 @@ func (f *fakeProj) ViewByID(_ context.Context, id uint) (*projects.View, error) 
 	}
 	return &projects.View{ID: id, Name: "demo", TestSlotCount: f.slots}, nil
 }
-func (f *fakeProj) ViewByRepoPath(context.Context, string) (*projects.View, error) {
+func (f *fakeProj) ViewByRepoPath(_ context.Context, _ string, _ string) (*projects.View, error) {
 	return nil, projects.ErrViewNotFound
 }
-func (f *fakeProj) EncryptedCIToken(context.Context, string) string { return "" }
+func (f *fakeProj) ViewsByRepoPath(_ context.Context, _ string, _ string) ([]projects.View, error) {
+	return nil, nil
+}
+func (f *fakeProj) EncryptedCIToken(context.Context, string, string) string { return "" }
 
 func testSvc(t *testing.T) (*Service, *gorm.DB, *fakeExec) {
 	t.Helper()
@@ -1050,7 +1053,7 @@ func TestDeleteByPrefix(t *testing.T) {
 	if err := svc.Delete(ctx, protected.ID); err == nil {
 		t.Fatal("在用槽位的单文件删除应拒绝")
 	}
-	if _, err := svc.DeleteByPrefix(ctx, 1, "dev1"); err == nil {
+	if _, err := svc.DeleteByPrefix(ctx, 1, "dev1", nil); err == nil {
 		t.Fatal("在用槽位的目录删除应拒绝")
 	}
 	if err := svc.SaveContent(ctx, protected.ID, protected.Content, "t"); err != nil {
@@ -1060,7 +1063,14 @@ func TestDeleteByPrefix(t *testing.T) {
 	if err := db.Model(&Version{}).Where("file_id = ?", protected.ID).Count(&versionCount).Error; err != nil || versionCount != 1 {
 		t.Fatalf("无差异保存不应产生版本: count=%d err=%v", versionCount, err)
 	}
-	n, err := svc.DeleteByPrefix(ctx, 1, "dev2")
+	if _, err := svc.DeleteByPrefix(ctx, 1, "dev2", []uint{}); err == nil {
+		t.Fatal("确认空目录后出现文件，应拒绝删除")
+	}
+	var expected []uint
+	if err := db.Model(&File{}).Where("rel_path LIKE ?", "dev2/%").Pluck("id", &expected).Error; err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.DeleteByPrefix(ctx, 1, "dev2", expected)
 	if err != nil || n != 2 {
 		t.Fatalf("退役槽位 dev2 应删 2 个: n=%d err=%v", n, err)
 	}
@@ -1069,7 +1079,7 @@ func TestDeleteByPrefix(t *testing.T) {
 	if cnt != 3 {
 		t.Fatalf("剩余文件数不符: %d", cnt)
 	}
-	if n, err := svc.DeleteByPrefix(ctx, 1, "dev3"); err != nil || n != 0 {
+	if n, err := svc.DeleteByPrefix(ctx, 1, "dev3", nil); err != nil || n != 0 {
 		t.Fatalf("应可清理空的退役槽位: n=%d err=%v", n, err)
 	}
 	if err := db.First(&p, p.ID).Error; err != nil {
@@ -1084,7 +1094,7 @@ func TestDeleteByPrefix(t *testing.T) {
 		t.Fatalf("重新启用槽位应恢复目录: out=%+v err=%v", out, err)
 	}
 	// 根前缀拒绝
-	if _, err := svc.DeleteByPrefix(ctx, 1, ""); err == nil {
+	if _, err := svc.DeleteByPrefix(ctx, 1, "", nil); err == nil {
 		t.Fatal("空前缀应拒绝")
 	}
 	for _, table := range []string{"backup_jobs", "cron_jobs"} {
@@ -1107,7 +1117,10 @@ func TestDeleteByPrefix(t *testing.T) {
 	if err := svc.Delete(ctx, protected.ID); err != nil {
 		t.Fatalf("应能清理已删除项目的遗留文件: %v", err)
 	}
-	if n, err := svc.DeleteByPrefix(ctx, p.ID, "dev1"); n != 1 || err != nil {
+	if err := db.Model(&File{}).Where("rel_path LIKE ?", "dev1/%").Pluck("id", &expected).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.DeleteByPrefix(ctx, p.ID, "dev1", expected); n != 1 || err != nil {
 		t.Fatalf("应能清理已删除项目的遗留目录: n=%d err=%v", n, err)
 	}
 	// 版本链随之清理

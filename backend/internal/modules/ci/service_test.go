@@ -5,11 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/custos-machina/backend/internal/modules/identity"
+	"github.com/custos-machina/backend/internal/modules/notify"
 	"github.com/custos-machina/backend/internal/modules/projects"
+	cryptopkg "github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -34,6 +39,8 @@ func testDB(t *testing.T) *gorm.DB {
 }
 
 type projectRow struct {
+	CIToken             string
+	DeletedAt           gorm.DeletedAt
 	ID                  uint `gorm:"primarykey"`
 	Name                string
 	RepoPath            string
@@ -124,7 +131,14 @@ func TestHandleGiteaTagPush(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil, nil, realReader(db))
 	db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s"})
-	db.Create(&projectRow{ID: 1, RepoPath: "org/demo"})
+	for _, p := range []projectRow{
+		{ID: 1, RepoPath: "org/demo", Provider: ProviderGitee},
+		{ID: 2, RepoPath: "org/demo", Provider: ProviderGitea},
+	} {
+		if err := db.Create(&p).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	payload := func(ref, tag string) []byte {
 		b, _ := json.Marshal(map[string]any{
@@ -144,7 +158,7 @@ func TestHandleGiteaTagPush(t *testing.T) {
 
 	// v 标签 → prod
 	b, err := push("refs/tags/v1.2.3")
-	if err != nil || b == nil || b.EnvType != "prod" || b.Status != BuildPending || b.Provider != ProviderGitea {
+	if err != nil || b == nil || b.EnvType != "prod" || b.Status != BuildPending || b.Provider != ProviderGitea || b.ProjectID != 2 {
 		t.Fatalf("v 标签落库异常: %v %+v", err, b)
 	}
 	// canary 标签 → canary
@@ -211,6 +225,69 @@ func TestHandleGiteeTagPush(t *testing.T) {
 	}
 }
 
+func TestHandleGiteaPush_NotifiesEveryMatchingProject(t *testing.T) {
+	// Arrange
+	db := testDB(t)
+	if err := db.AutoMigrate(&projects.Project{}, &projects.Follow{}, &identity.User{}, &notify.InboxItem{}); err != nil {
+		t.Fatal(err)
+	}
+	bindings := []projects.Project{
+		{Name: "case-variant", RepoPath: "Org/Demo", Provider: ProviderGitea},
+		{Name: "exact-first", RepoPath: "org/demo", Provider: ProviderGitea},
+		{Name: "exact-second", RepoPath: "org/demo", Provider: ProviderGitea},
+		{Name: "other-provider", RepoPath: "org/demo", Provider: ProviderGitee},
+		{Name: "other-repo", RepoPath: "org/other", Provider: ProviderGitea},
+		{Name: "deleted-project", RepoPath: "org/demo", Provider: ProviderGitea},
+	}
+	if err := db.Create(&bindings).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&bindings[5]).Error; err != nil {
+		t.Fatal(err)
+	}
+	admin := identity.User{DisplayName: "admin", IsLocalAdmin: true}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&GlobalConfig{ID: 1, WebhookSecret: "s"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	notifier := notify.NewService(db, nil)
+	t.Cleanup(notifier.Stop)
+	svc := NewService(db, nil, notifier, realReader(db))
+
+	// Act
+	branch := []byte(`{"ref":"refs/heads/main","repository":{"full_name":"org/demo"}}`)
+	for range 2 {
+		if b, err := svc.HandleGiteaPush(t.Context(), branch, "branch-delivery"); err != nil || b != nil {
+			t.Fatalf("branch webhook should not create a build: %v, %+v", err, b)
+		}
+	}
+	tag := []byte(`{"ref":"refs/tags/v1.2.3","after":"abc123","repository":{"full_name":"org/demo"}}`)
+	build, err := svc.HandleGiteaPush(t.Context(), tag, "tag-delivery")
+	if err != nil || build == nil {
+		t.Fatalf("tag webhook should create a build: %v, %+v", err, build)
+	}
+
+	// Assert
+	if build.ProjectID != bindings[1].ID {
+		t.Fatalf("tag build should still select the first exact match, got project %d", build.ProjectID)
+	}
+	var items []notify.InboxItem
+	if err := db.Where("user_id = ?", admin.ID).Order("id").Find(&items).Error; err != nil {
+		t.Fatal(err)
+	}
+	var got []uint
+	for _, item := range items {
+		got = append(got, item.ProjectID)
+	}
+	want := []uint{bindings[0].ID, bindings[1].ID, bindings[2].ID}
+	want = append(want, want...)
+	if !slices.Equal(got, want) {
+		t.Fatalf("want one inbox item per matching project and delivery: got %v, want %v", got, want)
+	}
+}
+
 func TestListBuildsPaged(t *testing.T) {
 	db := testDB(t)
 	svc := NewService(db, nil, nil, realReader(db))
@@ -245,5 +322,53 @@ func TestInputsBinding(t *testing.T) {
 				t.Fatalf("绑定失败 body=%s: %v", body, err)
 			}
 		}
+	}
+}
+
+func TestPollPendingNotifiesEarlyFailures(t *testing.T) {
+	db := testDB(t)
+	if err := db.AutoMigrate(&projects.Project{}, &projects.Follow{}, &identity.User{}, &notify.InboxItem{}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	cipher, err := cryptopkg.NewCipher(strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := cipher.Encrypt("test-token", aadGiteaToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := projects.Project{Name: "demo", RepoPath: "org/demo", Provider: ProviderGitea}
+	admin := identity.User{DisplayName: "admin", IsLocalAdmin: true}
+	for _, row := range []any{&p, &admin, &GlobalConfig{ID: 1, GiteaBaseURL: srv.URL, GiteaToken: token}} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sha := range []string{"", "unknown-commit"} {
+		b := Build{ProjectID: p.ID, EnvType: "prod", Tag: "v1", SHA: sha}
+		if err := db.Create(&b).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	notifier := notify.NewService(db, nil)
+	t.Cleanup(notifier.Stop)
+	svc := NewService(db, cipher, notifier, realReader(db))
+	for range 2 {
+		if err := svc.PollPending(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var failed, delivered int64
+	if err := db.Model(&Build{}).Where("status = ?", BuildFailed).Count(&failed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&notify.InboxItem{}).Where("user_id = ? AND project_id = ?", admin.ID, p.ID).Count(&delivered).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failed != 2 || delivered != 2 {
+		t.Fatalf("expected one inbox notification per failure, got %d failures and %d notifications", failed, delivered)
 	}
 }

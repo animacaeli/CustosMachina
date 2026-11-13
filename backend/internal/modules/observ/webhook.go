@@ -61,23 +61,32 @@ func (h *Handler) o2AlertWebhook(c *gin.Context) {
 	}
 	raw, _ := c.GetRawData()
 	var p o2AlertPayload
-	detail := ""
-	if err := json.Unmarshal(raw, &p); err == nil && p.AlertName != "" {
-		detail = formatO2AlertDetail(p)
-	} else if m := alertNameRe.FindSubmatch(raw); m != nil {
-		p.AlertName = string(m[1])
-		detail = "告警：" + p.AlertName + "\n（模板渲染异常，原始内容）" + truncateStr(string(raw), 400)
-	} else {
-		httpx.FailBadRequest(c, "payload 无法解析且缺 alert_name")
-		return
+	parsed := json.Unmarshal(raw, &p) == nil && p.AlertName != ""
+	if !parsed {
+		match := alertNameRe.FindSubmatch(raw)
+		if match == nil {
+			httpx.FailBadRequest(c, "payload 无法解析且缺 alert_name")
+			return
+		}
+		p.AlertName = string(match[1])
 	}
 	// 告警级别取平台侧定义（无定义默认 warn——告警可能在平台删除后仍触发）
 	level := notify.LevelWarn
-	a, err := h.svc.alertByName(c.Request.Context(), p.AlertName)
-	if err == nil && a.Level != "" {
-		level = a.Level
+	remoteName := p.AlertName
+	a, err := h.svc.alertByName(c.Request.Context(), remoteName)
+	if err == nil {
+		p.AlertName = a.Name
+		if a.Level != "" {
+			level = a.Level
+		}
 	}
-	id := h.svc.notifyAlert(c.Request.Context(), p.AlertName, level, detail)
+	var detail string
+	if parsed {
+		detail = formatO2AlertDetail(p)
+	} else {
+		detail = "告警：" + p.AlertName + "\n（模板渲染异常，原始内容）" + truncateStr(string(raw), 400)
+	}
+	id := h.svc.notifyAlert(c.Request.Context(), p.AlertName, remoteName, level, detail)
 	if recorder, ok := h.svc.notifier.(notify.ProjectEventRecorder); ok && err == nil {
 		// O2 can send identical payloads for separate triggers when template values are unresolved.
 		key := fmt.Sprintf("alert:%d", id)

@@ -306,6 +306,8 @@ function crumbTo(i: number) {
 
 // ---- 内容编辑 ----
 const content = ref('');
+// 导入内容使用文件原格式，供切换视图时重新渲染草稿。
+const importedContent = ref<null | string>(null);
 const contentMasked = ref(false);
 const contentLoading = ref(false);
 const revealLoading = ref(false);
@@ -314,6 +316,16 @@ const viewFormat = ref<ConfigFormat>('yaml');
 const viewConvertError = ref('');
 const editorText = ref('');
 const editorBaseline = ref('');
+const projectedImport = computed(() => {
+  const format = selected.value?.format;
+  const draft = importedContent.value;
+  return format && draft !== null
+    ? convertViewWithComments(format, viewFormat.value, draft)
+    : null;
+});
+const unchangedImport = computed(() =>
+  editorText.value === projectedImport.value ? importedContent.value : null,
+);
 const canSaveContent = computed(
   () =>
     canEditConfig.value &&
@@ -322,7 +334,9 @@ const canSaveContent = computed(
     !contentMasked.value &&
     !viewConvertError.value &&
     !savingContent.value &&
-    editorText.value !== editorBaseline.value,
+    (unchangedImport.value === null
+      ? editorText.value !== editorBaseline.value
+      : unchangedImport.value !== content.value),
 );
 
 const editorLang = computed(() => FORMAT_LANG[viewFormat.value] ?? 'yaml');
@@ -332,31 +346,28 @@ const isConvertedView = computed(
 
 function refreshEditorText() {
   viewConvertError.value = '';
-  if (!selected.value) {
+  const format = selected.value?.format;
+  if (!format) {
     editorText.value = '';
+    editorBaseline.value = '';
     return;
   }
-  if (viewFormat.value === selected.value.format) {
-    editorText.value = content.value;
-    return;
-  }
-  const converted = convertViewWithComments(
-    selected.value.format,
+
+  const baseline = convertViewWithComments(
+    format,
     viewFormat.value,
     content.value,
   );
+  const imported = importedContent.value;
+  const converted = imported === null ? baseline : projectedImport.value;
+  editorBaseline.value = baseline ?? content.value;
+  editorText.value = converted ?? imported ?? content.value;
   if (converted === null) {
-    viewConvertError.value = `原文件按 ${selected.value.format.toUpperCase()} 解析失败，暂以原文展示（切换视图需原文件语法合法）`;
-    editorText.value = content.value;
-    return;
+    viewConvertError.value = `内容按 ${format.toUpperCase()} 解析失败，暂以原文展示`;
   }
-  editorText.value = converted;
 }
 
-watch([content, viewFormat, selected], () => {
-  refreshEditorText();
-  editorBaseline.value = editorText.value;
-});
+watch([content, viewFormat, selected], refreshEditorText);
 
 // Monaco 兜底重排版：编辑器创建于 v-show 隐藏容器时，automaticLayout 的
 // ResizeObserver 偶发不随显示触发（实测 5x5 空白）——显示后广播一次 resize
@@ -374,6 +385,7 @@ async function openContent(f: ConfigFile) {
   selected.value = f;
   viewFormat.value = f.format;
   content.value = '';
+  importedContent.value = null;
   editorText.value = '';
   editorBaseline.value = '';
   contentMasked.value = true;
@@ -418,8 +430,9 @@ async function saveContent() {
   const file = selected.value;
   const request = contentRequest;
   const fmt = file.format;
-  let toSave = editorText.value;
-  if (viewFormat.value !== fmt) {
+  const imported = unchangedImport.value;
+  let toSave = imported ?? editorText.value;
+  if (imported === null && viewFormat.value !== fmt) {
     const back = convertViewWithComments(
       viewFormat.value,
       fmt,
@@ -517,7 +530,7 @@ function ctxNewFolder() {
 }
 
 function canDeletePath(path: string) {
-  const env = path.split('/').filter(Boolean)[0] ?? '';
+  const env = path.split('/').find(Boolean) ?? '';
   return (
     canEditConfig.value &&
     (!isSlotEnv(env) ||
@@ -536,9 +549,10 @@ function ctxDeleteDir() {
   const projectId = currentProject.value;
   if (!projectId || !canDeletePath(prefix)) return;
   const isSlotRoot = isSlotEnv(prefix);
-  const n = projectFiles.value.filter((f) =>
-    (f.relPath || '').startsWith(`${prefix}/`),
-  ).length;
+  const expectedIds = projectFiles.value
+    .filter((f) => (f.relPath || '').startsWith(`${prefix}/`))
+    .map((f) => f.id);
+  const n = expectedIds.length;
   Modal.confirm({
     title: `删除目录 ${prefix} ？`,
     content:
@@ -552,7 +566,7 @@ function ctxDeleteDir() {
       try {
         const r =
           n > 0 || isSlotRoot
-            ? await deleteConfigDirApi(projectId, prefix)
+            ? await deleteConfigDirApi(projectId, prefix, expectedIds)
             : { deleted: 0 };
         if (currentProject.value !== projectId) return;
         if (isSlotRoot) {
@@ -576,6 +590,7 @@ function ctxDeleteDir() {
         await load();
       } catch (error: any) {
         message.error(error?.response?.data?.message ?? '删除失败');
+        await load();
       }
     },
   });
@@ -634,6 +649,7 @@ function openCreateIn(dirKey: string) {
 // ---- 更多菜单：历史版本 / 环境同步 / 导入 / 导出 ----
 const historyOpen = ref(false);
 const importInput = ref<HTMLInputElement | null>(null);
+let importRequest = 0;
 
 function onMoreMenu({ key }: { key: number | string }) {
   if (key === 'history') historyOpen.value = true;
@@ -677,7 +693,9 @@ async function onImportFile(ev: Event) {
   const input = ev.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
-  if (!file || !selected.value) return;
+  const id = selected.value?.id;
+  if (!file || id === undefined || !canEditConfig.value || savingContent.value)
+    return;
   if (contentMasked.value) {
     message.warning('脱敏视图不能导入（先查看明文）');
     return;
@@ -686,8 +704,19 @@ async function onImportFile(ev: Event) {
     message.error('文件超过 1MB 上限');
     return; // 先按 size 拒绝，避免超大文件整体读入内存
   }
+  const request = contentRequest;
+  const importId = ++importRequest;
   const text = await file.text();
-  content.value = text;
+  if (
+    request !== contentRequest ||
+    importId !== importRequest ||
+    selected.value?.id !== id ||
+    !canEditConfig.value ||
+    savingContent.value
+  )
+    return;
+  importedContent.value = text;
+  refreshEditorText();
   message.success(`已导入 ${file.name} 到编辑器（点「仅保存」生成新版本）`);
 }
 

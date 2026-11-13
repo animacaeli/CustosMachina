@@ -150,39 +150,74 @@ func TestO2NamePrefixAndLookup(t *testing.T) {
 		Name: "tpl", QueryType: "sql",
 		Query: "select count(*) as c from \"default\"",
 	})
-	a, err := svc.CreateAlert(ctx, SaveAlertInput{
-		Name: "err-spike", StreamName: "default", SQL: "select count(*) as c from \"default\"",
-		Operator: ">=", Frequency: 1, Enabled: true, Level: "warn",
-		ProjectID: 7, TemplateID: tpl.ID, Params: map[string]string{"k": "v"},
-	})
+	a := Alert{Name: "err-spike", ProjectID: 7, TemplateID: tpl.ID, ParamsSnapshot: `{"k":"v"}`}
+	if err := svc.db.Create(&a).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := BackfillO2RuleNames(svc.db); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.First(&a, a.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if a.O2Name != "demo-project-err-spike" {
+		t.Fatalf("应保留存量 O2 名称: %q", a.O2Name)
+	}
+	if err := svc.db.Exec("UPDATE projects SET name = 'Renamed' WHERE id = 7").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.Exec("INSERT INTO projects (id, name) VALUES (8, 'Demo Project')").Error; err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.CreateAlert(ctx, SaveAlertInput{Name: "demo-project-err-spike", ProjectID: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := svc.o2NameFor(a); got != "demo-project-err-spike" {
-		t.Fatalf("O2 名前缀不符: %q", got)
+	if other.O2Name == a.O2Name {
+		t.Fatal("新规则不能复用存量身份")
 	}
-	if err := svc.db.Exec("INSERT INTO projects (id, name) VALUES (8, 'Other')").Error; err != nil {
+	match, err := svc.alertByName(ctx, a.O2Name)
+	if err != nil || match.ID != a.ID || match.ProjectID != 7 {
+		t.Fatalf("项目改名后 O2 回调仍应匹配原规则: match=%+v err=%v", match, err)
+	}
+	updated, err := svc.UpdateAlert(ctx, a.ID, SaveAlertInput{Name: "moved", ProjectID: 8})
+	if err != nil {
 		t.Fatal(err)
 	}
-	collision := Alert{Name: "demo-project-err-spike", ProjectID: 8}
-	if err := svc.db.Create(&collision).Error; err != nil {
-		t.Fatal(err)
+	if updated.O2Name == a.O2Name {
+		t.Fatal("跨项目移动不能沿用远端身份")
 	}
-	match, err := svc.alertByName(ctx, "demo-project-err-spike")
-	if err != nil || match.ID != a.ID {
-		t.Fatalf("O2 名称应匹配项目 7 的规则: match=%+v err=%v", match, err)
-	}
-	// 平台级规则原名也可能与项目侧 O2 名称冲突，此时不能猜测归属。
-	if err := svc.db.Delete(&collision).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.db.Create(&Alert{Name: "demo-project-err-spike"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if match, err := svc.alertByName(ctx, "demo-project-err-spike"); err == nil || match != nil {
-		t.Fatalf("O2 名称歧义应拒绝匹配: match=%+v err=%v", match, err)
+	if _, err := svc.alertByName(ctx, a.O2Name); err == nil {
+		t.Fatal("旧项目的回调不能被归给新项目")
 	}
 	if !strings.Contains(a.ParamsSnapshot, "\"k\"") {
 		t.Fatalf("参数快照缺失: %s", a.ParamsSnapshot)
+	}
+}
+
+func TestO2RuleNameValidationUsesExactCase(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE observ_alerts (
+		id INTEGER PRIMARY KEY, o2_name TEXT COLLATE NOCASE, o2_name_ambiguous BOOLEAN
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO observ_alerts VALUES (1, 'CPU', false), (2, 'cpu', false)").Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(db, nil, nil)
+	candidate := &Alert{ID: 1, O2Name: "CPU"}
+	if err := svc.validateO2RuleName(t.Context(), candidate); err != nil {
+		t.Fatalf("different case should not conflict: %v", err)
+	}
+	match, err := svc.alertByName(t.Context(), candidate.O2Name)
+	if err != nil || match.ID != candidate.ID {
+		t.Fatalf("expected the exact match, got %+v, err=%v", match, err)
+	}
+	if err := svc.validateO2RuleName(t.Context(), &Alert{O2Name: "CPU"}); err == nil {
+		t.Fatal("an exact duplicate should conflict")
 	}
 }

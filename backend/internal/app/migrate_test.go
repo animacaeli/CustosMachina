@@ -25,10 +25,12 @@ func TestUpgradeMigrationsCreateLateTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
-		"CREATE TABLE projects (id integer primary key, test_slot_count integer default 3)",
+		"CREATE TABLE projects (id integer primary key, name text, test_slot_count integer default 3)",
 		"CREATE TABLE cron_jobs (id integer primary key)",
 		"CREATE TABLE backup_jobs (id integer primary key)",
-		"INSERT INTO projects (id, test_slot_count) VALUES (1, 3)",
+		"CREATE TABLE observ_alerts (id integer primary key, name text)",
+		"INSERT INTO observ_alerts (id, name) VALUES (1, 'legacy-cpu')",
+		"INSERT INTO projects (id, name, test_slot_count) VALUES (1, 'sample', 3)",
 	} {
 		if err := db.Exec(stmt).Error; err != nil {
 			t.Fatal(err)
@@ -53,15 +55,26 @@ func TestUpgradeMigrationsCreateLateTables(t *testing.T) {
 		}
 	}
 	for table, columns := range map[string][]string{
-		"projects":    {"creator_id", "removed_slot_dirs"},
-		"cron_jobs":   {"project_id"},
-		"backup_jobs": {"project_id"},
+		"projects":      {"creator_id", "removed_slot_dirs"},
+		"cron_jobs":     {"project_id"},
+		"backup_jobs":   {"project_id"},
+		"observ_alerts": {"project_id", "o2_name", "o2_name_ambiguous"},
 	} {
 		for _, column := range columns {
 			if !db.Migrator().HasColumn(table, column) {
 				t.Errorf("missing column %s.%s after upgrade", table, column)
 			}
 		}
+	}
+	var alert struct {
+		ProjectID uint
+		O2Name    string
+	}
+	if err := db.Table("observ_alerts").Where("id = ?", 1).Take(&alert).Error; err != nil {
+		t.Fatal(err)
+	}
+	if alert.ProjectID != 0 || alert.O2Name != "legacy-cpu" {
+		t.Fatalf("旧告警应保留平台级归属和原有 O2 名称: %+v", alert)
 	}
 	var cnt int64
 	db.Table("schema_migrations").Where("version IN ?", []string{"0009", "0010"}).Count(&cnt)

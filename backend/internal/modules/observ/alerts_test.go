@@ -50,6 +50,7 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 		t.Fatal(err)
 	}
 	var tplCalls, destCalls, alertCalls, putCalls int64
+	var remoteName atomic.Value
 	// 假 O2：记录 template/destination/alert 三类调用，模拟 "already exist" upsert 语义
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/default/alerts/templates", func(w http.ResponseWriter, r *http.Request) {
@@ -79,10 +80,15 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 			w.Header().Set("Content-Type", "application/json")
 			list := "[]"
 			if atomic.LoadInt64(&alertCalls) > 0 {
-				list = `[{"alert_id":"fake-id-1","name":"err-spike"}]`
+				entries, _ := json.Marshal([]map[string]any{{"alert_id": "fake-id-1", "name": remoteName.Load()}})
+				list = string(entries)
 			}
 			_, _ = w.Write([]byte(`{"list":` + list + `}`))
 			return
+		}
+		var rule struct{ Name string }
+		if err := json.NewDecoder(r.Body).Decode(&rule); err == nil {
+			remoteName.Store(rule.Name)
 		}
 		atomic.AddInt64(&alertCalls, 1)
 		w.WriteHeader(200)
@@ -346,9 +352,16 @@ func TestPromqlAlertSyncLegacy(t *testing.T) {
 
 type inboxRecorder struct {
 	events []notify.ProjectEvent
+	routed chan routedAlert
 }
 
-func (*inboxRecorder) NotifyEvent(context.Context, string, string, string, string, string) {}
+type routedAlert struct {
+	title, detail, key string
+}
+
+func (r *inboxRecorder) NotifyEvent(_ context.Context, _, _, key, title, detail string) {
+	r.routed <- routedAlert{title: title, detail: detail, key: key}
+}
 
 func (r *inboxRecorder) RecordProjectEvent(_ context.Context, event notify.ProjectEvent) {
 	r.events = append(r.events, event)
@@ -359,21 +372,22 @@ func TestO2InboxPreservesIndependentTriggersAndLevel(t *testing.T) {
 	if err := svc.db.AutoMigrate(&AlertEvent{}); err != nil {
 		t.Fatal(err)
 	}
-	critical := Alert{Name: "critical-alert", Level: notify.LevelCritical}
+	critical := Alert{Name: "critical-alert", O2Name: "critical-alert", Level: notify.LevelCritical}
 	if err := svc.db.Create(&critical).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.db.Model(&critical).Update("level", "").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.db.Create(&Alert{Name: "repeated-alert", Level: notify.LevelCritical}).Error; err != nil {
+	const remoteName = "custos-remote-rule"
+	if err := svc.db.Create(&Alert{Name: "repeated-alert", O2Name: remoteName, Level: notify.LevelCritical}).Error; err != nil {
 		t.Fatal(err)
 	}
-	recorder := &inboxRecorder{}
+	recorder := &inboxRecorder{routed: make(chan routedAlert, 3)}
 	svc.SetNotifier(recorder)
 	h := NewHandler(svc, nil)
 	cfg, _ := svc.o2Config(t.Context())
-	for _, name := range []string{"repeated-alert", "repeated-alert", "critical-alert"} {
+	for _, name := range []string{remoteName, remoteName, "critical-alert"} {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/api/observ/alerts/webhook",
@@ -391,5 +405,72 @@ func TestO2InboxPreservesIndependentTriggersAndLevel(t *testing.T) {
 		if recorder.events[i].Message != "级别："+want {
 			t.Fatalf("event %d: want %s, got %q", i, want, recorder.events[i].Message)
 		}
+	}
+	var history []AlertEvent
+	if err := svc.db.Where("dedup_key = ?", "o2-"+remoteName).Find(&history).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected two history entries, got %d", len(history))
+	}
+	for _, event := range history {
+		if event.Title != "O2 告警：repeated-alert" || !strings.HasPrefix(event.Detail, "告警：repeated-alert\n") {
+			t.Fatalf("history should use the platform rule name: %+v", event)
+		}
+	}
+	var routedRepeated int
+	for range 3 {
+		select {
+		case event := <-recorder.routed:
+			if event.key == "o2-"+remoteName {
+				routedRepeated++
+				if event.title != "O2 告警：repeated-alert" || !strings.HasPrefix(event.detail, "告警：repeated-alert\n") {
+					t.Fatalf("routed alert should use the platform rule name: %+v", event)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected all webhook events to reach the notification router")
+		}
+	}
+	if routedRepeated != 2 {
+		t.Fatalf("expected two routed alerts with the stable remote key, got %d", routedRepeated)
+	}
+}
+
+func TestAlertCreateDoesNotWaitForUnrelatedO2Sync(t *testing.T) {
+	svc, _, _, _ := alertsTestEnv(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	o2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer o2.Close()
+	defer close(release)
+	if err := svc.SetO2URL(t.Context(), o2.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateAlert(t.Context(), SaveAlertInput{Name: "blocked-sync"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("O2 sync did not start")
+	}
+	saved := make(chan error, 1)
+	go func() {
+		_, err := svc.CreateAlert(t.Context(), SaveAlertInput{Name: "unrelated-rule"})
+		saved <- err
+	}()
+	select {
+	case err := <-saved:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("unrelated local save was blocked by O2")
 	}
 }

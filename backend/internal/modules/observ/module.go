@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -289,11 +290,13 @@ func deployName(component string) string { return "custos-observ-" + component }
 type EventNotifier = notify.EventNotifier
 
 type Service struct {
-	db        *gorm.DB
-	res       *resources.Service
-	notifier  EventNotifier // 可空
-	cipher    *crypto.Cipher
-	publicURL string // 平台对外地址（CUSTOS_IM_PUBLIC_URL，webhook 回流用）
+	alertMu        sync.Mutex
+	alertSyncLocks [64]sync.Mutex
+	db             *gorm.DB
+	res            *resources.Service
+	notifier       EventNotifier // 可空
+	cipher         *crypto.Cipher
+	publicURL      string // 平台对外地址（CUSTOS_IM_PUBLIC_URL，webhook 回流用）
 }
 
 func NewService(db *gorm.DB, res *resources.Service, cipher *crypto.Cipher) *Service {

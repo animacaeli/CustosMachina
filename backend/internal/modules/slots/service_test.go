@@ -26,11 +26,18 @@ func (f *fakeReader) ViewByID(_ context.Context, _ uint) (*projects.View, error)
 	return f.v, nil
 }
 
-func (f *fakeReader) ViewByRepoPath(_ context.Context, _ string) (*projects.View, error) {
+func (f *fakeReader) ViewByRepoPath(_ context.Context, _ string, _ string) (*projects.View, error) {
 	return f.v, nil
 }
 
-func (f *fakeReader) EncryptedCIToken(_ context.Context, _ string) string { return "" }
+func (f *fakeReader) ViewsByRepoPath(_ context.Context, _ string, _ string) ([]projects.View, error) {
+	if f.v == nil {
+		return nil, nil
+	}
+	return []projects.View{*f.v}, nil
+}
+
+func (f *fakeReader) EncryptedCIToken(_ context.Context, _ string, _ string) string { return "" }
 
 func newFakeReader() *fakeReader {
 	return &fakeReader{v: &projects.View{

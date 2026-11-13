@@ -13,6 +13,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/notify"
@@ -189,9 +190,6 @@ func (s *Service) encryptField(plain, aad string) (string, error) {
 }
 
 func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) {
-	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
-		return nil, err
-	}
 	if err := s.validateJob(in); err != nil {
 		return nil, err
 	}
@@ -224,61 +222,76 @@ func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) 
 		j.S3Prefix = sanitizePrefix(in.S3Prefix)
 	}
 	if in.Schedule != "" {
-		s.scheduleNext(ctx, &j, time.Now()) // 填 NextRunAt
+		schedule, _ := cron.ParseStandard(in.Schedule) // validated above
+		next := schedule.Next(time.Now())
+		j.NextRunAt = &next
 	}
-	if err := s.db.WithContext(ctx).Create(&j).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := projects.ValidateTaskProject(ctx, tx, in.ProjectID); err != nil {
+			return err
+		}
+		return tx.Create(&j).Error
+	}); err != nil {
 		return nil, err
 	}
 	return &j, nil
 }
 
 func (s *Service) UpdateJob(ctx context.Context, id uint, in SaveJobInput) (*Job, error) {
-	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
-		return nil, err
-	}
-	var j Job
-	if err := s.db.WithContext(ctx).First(&j, id).Error; err != nil {
-		return nil, ErrNotFound
-	}
 	if err := s.validateJob(in); err != nil {
 		return nil, err
 	}
-	j.Name, j.Type, j.Enabled, j.Schedule = in.Name, in.Type, in.Enabled, in.Schedule
-	j.ServerID, j.RemotePath = in.ServerID, in.RemotePath
-	if in.ProjectID != nil {
-		j.ProjectID = *in.ProjectID
-	}
-	if j.Type == TypePlatformSelf {
-		j.ProjectID = 0
-	}
-	j.Storage, j.S3Endpoint, j.S3Bucket, j.S3AccessKey = in.Storage, in.S3Endpoint, in.S3Bucket, in.S3AccessKey
-	j.LocalDir = in.LocalDir
-	j.RetentionCount = in.RetentionCount
-	if in.S3Prefix == "" {
-		j.S3Prefix = sanitizePrefix(in.Name)
-	} else {
-		j.S3Prefix = sanitizePrefix(in.S3Prefix)
-	}
-	// 密文类字段留空保留
-	if in.S3SecretKey != "" {
-		enc, err := s.encryptField(in.S3SecretKey, aadS3Secret)
-		if err != nil {
-			return nil, err
+	var j Job
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := projects.ValidateTaskProject(ctx, tx, in.ProjectID); err != nil {
+			return err
 		}
-		j.S3SecretEnc = enc
-	}
-	if in.Passphrase != "" {
-		enc, err := s.encryptField(in.Passphrase, aadPassphrase)
-		if err != nil {
-			return nil, err
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&j, id).Error; err != nil {
+			return ErrNotFound
 		}
-		j.PassphraseEnc = enc
-	}
-	j.NextRunAt = nil
-	if in.Schedule != "" {
-		s.scheduleNext(ctx, &j, time.Now())
-	}
-	if err := s.db.WithContext(ctx).Save(&j).Error; err != nil {
+		j.Name, j.Type, j.Enabled, j.Schedule = in.Name, in.Type, in.Enabled, in.Schedule
+		j.ServerID, j.RemotePath = in.ServerID, in.RemotePath
+		if in.ProjectID != nil {
+			j.ProjectID = *in.ProjectID
+		}
+		if j.Type == TypePlatformSelf {
+			j.ProjectID = 0
+		}
+		j.Storage, j.S3Endpoint, j.S3Bucket, j.S3AccessKey = in.Storage, in.S3Endpoint, in.S3Bucket, in.S3AccessKey
+		j.LocalDir = in.LocalDir
+		j.RetentionCount = in.RetentionCount
+		if in.S3Prefix == "" {
+			j.S3Prefix = sanitizePrefix(in.Name)
+		} else {
+			j.S3Prefix = sanitizePrefix(in.S3Prefix)
+		}
+		// 密文类字段留空保留
+		if in.S3SecretKey != "" {
+			enc, err := s.encryptField(in.S3SecretKey, aadS3Secret)
+			if err != nil {
+				return err
+			}
+			j.S3SecretEnc = enc
+		}
+		if in.Passphrase != "" {
+			enc, err := s.encryptField(in.Passphrase, aadPassphrase)
+			if err != nil {
+				return err
+			}
+			j.PassphraseEnc = enc
+		}
+		j.NextRunAt = nil
+		if in.Schedule != "" {
+			schedule, _ := cron.ParseStandard(in.Schedule) // validated above
+			next := schedule.Next(time.Now())
+			j.NextRunAt = &next
+		}
+		if err := tx.Save(&j).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &j, nil

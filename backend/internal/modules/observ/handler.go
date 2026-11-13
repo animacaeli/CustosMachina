@@ -186,6 +186,10 @@ func (h *Handler) listAlerts(c *gin.Context) {
 		all, ids := rbac.ProjectScope(c)
 		var out []Alert
 		var err error
+		if !all && len(ids) == 0 {
+			httpx.OK(c, []Alert{})
+			return
+		}
 		if all {
 			out, err = h.svc.listProjectAlerts(c.Request.Context(), nil)
 		} else {

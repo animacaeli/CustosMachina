@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 
 import { request } from '@playwright/test';
@@ -185,7 +186,7 @@ test('dev 角色：dev1 明文放行 / prod 明文 403', async ({ page }) => {
 });
 
 test('超管可操作目录，退役目录清理和项目关注跨刷新保留', async ({ page }) => {
-  const projectName = 'e2e-slot-' + randomUUID();
+  const projectName = `e2e-slot-${randomUUID()}`;
   const { projectId } = await apiSetup(projectName);
   const api = await request.newContext({
     baseURL: process.env.E2E_API_URL ?? 'http://127.0.0.1:18080',
@@ -249,6 +250,39 @@ test('超管可操作目录，退役目录清理和项目关注跨刷新保留',
     await page.locator('.editor-host .monaco-editor .view-lines').click();
     await page.keyboard.type('#');
     await expect(save).toBeEnabled();
+
+    const format = (name: string) =>
+      page.locator('.ant-radio-button-wrapper').filter({
+        has: page.getByText(name, { exact: true }),
+      });
+    await format('JSON').click();
+    const imported = 'DB_HOST=192.0.2.24\n\nAPP_PORT=8080\n';
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'imported.env',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(imported),
+    });
+    const editor = page.locator('.editor-host .monaco-editor .view-lines');
+    await expect(editor).toContainText('"DB_HOST"');
+    await expect(editor).toContainText('192.0.2.24');
+    await expect(save).toBeEnabled();
+    await format('ENV').click();
+    await expect(editor).toContainText('DB_HOST=192.0.2.24');
+    await expect(save).toBeEnabled();
+    await format('JSON').click();
+    await expect(editor).toContainText('"DB_HOST"');
+    await expect(save).toBeEnabled();
+
+    const saved = page.waitForResponse(
+      (response) =>
+        /\/api\/config-files\/\d+\/content$/.test(response.url()) &&
+        response.request().method() === 'PUT',
+    );
+    await save.click();
+    const response = await saved;
+    expect(response.ok()).toBe(true);
+    expect(response.request().postDataJSON()).toEqual({ content: imported });
+    await expect(save).toBeDisabled();
 
     await page.goto('/projects');
     const row = page.getByRole('row').filter({ hasText: projectName });

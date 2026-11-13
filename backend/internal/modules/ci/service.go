@@ -164,8 +164,8 @@ func (s *Service) loadGlobal(ctx context.Context) (*GlobalConfig, error) {
 }
 
 // projectToken 项目级 token（空 = 全局）。projects 表直读（同库，避免模块循环依赖）。
-func (s *Service) projectToken(repoPath string) (string, error) {
-	enc := s.proj.EncryptedCIToken(context.Background(), repoPath)
+func (s *Service) projectToken(repoPath, provider string) (string, error) {
+	enc := s.proj.EncryptedCIToken(context.Background(), repoPath, provider)
 	if enc == "" || s.cipher == nil {
 		return "", nil
 	}
@@ -192,7 +192,7 @@ func (s *Service) giteaFor(ctx context.Context, repoPath string) (*giteaClient, 
 			token = dec
 		}
 	}
-	if pt, _ := s.projectToken(repoPath); pt != "" {
+	if pt, _ := s.projectToken(repoPath, ProviderGitea); pt != "" {
 		token = pt
 	}
 	return newGiteaClient(g.GiteaBaseURL, token, g.WebhookSecret), nil
@@ -211,7 +211,7 @@ func (s *Service) gitFor(ctx context.Context, provider, repoPath string) (GitPro
 				token = dec
 			}
 		}
-		if pt, _ := s.projectToken(repoPath); pt != "" {
+		if pt, _ := s.projectToken(repoPath, ProviderGitee); pt != "" {
 			token = pt
 		}
 		return newGiteeClient(g.GiteeBaseURL, token, g.GiteeWebhook), nil
@@ -347,23 +347,13 @@ func (s *Service) HandleGiteePush(ctx context.Context, body []byte) (*Build, err
 // handlePush 推送事件公共处理：分支推送交给槽位钩子，标签推送匹配项目落构建记录。
 func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error) {
 	isTag := strings.HasPrefix(ev.Ref, "refs/tags/")
-	projView, err := s.proj.ViewByRepoPath(ctx, ev.RepoPath)
-	if err == nil && projView.Provider == ev.Provider && s.notify != nil &&
-		(isTag || strings.HasPrefix(ev.Ref, "refs/heads/")) {
-		// A ref can legitimately return to the same commit. Use the provider's delivery
-		// identity when present and keep individual arrivals otherwise.
-		deliveryID := ev.DeliveryID
-		if deliveryID == "" {
-			deliveryID = rand.Text()
-		}
-		key := sha256.Sum256([]byte(ev.Provider + "\n" + deliveryID))
-		s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: projView.ID,
-			Key: fmt.Sprintf("push:%x", key), Title: "代码推送：" + projView.Name,
-			Message: fmt.Sprintf("%s · %s", ev.Ref, ev.Pusher)})
+	isBranch := strings.HasPrefix(ev.Ref, "refs/heads/")
+	if s.notify != nil && (isTag || isBranch) {
+		s.notifyPush(ctx, ev)
 	}
 	if !isTag {
 		// 分支推送：交给槽位自动链路（未注入 hook 则忽略）
-		if s.BranchPushHook != nil && strings.HasPrefix(ev.Ref, "refs/heads/") {
+		if s.BranchPushHook != nil && isBranch {
 			s.BranchPushHook(context.WithoutCancel(ctx), ev.RepoPath,
 				strings.TrimPrefix(ev.Ref, "refs/heads/"), ev.Pusher)
 		}
@@ -372,6 +362,7 @@ func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error)
 	tag := strings.TrimPrefix(ev.Ref, "refs/tags/")
 
 	// 项目匹配（精确优先/大小写兜底由 Reader 内聚）
+	projView, err := s.proj.ViewByRepoPath(ctx, ev.RepoPath, ev.Provider)
 	if err != nil {
 		return nil, nil // 非平台登记的项目，忽略
 	}
@@ -405,6 +396,28 @@ func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error)
 		return nil, err
 	}
 	return &b, nil
+}
+
+func (s *Service) notifyPush(ctx context.Context, ev *PushEvent) {
+	views, err := s.proj.ViewsByRepoPath(ctx, ev.RepoPath, ev.Provider)
+	if err != nil {
+		logger.Warnf("[ci] 查询推送通知关联项目失败（%s %s）: %v", ev.Provider, ev.RepoPath, err)
+		return
+	}
+	// A ref can legitimately return to the same commit. Use the provider's delivery
+	// identity when present and keep individual arrivals otherwise.
+	deliveryID := ev.DeliveryID
+	if deliveryID == "" {
+		deliveryID = rand.Text()
+	}
+	hash := sha256.Sum256([]byte(ev.Provider + "\n" + deliveryID))
+	key := fmt.Sprintf("push:%x", hash)
+	message := fmt.Sprintf("%s · %s", ev.Ref, ev.Pusher)
+	for _, project := range views {
+		s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{
+			ProjectID: project.ID, Key: key, Title: "代码推送：" + project.Name, Message: message,
+		})
+	}
 }
 
 // validCanaryTag canary-yyyymmdd-[姓名首字母小写]。
@@ -477,34 +490,16 @@ func (s *Service) PollPending(ctx context.Context) error {
 	pendingTimeout := 45 * time.Minute
 	for _, b := range pendings {
 		if time.Since(b.CreatedAt) > pendingTimeout {
-			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
-				Update("status", BuildFailed)
-			if pv, err := s.proj.ViewByID(ctx, b.ProjectID); err == nil {
-				b.Status = BuildFailed
-				s.notifyBuild(ctx, b, notifyProjRow{
-					ID: pv.ID, RepoPath: pv.RepoPath, NotifyOnSuccess: pv.NotifyOnSuccess,
-					NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
-					NotifyTestGroupID: pv.NotifyTestGroupID,
-				}, BuildFailed)
-			}
-			logger.Warnf("[ci] 构建 %d（%s）超过 %v 无终态，标记失败", b.ID, b.Tag, pendingTimeout)
+			s.failPolledBuild(ctx, b, "超过轮询时限")
+			continue
 		}
-	}
-	for _, b := range pendings {
-		// SHA 无效（手动重放/异常 webhook）——不可能观察到流水线，直接失败
 		if b.SHA == "" || b.SHA == strings.Repeat("0", 40) {
-			s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
-				Update("status", BuildFailed)
+			s.failPolledBuild(ctx, b, "缺少有效提交 SHA")
 			continue
 		}
-		pv, verr := s.proj.ViewByID(ctx, b.ProjectID)
-		if verr != nil {
+		pv, err := s.proj.ViewByID(ctx, b.ProjectID)
+		if err != nil {
 			continue
-		}
-		proj := notifyProjRow{
-			ID: pv.ID, RepoPath: pv.RepoPath, NotifyOnSuccess: pv.NotifyOnSuccess,
-			NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
-			NotifyTestGroupID: pv.NotifyTestGroupID,
 		}
 		cip, err := s.ciFor(ctx, b.Provider, pv.RepoPath)
 		if err != nil {
@@ -516,9 +511,7 @@ func (s *Service) PollPending(ctx context.Context) error {
 			// 提交/job 在对端不存在（假 SHA/仓库改写/job 删了）——永久错误，终止轮询标失败；
 			// 其余（Jenkins 不可达等瞬时错误）保留 pending 下轮再试
 			if strings.Contains(err.Error(), "404") {
-				s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).
-					Update("status", BuildFailed)
-				logger.Warnf("[ci] 构建 %d 的目标在 CI 侧不存在，标记失败", b.ID)
+				s.failPolledBuild(ctx, b, "目标在 CI 侧不存在")
 				continue
 			}
 			logger.Warnf("[ci] 构建 %d 状态轮询失败: %v", b.ID, err)
@@ -543,7 +536,7 @@ func (s *Service) PollPending(ctx context.Context) error {
 					Update("fail_count", 0)
 			}
 		}
-		updates := map[string]any{"status": newStatus}
+		updates := make(map[string]any)
 		if b.LogURL == "" {
 			if gp, err := s.gitFor(ctx, b.Provider, pv.RepoPath); err == nil {
 				updates["log_url"] = gp.ActionsURL(pv.RepoPath)
@@ -567,14 +560,34 @@ func (s *Service) PollPending(ctx context.Context) error {
 				logger.Warnf("[ci] 构建 %d log_tail 拉取失败（AI 分析将回退实时拉取）: %v", b.ID, lerr)
 			}
 		}
-		if err := s.db.WithContext(ctx).Model(&Build{}).Where("id = ?", b.ID).Updates(updates).Error; err != nil {
-			continue
-		}
-		if newStatus == BuildSuccess || newStatus == BuildFailed {
-			s.notifyBuild(ctx, b, proj, newStatus)
-		}
+		s.applyPolledBuildStatus(ctx, b, newStatus, updates, pv)
 	}
 	return nil
+}
+
+func (s *Service) failPolledBuild(ctx context.Context, b Build, reason string) {
+	logger.Warnf("[ci] 构建 %d（%s）失败: %s", b.ID, b.Tag, reason)
+	pv, _ := s.proj.ViewByID(ctx, b.ProjectID)
+	s.applyPolledBuildStatus(ctx, b, BuildFailed, nil, pv)
+}
+
+func (s *Service) applyPolledBuildStatus(ctx context.Context, b Build, status string, updates map[string]any, pv *projects.View) {
+	if updates == nil {
+		updates = make(map[string]any)
+	}
+	updates["status"] = status
+	res := s.db.WithContext(ctx).Model(&Build{}).
+		Where("id = ? AND status = ?", b.ID, b.Status).Updates(updates)
+	if res.Error != nil || res.RowsAffected == 0 || pv == nil {
+		return
+	}
+	if status == BuildSuccess || status == BuildFailed {
+		s.notifyBuild(ctx, b, notifyProjRow{
+			ID: pv.ID, RepoPath: pv.RepoPath, NotifyOnSuccess: pv.NotifyOnSuccess,
+			NotifyProdGroupID: pv.NotifyProdGroupID, NotifyCanaryGroupID: pv.NotifyCanaryGroupID,
+			NotifyTestGroupID: pv.NotifyTestGroupID,
+		}, status)
+	}
 }
 
 // notifyProjRow 项目通知相关列的投影。

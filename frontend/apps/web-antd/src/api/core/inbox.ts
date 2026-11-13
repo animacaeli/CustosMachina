@@ -21,5 +21,5 @@ export function getInboxApi(before?: number) {
 }
 
 export function updateInboxApi(action: InboxAction, id?: number) {
-  return requestClient.put('/auth/inbox', { action, id });
+  return requestClient.put<{ unread: number }>('/auth/inbox', { action, id });
 }

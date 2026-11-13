@@ -172,20 +172,26 @@ func (h *Handler) inbox(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	target := base.Session(&gorm.Session{})
 	if in.Action == "read" || in.Action == "remove" {
 		if in.ID == 0 {
 			httpx.FailBadRequest(c, "请选择通知")
 			return
 		}
-		base = base.Where("id = ?", in.ID)
+		target = target.Where("id = ?", in.ID)
 	}
 	field := "is_read"
 	if in.Action == "remove" || in.Action == "clear" {
 		field = "hidden"
 	}
-	if err := base.UpdateColumn(field, true).Error; err != nil {
+	if err := target.UpdateColumn(field, true).Error; err != nil {
 		httpx.FailServer(c, err)
 		return
 	}
-	httpx.OK(c, gin.H{"ok": true})
+	var unread int64
+	if err := base.Where("is_read = ?", false).Count(&unread).Error; err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	httpx.OK(c, gin.H{"ok": true, "unread": unread})
 }

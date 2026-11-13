@@ -149,6 +149,22 @@ func init() {
 		}
 		return addColIfMissing(&cronmod.CronJob{}, "ProjectID", "project_id")(db)
 	})
+	database.RegisterGoHook("0017", func(db *gorm.DB) error {
+		m := db.Migrator()
+		if !m.HasTable(&observ.Alert{}) {
+			return nil
+		}
+		if err := addColIfMissing(&observ.Alert{}, "ProjectID", "project_id")(db); err != nil {
+			return err
+		}
+		if err := addColIfMissing(&observ.Alert{}, "O2Name", "o2_name")(db); err != nil {
+			return err
+		}
+		if err := addColIfMissing(&observ.Alert{}, "O2NameAmbiguous", "o2_name_ambiguous")(db); err != nil {
+			return err
+		}
+		return observ.BackfillO2RuleNames(db)
+	})
 }
 
 // ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。

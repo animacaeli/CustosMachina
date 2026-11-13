@@ -17,7 +17,7 @@ const keyword = ref('');
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
-  const ordered = [...projects.value].sort(
+  const ordered = projects.value.toSorted(
     (a, b) => Number(!!b.following) - Number(!!a.following),
   );
   if (!kw) return ordered;

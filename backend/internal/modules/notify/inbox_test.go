@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -92,8 +93,27 @@ func TestProjectInboxRecipientsAndAccess(t *testing.T) {
 	if n, unread := counts(); n != 1 || unread != 1 {
 		t.Fatalf("expected one unread message, got %d/%d", n, unread)
 	}
+	second := event
+	second.Key = "build:2"
+	if err := svc.recordInbox(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	var item InboxItem
+	if err := db.Where("event_key = ? AND user_id = ?", second.Key, 3).First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	var mutation struct {
+		Data struct{ Unread int }
+	}
+	body := fmt.Sprintf("{\"action\":\"read\",\"id\":%d}", item.ID)
+	if err := json.Unmarshal(call(http.MethodPut, body).Body.Bytes(), &mutation); err != nil {
+		t.Fatal(err)
+	}
+	if mutation.Data.Unread != 1 {
+		t.Fatalf("expected unread count across all visible notifications, got %d", mutation.Data.Unread)
+	}
 	call(http.MethodPut, `{"action":"read-all"}`)
-	if n, unread := counts(); n != 1 || unread != 0 {
+	if n, unread := counts(); n != 2 || unread != 0 {
 		t.Fatalf("read state did not persist: %d/%d", n, unread)
 	}
 	if err := db.Model(&users[2]).Update("roles", "guest").Error; err != nil {

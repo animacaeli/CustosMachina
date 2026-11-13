@@ -386,7 +386,7 @@ func deleteFiles(tx *gorm.DB, ids []uint) error {
 }
 
 // DeleteByPrefix deletes matching configuration files and their version history.
-func (s *Service) DeleteByPrefix(ctx context.Context, projectID uint, relPath string) (int, error) {
+func (s *Service) DeleteByPrefix(ctx context.Context, projectID uint, relPath string, expectedIDs []uint) (int, error) {
 	prefix := strings.Trim(strings.TrimSpace(relPath), "/")
 	if prefix == "" {
 		return 0, fmt.Errorf("删除前缀不能为空（根目录不可整体删除）")
@@ -408,6 +408,12 @@ func (s *Service) DeleteByPrefix(ctx context.Context, projectID uint, relPath st
 			if strings.HasPrefix(f.RelPath, prefix+"/") {
 				ids = append(ids, f.ID)
 			}
+		}
+		slices.Sort(ids)
+		expected := slices.Clone(expectedIDs)
+		slices.Sort(expected)
+		if !slices.Equal(ids, expected) {
+			return fmt.Errorf("目录内容已变化，请刷新后重新确认")
 		}
 		if err := deleteFiles(tx, ids); err != nil {
 			return err

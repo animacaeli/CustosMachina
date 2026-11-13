@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,7 +52,9 @@ const (
 
 // Alert 平台侧告警定义（O2 投影的真相源）。
 type Alert struct {
-	ID uint `gorm:"primarykey" json:"id"`
+	O2Name          string `gorm:"size:255;index" json:"-"`
+	O2NameAmbiguous bool   `gorm:"not null;default:false" json:"-"`
+	ID              uint   `gorm:"primarykey" json:"id"`
 	// 定义（与 O2 稳定版字段对齐）
 	Name        string `gorm:"size:128;uniqueIndex;not null" json:"name"`
 	StreamName  string `gorm:"size:128;not null" json:"streamName"`
@@ -247,8 +251,14 @@ func (s *Service) getAlert(ctx context.Context, id uint) (*Alert, error) {
 
 // CreateAlert 平台落库 + 立即同步 O2。
 func (s *Service) CreateAlert(ctx context.Context, in SaveAlertInput) (*Alert, error) {
+	s.alertMu.Lock()
+	defer s.alertMu.Unlock()
 	a := alertFromInput(in)
 	a.SyncStatus = SyncPending
+	a.O2Name = "custos-" + rand.Text()
+	if err := s.validateO2RuleName(ctx, a); err != nil {
+		return nil, err
+	}
 	if err := s.db.WithContext(ctx).Create(a).Error; err != nil {
 		return nil, err
 	}
@@ -257,33 +267,42 @@ func (s *Service) CreateAlert(ctx context.Context, in SaveAlertInput) (*Alert, e
 }
 
 func (s *Service) UpdateAlert(ctx context.Context, id uint, in SaveAlertInput) (*Alert, error) {
+	s.alertMu.Lock()
+	defer s.alertMu.Unlock()
 	var a Alert
 	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil {
 		return nil, gorm.ErrRecordNotFound
 	}
 	na := alertFromInput(in)
-	// name 允许改（O2 侧删旧建新）；项目归属也可能变——删旧名按旧归属
-	oldName, oldProject := a.Name, a.ProjectID
+	old := a
 	a = *na
+	a.O2Name = old.O2Name
+	a.O2NameAmbiguous = old.O2NameAmbiguous
+	if old.ProjectID != a.ProjectID || a.O2Name == "" || (old.O2NameAmbiguous && old.Name != a.Name) {
+		// Never reassign the old remote identity to a different project.
+		a.O2Name = "custos-" + rand.Text()
+		a.O2NameAmbiguous = false
+	}
 	a.ID = id
 	a.SyncStatus = SyncPending
 	a.SyncError = ""
+	if err := s.validateO2RuleName(ctx, &a); err != nil {
+		return nil, err
+	}
 	if err := s.db.WithContext(ctx).Model(&Alert{}).Where("id = ?", id).Updates(map[string]any{
 		"name": a.Name, "stream_name": a.StreamName, "stream_type": a.StreamType,
 		"sql": a.SQL, "period": a.Period, "operator": a.Operator, "threshold": a.Threshold,
 		"frequency": a.Frequency, "silence": a.Silence, "enabled": a.Enabled,
 		"description": a.Description, "level": a.Level, "query_type": queryTypeOrDefault(a.QueryType),
-		"project_id": a.ProjectID, "template_id": a.TemplateID, "params_snapshot": a.ParamsSnapshot,
+		"project_id": a.ProjectID, "o2_name": a.O2Name, "o2_name_ambiguous": a.O2NameAmbiguous, "template_id": a.TemplateID, "params_snapshot": a.ParamsSnapshot,
 		"sync_status": SyncPending, "sync_error": "",
 	}).Error; err != nil {
 		return nil, err
 	}
+	identityChanged := old.O2Name != a.O2Name
 	go func() {
 		c := context.WithoutCancel(ctx)
-		if oldName != a.Name { // O2 侧删旧（按旧记录算前缀名）
-			old := *na
-			old.Name = oldName
-			old.ProjectID = oldProject
+		if identityChanged {
 			s.deleteO2AlertQuiet(c, &old)
 		}
 		s.SyncAlert(c, id)
@@ -292,6 +311,8 @@ func (s *Service) UpdateAlert(ctx context.Context, id uint, in SaveAlertInput) (
 }
 
 func (s *Service) DeleteAlert(ctx context.Context, id uint) error {
+	s.alertMu.Lock()
+	defer s.alertMu.Unlock()
 	var a Alert
 	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil {
 		return gorm.ErrRecordNotFound
@@ -331,14 +352,24 @@ func (s *Service) SyncAlert(ctx context.Context, id uint) {
 	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil {
 		return
 	}
+	name := a.O2Name
+	if name == "" {
+		return
+	}
+	unlock := s.lockO2Name(name)
+	defer unlock()
+	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil || a.O2Name != name {
+		return
+	}
+	status := s.db.WithContext(ctx).Model(&Alert{}).Where("id = ? AND updated_at = ?", id, a.UpdatedAt)
 	if err := s.syncAlertToO2(ctx, &a); err != nil {
 		logger.Warnf("[observ] 告警同步 O2 失败 %q: %v", a.Name, err)
-		s.db.Model(&Alert{}).Where("id = ?", id).Updates(map[string]any{
+		status.Updates(map[string]any{
 			"sync_status": SyncFailed, "sync_error": truncateStr(err.Error(), 500),
 		})
 		return
 	}
-	s.db.Model(&Alert{}).Where("id = ?", id).Updates(map[string]any{
+	status.Updates(map[string]any{
 		"sync_status": SyncOK, "sync_error": "",
 	})
 }
@@ -355,12 +386,28 @@ func (s *Service) SyncAllAlerts(ctx context.Context) (int, error) {
 	return len(as), nil
 }
 
+func (s *Service) lockO2Name(name string) func() {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(name))
+	mu := &s.alertSyncLocks[hash.Sum32()%uint32(len(s.alertSyncLocks))]
+	mu.Lock()
+	return mu.Unlock
+}
+
 func (s *Service) deleteO2AlertQuiet(ctx context.Context, a *Alert) {
+	name := a.O2Name
+	if name == "" || a.O2NameAmbiguous {
+		return
+	}
+	unlock := s.lockO2Name(name)
+	defer unlock()
 	cfg, ok := s.o2Config(ctx)
 	if !ok {
 		return
 	}
-	name := s.o2NameFor(a)
+	if _, err := s.alertByName(ctx, name); !errors.Is(err, gorm.ErrRecordNotFound) {
+		return
+	}
 	// DELETE 路径参数同样是 alert_id（真机教训：传名称恒 404，残留孤儿告警）
 	id := s.o2AlertIDByName(ctx, cfg, name)
 	if id == "" {
@@ -374,6 +421,9 @@ func (s *Service) deleteO2AlertQuiet(ctx context.Context, a *Alert) {
 
 // syncAlertToO2 单条同步：ensure infra → PUT alert（upsert 语义）。
 func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
+	if err := s.validateO2RuleName(ctx, a); err != nil {
+		return err
+	}
 	cfg, ok := s.o2Config(ctx)
 	if !ok {
 		return fmt.Errorf("O2 连接未配置（地址/账号/密码）")
@@ -402,7 +452,7 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 		}
 	}
 	body := map[string]any{
-		"name":            s.o2NameFor(a),
+		"name":            a.O2Name,
 		"org_id":          cfg.Org,
 		"stream_type":     streamType,
 		"stream_name":     a.StreamName,
@@ -425,7 +475,7 @@ func (s *Service) syncAlertToO2(ctx context.Context, a *Alert) error {
 	// 混合形态见 docs/research-o2-alerts.md 真机补充）。
 	// 真机语义：POST 重名不报错而是静默创建重复条目，upsert 必须先按名
 	// 反查 alert_id（PUT/DELETE 的路径参数均为 id）——命中则 PUT，未命中才 POST
-	if id := s.o2AlertIDByName(ctx, cfg, s.o2NameFor(a)); id != "" {
+	if id := s.o2AlertIDByName(ctx, cfg, a.O2Name); id != "" {
 		_, err := o2Request(ctx, cfg, http.MethodPut, fmt.Sprintf("/api/v2/%s/alerts/%s", cfg.Org, id), body)
 		return err
 	}
@@ -554,22 +604,10 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// alertByName 按名取告警定义（webhook 定级用）。
-// o2NameFor O2 侧告警名：项目侧策略带项目前缀（防跨项目同名互踩；
-// webhook 回流时反解平台名）。projectID=0 平台级原名。
-func (s *Service) o2NameFor(a *Alert) string {
-	if a.ProjectID == 0 {
-		return a.Name
-	}
-	var pname string
-	if err := s.db.WithContext(context.Background()).
-		Table("projects").Select("name").Where("id = ?", a.ProjectID).Scan(&pname).Error; err != nil {
-		pname = ""
-	}
-	return o2RuleName(a, pname)
-}
-
 func o2RuleName(a *Alert, projectName string) string {
+	if a.O2Name != "" {
+		return a.O2Name
+	}
 	if a.ProjectID == 0 {
 		return a.Name
 	}
@@ -579,28 +617,83 @@ func o2RuleName(a *Alert, projectName string) string {
 	return strx.NormalizeName(projectName) + "-" + a.Name
 }
 
-func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) {
-	// Match the name sent to O2. A project's local rule name is not its O2 name.
-	var rules []struct {
-		Alert
-		ProjectName string
+type alertWithProjectName struct {
+	Alert
+	ProjectName string
+}
+
+func readO2Rules(db *gorm.DB, includeProjectNames bool) ([]alertWithProjectName, error) {
+	var rules []alertWithProjectName
+	q := db.Model(&Alert{}).Select("observ_alerts.*")
+	if includeProjectNames {
+		q = q.Select("observ_alerts.*, projects.name AS project_name").
+			Joins("LEFT JOIN projects ON projects.id = observ_alerts.project_id")
 	}
+	err := q.Find(&rules).Error
+	return rules, err
+}
+
+// BackfillO2RuleNames preserves the names used by existing remote rules.
+func BackfillO2RuleNames(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		m := tx.Migrator()
+		rules, err := readO2Rules(tx, m.HasTable("projects") && m.HasColumn("projects", "name"))
+		if err != nil {
+			return err
+		}
+		counts := make(map[string]int)
+		for i := range rules {
+			rule := &rules[i]
+			rule.O2Name = o2RuleName(&rule.Alert, rule.ProjectName)
+			counts[rule.O2Name]++
+		}
+		for _, rule := range rules {
+			ambiguous := rule.O2NameAmbiguous || counts[rule.O2Name] > 1
+			if err := tx.Model(&rule.Alert).UpdateColumns(map[string]any{
+				"o2_name": rule.O2Name, "o2_name_ambiguous": ambiguous,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Service) validateO2RuleName(ctx context.Context, candidate *Alert) error {
+	if candidate.O2NameAmbiguous {
+		return fmt.Errorf("存量 O2 告警名称 %q 的归属不明确，请更改规则名称后重新同步", candidate.O2Name)
+	}
+	var names []string
 	if err := s.db.WithContext(ctx).Model(&Alert{}).
-		Select("observ_alerts.*, projects.name AS project_name").
-		Joins("LEFT JOIN projects ON projects.id = observ_alerts.project_id").
-		Find(&rules).Error; err != nil {
+		Where("o2_name = ? AND id <> ?", candidate.O2Name, candidate.ID).
+		Pluck("o2_name", &names).Error; err != nil {
+		return err
+	}
+	for _, name := range names {
+		// Database collations may match names that O2 considers distinct.
+		if name == candidate.O2Name {
+			return fmt.Errorf("O2 告警名称 %q 已被其他规则使用", candidate.O2Name)
+		}
+	}
+	return nil
+}
+
+func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) {
+	var matches []Alert
+	if err := s.db.WithContext(ctx).Where("o2_name = ?", name).Find(&matches).Error; err != nil {
 		return nil, err
 	}
 	var match *Alert
-	for i := range rules {
-		rule := &rules[i]
-		if o2RuleName(&rule.Alert, rule.ProjectName) != name {
+	for i := range matches {
+		rule := &matches[i]
+		// Some database collations compare names case-insensitively.
+		if rule.O2Name != name {
 			continue
 		}
-		if match != nil {
-			return nil, fmt.Errorf("O2 告警名 %q 对应多条规则", name)
+		if match != nil || rule.O2NameAmbiguous {
+			return nil, fmt.Errorf("O2 告警名 %q 的归属不明确", name)
 		}
-		match = &rule.Alert
+		match = rule
 	}
 	if match == nil {
 		return nil, gorm.ErrRecordNotFound
@@ -612,16 +705,18 @@ func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) 
 
 // notifyAlert O2 告警：先落事件（alert_events，告警历史的地基），再投统一
 // 通知路由（先发主通知保及时性；AI 摘要异步补发）。
-func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail string) uint {
+func (s *Service) notifyAlert(ctx context.Context, displayName, remoteName, level, detail string) uint {
+	title := "O2 告警：" + displayName
+	dedupKey := "o2-" + remoteName
 	id := s.recordAlertEvent(ctx, string(notify.SourceO2Alert), level,
-		"O2 告警："+alertName, detail, "o2-"+alertName)
+		title, detail, dedupKey)
 	if s.notifier == nil {
 		return id
 	}
 	go func() {
 		s.notifier.NotifyEvent(context.WithoutCancel(ctx),
 			notify.SourceO2Alert, level,
-			"o2-"+alertName, "O2 告警："+alertName, detail)
+			dedupKey, title, detail)
 	}()
 	return id
 }
