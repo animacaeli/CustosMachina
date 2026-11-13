@@ -23,9 +23,10 @@ const (
 
 // Project 项目。
 type Project struct {
-	ID      uint   `gorm:"primarykey" json:"id"`
-	Name    string `gorm:"size:64;uniqueIndex;not null" json:"name"`
-	RepoURL string `gorm:"size:255;not null" json:"repoUrl"`
+	CreatorID uint   `gorm:"not null;default:0" json:"creatorId"`
+	ID        uint   `gorm:"primarykey" json:"id"`
+	Name      string `gorm:"size:64;uniqueIndex;not null" json:"name"`
+	RepoURL   string `gorm:"size:255;not null" json:"repoUrl"`
 	// RegistryID 绑定的镜像仓库（占位符 compose 的镜像推导与发版 docker login 依赖；
 	// v0.12.24 补齐：此前 DB 列与保存 API 均缺（registryFor 的 JOIN 静默吞错返回空）
 	RegistryID  *uint  `gorm:"index" json:"registryId"`                        // 仓库地址（gitea/gitee 等）
@@ -48,7 +49,8 @@ type Project struct {
 	TestSlotCount int `gorm:"not null;default:3" json:"testSlotCount"`
 	// TestSlotPeak 槽位数历史峰值（只增不减）：配置目录树环境层固化用——
 	// 槽数缩减后既有目录（dev1..peak）不消失，等用户处理存量文件（v0.14.2）
-	TestSlotPeak int `gorm:"not null;default:3" json:"testSlotPeak"`
+	TestSlotPeak    int   `gorm:"not null;default:3" json:"testSlotPeak"`
+	RemovedSlotDirs []int `gorm:"serializer:json;size:512" json:"removedSlotDirs"`
 
 	// 灰度（M4 使用）：流量策略比例总和上限
 	TrafficCap    int `gorm:"not null;default:50" json:"trafficCap"`
@@ -79,7 +81,7 @@ func (EnvTarget) TableName() string { return "project_env_targets" }
 
 // Models 返回本模块需要自动迁移的模型。
 func Models() []any {
-	return []any{&Project{}, &EnvTarget{}}
+	return []any{&Project{}, &EnvTarget{}, &Follow{}}
 }
 
 // ValidEnvTypes 合法环境枚举。

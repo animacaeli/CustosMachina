@@ -2,6 +2,7 @@
 import { requestClient } from '#/api/request';
 
 export interface BackupJob {
+  projectId?: number;
   createdAt: string;
   enabled: boolean;
   hasPassphrase?: boolean;
@@ -22,6 +23,7 @@ export interface BackupJob {
 }
 
 export interface SaveBackupJobInput {
+  projectId?: number;
   enabled: boolean;
   /** platform_self 密钥份额口令；留空 = 保留原值 */
   passphrase?: string;

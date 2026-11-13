@@ -111,6 +111,10 @@ func (h *Handler) saveJob(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	if in.ProjectID != nil && *in.ProjectID != 0 && !rbac.CanViewProject(c, *in.ProjectID) {
+		httpx.Fail(c, http.StatusForbidden, 403, "无关联项目的查看权限")
+		return
+	}
 	job, err := h.svc.SaveJob(c.Request.Context(), uint(id), in, operatorOf(c))
 	if err != nil {
 		if err == ErrNotFound {

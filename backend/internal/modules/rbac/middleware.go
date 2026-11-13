@@ -15,10 +15,12 @@ import (
 
 // exemptAnyRole 任何已登录用户可访问的路径（自查信息），不进策略裁决。
 var exemptAnyRole = map[string]bool{
-	"/auth/me":          true,
-	"/auth/permissions": true,
-	"/auth/logout":      true, // 登出吊销，任何已登录用户可用
-	"/user/info":        true,
+	"/auth/me":             true,
+	"/auth/permissions":    true,
+	"/auth/project-follow": true,
+	"/auth/inbox":          true,
+	"/auth/logout":         true, // 登出吊销，任何已登录用户可用
+	"/user/info":           true,
 }
 
 // Middleware 返回 casbin 鉴权中间件，挂在 JWT 认证之后。

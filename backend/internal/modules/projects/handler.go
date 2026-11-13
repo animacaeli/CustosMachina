@@ -2,9 +2,11 @@ package projects
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/custos-machina/backend/internal/modules/auth"
 	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/server"
@@ -19,6 +21,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Name() string { return "projects" }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
+	r.Authed.PUT("/auth/project-follow", h.follow)
 	g := r.Authed.Group("/projects")
 	{
 		g.GET("", h.list)
@@ -59,6 +62,14 @@ func (h *Handler) list(c *gin.Context) {
 		}
 		out = filtered
 	}
+	followed, err := h.svc.followedIDs(c.Request.Context(), auth.ClaimsFromContext(c).UserID)
+	if err != nil {
+		httpx.FailServer(c, err)
+		return
+	}
+	for i := range out {
+		out[i].Following = slices.Contains(followed, out[i].ID)
+	}
 	httpx.OK(c, out)
 }
 
@@ -68,6 +79,7 @@ func (h *Handler) create(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	in.CreatorID = auth.ClaimsFromContext(c).UserID
 	out, err := h.svc.Create(c.Request.Context(), in)
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())

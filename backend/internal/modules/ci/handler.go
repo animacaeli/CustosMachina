@@ -77,7 +77,7 @@ func (h *Handler) webhookGitea(c *gin.Context) {
 		httpx.FailUnauthorized(c, err.Error())
 		return
 	}
-	b, err := h.svc.HandleGiteaPush(c.Request.Context(), body)
+	b, err := h.svc.HandleGiteaPush(c.Request.Context(), body, c.GetHeader("X-Gitea-Delivery"))
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
 		return

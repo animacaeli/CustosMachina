@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/strx"
@@ -18,6 +20,7 @@ var ErrNotFound = errors.New("项目不存在")
 type ProjectOut struct {
 	Project
 	HasCIToken bool `json:"hasCiToken"`
+	Following  bool `json:"following"`
 	// Envs 每环境运行概览（环境页/项目列表的"一眼判断"列）：
 	// 最近一次发布（tag/状态/时间）+ prod 蓝绿活跃色。两条批量查询，无 N+1。
 	Envs []EnvStatus `json:"envs"`
@@ -52,6 +55,7 @@ func NewService(db *gorm.DB, cipher *crypto.Cipher) *Service {
 }
 
 type SaveProjectInput struct {
+	CreatorID     uint   `json:"-"`
 	Name          string `json:"name" binding:"required,max=64"`
 	RepoURL       string `json:"repoUrl" binding:"required,url,max=255"`
 	RepoPath      string `json:"repoPath" binding:"required,max=255"`
@@ -110,7 +114,8 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 	}
 	slotCount := defaultInt(in.TestSlotCount, 3)
 	p := Project{
-		Name: in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
+		CreatorID: in.CreatorID,
+		Name:      in.Name, RepoURL: in.RepoURL, RepoPath: in.RepoPath,
 		Provider: defaultStr(in.Provider, "gitea"), CIJob: in.CIJob,
 		ComposePath: in.ComposePath, DefaultBranch: defaultStr(in.DefaultBranch, "main"), Remark: in.Remark,
 		NotifyProdGroupID:   in.NotifyProdGroupID,
@@ -135,60 +140,66 @@ func (s *Service) Create(ctx context.Context, in SaveProjectInput) (*ProjectOut,
 }
 
 func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*ProjectOut, error) {
-	var p Project
-	if err := s.db.WithContext(ctx).First(&p, id).Error; err != nil {
-		return nil, ErrNotFound
-	}
 	if err := s.validateNotifyGroups(in.NotifyProdGroupID, in.NotifyCanaryGroupID, in.NotifyTestGroupID); err != nil {
 		return nil, err
 	}
-	p.Name, p.RepoURL, p.RepoPath = in.Name, in.RepoURL, in.RepoPath
-	if in.Provider != "" {
-		p.Provider = in.Provider
-	}
-	p.CIJob = in.CIJob
-	p.ComposePath = in.ComposePath
-	if in.DefaultBranch != "" {
-		p.DefaultBranch = in.DefaultBranch
-	}
-	p.Remark = in.Remark // 备注全量提交语义（前端两处表单均随整体保存提交）
-	// nil = 保留原值（部分更新不清空；显式传 null 会被 JSON 解为 nil，如需清空用前端全量提交约定外的专门接口）
-	if in.NotifyProdGroupID != nil {
-		p.NotifyProdGroupID = in.NotifyProdGroupID
-	}
-	// 2026-09-26 用户定案：正式与灰度本质同一生产环境，通知群不分离——灰度恒等于正式
-	p.NotifyCanaryGroupID = p.NotifyProdGroupID
-	if in.NotifyTestGroupID != nil {
-		p.NotifyTestGroupID = in.NotifyTestGroupID
-	}
-	if in.NotifyOnSuccess != nil {
-		p.NotifyOnSuccess = *in.NotifyOnSuccess
-	}
-	if in.TestSlotCount > 0 {
-		p.TestSlotCount = in.TestSlotCount
-		// 峰值只增不减：目录树固化的环境层依据（缩容不回收既有目录）
-		if in.TestSlotCount > p.TestSlotPeak {
-			p.TestSlotPeak = in.TestSlotCount
+	var p Project
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, id).Error; err != nil {
+			return ErrNotFound
 		}
-	}
-	if in.TrafficCap > 0 {
-		p.TrafficCap = in.TrafficCap
-	}
-	if in.SlotGraceDays > 0 {
-		p.SlotGraceDays = in.SlotGraceDays
-	}
-	// RegistryID：nil=保留；非 nil 覆盖（0=解绑）
-	if in.RegistryID != nil {
-		p.RegistryID = in.RegistryID
-	}
-	if in.CIToken != "" {
-		enc, err := s.encryptToken(in.CIToken)
-		if err != nil {
-			return nil, err
+		p.Name, p.RepoURL, p.RepoPath = in.Name, in.RepoURL, in.RepoPath
+		if in.Provider != "" {
+			p.Provider = in.Provider
 		}
-		p.CIToken = enc
-	}
-	if err := s.db.WithContext(ctx).Save(&p).Error; err != nil {
+		p.CIJob = in.CIJob
+		p.ComposePath = in.ComposePath
+		if in.DefaultBranch != "" {
+			p.DefaultBranch = in.DefaultBranch
+		}
+		p.Remark = in.Remark // 备注全量提交语义（前端两处表单均随整体保存提交）
+		// nil = 保留原值（部分更新不清空；显式传 null 会被 JSON 解为 nil，如需清空用前端全量提交约定外的专门接口）
+		if in.NotifyProdGroupID != nil {
+			p.NotifyProdGroupID = in.NotifyProdGroupID
+		}
+		// 2026-09-26 用户定案：正式与灰度本质同一生产环境，通知群不分离——灰度恒等于正式
+		p.NotifyCanaryGroupID = p.NotifyProdGroupID
+		if in.NotifyTestGroupID != nil {
+			p.NotifyTestGroupID = in.NotifyTestGroupID
+		}
+		if in.NotifyOnSuccess != nil {
+			p.NotifyOnSuccess = *in.NotifyOnSuccess
+		}
+		if in.TestSlotCount > 0 {
+			p.TestSlotCount = in.TestSlotCount
+			p.RemovedSlotDirs = slices.DeleteFunc(p.RemovedSlotDirs, func(slot int) bool {
+				return slot <= p.TestSlotCount
+			})
+			// 峰值只增不减：目录树固化的环境层依据（缩容不回收既有目录）
+			if in.TestSlotCount > p.TestSlotPeak {
+				p.TestSlotPeak = in.TestSlotCount
+			}
+		}
+		if in.TrafficCap > 0 {
+			p.TrafficCap = in.TrafficCap
+		}
+		if in.SlotGraceDays > 0 {
+			p.SlotGraceDays = in.SlotGraceDays
+		}
+		// RegistryID：nil=保留；非 nil 覆盖（0=解绑）
+		if in.RegistryID != nil {
+			p.RegistryID = in.RegistryID
+		}
+		if in.CIToken != "" {
+			enc, err := s.encryptToken(in.CIToken)
+			if err != nil {
+				return err
+			}
+			p.CIToken = enc
+		}
+		return tx.Select("*").Omit("id").Updates(&p).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	out := toOut(p)
@@ -196,16 +207,22 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveProjectInput) (*Pr
 }
 
 func (s *Service) Delete(ctx context.Context, id uint) error {
-	// 硬删：软删行会占住 name 唯一索引导致"删了建不回"；构建/发布记录
-	// 按 project_id 关联保留（项目没了列表不再展示，作为历史沉淀可接受）
-	res := s.db.WithContext(ctx).Unscoped().Delete(&Project{}, id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return s.db.WithContext(ctx).Where("project_id = ?", id).Delete(&EnvTarget{}).Error
+	// 硬删以释放项目名。构建和发布历史继续保留，任务改为平台级通知。
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Unscoped().Delete(&Project{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		for _, table := range []string{"backup_jobs", "cron_jobs"} {
+			if err := tx.Table(table).Where("project_id = ?", id).UpdateColumn("project_id", 0).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("project_id = ?", id).Delete(&EnvTarget{}).Error
+	})
 }
 
 func (s *Service) List(ctx context.Context) ([]ProjectOut, error) {

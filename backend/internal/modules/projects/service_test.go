@@ -235,3 +235,22 @@ func TestSlotPeakOnlyGrows(t *testing.T) {
 		t.Fatalf("缩容后峰值应保持: count=%d peak=%d", p.TestSlotCount, p.TestSlotPeak)
 	}
 }
+
+func TestValidateTaskProjectRejectsMissingBinding(t *testing.T) {
+	db := testDB(t)
+	p := Project{Name: "bound"}
+	if err := db.Create(&p).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []*uint{nil, ptr(0), &p.ID} {
+		if err := ValidateTaskProject(t.Context(), db, id); err != nil {
+			t.Fatalf("valid binding rejected: %v", err)
+		}
+	}
+	if err := db.Delete(&p).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateTaskProject(t.Context(), db, &p.ID); err == nil {
+		t.Fatal("a task must not be bound to a missing project")
+	}
+}

@@ -1,8 +1,10 @@
 package observ
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -71,10 +73,22 @@ func (h *Handler) o2AlertWebhook(c *gin.Context) {
 	}
 	// 告警级别取平台侧定义（无定义默认 warn——告警可能在平台删除后仍触发）
 	level := notify.LevelWarn
-	if a, err := h.svc.alertByName(c.Request.Context(), p.AlertName); err == nil && a.Level != "" {
+	a, err := h.svc.alertByName(c.Request.Context(), p.AlertName)
+	if err == nil && a.Level != "" {
 		level = a.Level
 	}
-	h.svc.notifyAlert(c.Request.Context(), p.AlertName, level, detail)
+	id := h.svc.notifyAlert(c.Request.Context(), p.AlertName, level, detail)
+	if recorder, ok := h.svc.notifier.(notify.ProjectEventRecorder); ok && err == nil {
+		// O2 can send identical payloads for separate triggers when template values are unresolved.
+		key := fmt.Sprintf("alert:%d", id)
+		if id == 0 {
+			key = "alert:" + rand.Text()
+		}
+		recorder.RecordProjectEvent(c.Request.Context(), notify.ProjectEvent{
+			ProjectID: a.ProjectID, Key: key,
+			Title: "O2 告警：" + a.Name, Message: "级别：" + level,
+		})
+	}
 	httpx.OK(c, gin.H{"ok": true})
 }
 

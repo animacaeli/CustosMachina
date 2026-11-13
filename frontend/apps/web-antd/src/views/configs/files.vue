@@ -59,6 +59,8 @@ const envTargets = ref<Array<{ envType: string; serverId: number }>>([]);
 const testSlotCount = ref(3);
 // 槽位峰值（只增不减）：目录树环境层固化——槽数缩减后既有 dev1..peak 目录不消失
 const testSlotPeak = ref(3);
+const removedSlotDirs = ref<number[]>([]);
+const slotInfoReady = ref(false);
 const currentProject = ref<number | undefined>(undefined);
 const currentProjectName = computed(
   () => projects.value.find((p) => p.id === currentProject.value)?.name,
@@ -67,7 +69,9 @@ const currentProjectName = computed(
 // 环境首段集合：prod + dev1..max(当前槽位数, 峰值)——扩容跟随、缩容保留
 const slotEnvs = computed(() => {
   const n = Math.max(testSlotCount.value, testSlotPeak.value);
-  return Array.from({ length: n }, (_, i) => `dev${i + 1}`);
+  return Array.from({ length: n }, (_, i) => i + 1)
+    .filter((slot) => !removedSlotDirs.value.includes(slot))
+    .map((slot) => `dev${slot}`);
 });
 const envSegments = computed(() => ['prod', ...slotEnvs.value]);
 
@@ -134,6 +138,10 @@ onMounted(load);
 
 // 项目切换 → 拉环境绑定与槽位数（层级校验/下发默认目标/槽位目录生成用）
 watch(currentProject, async (id) => {
+  slotInfoReady.value = false;
+  removedSlotDirs.value = [];
+  ephemeralDirs.value = [];
+  currentDir.value = [];
   selected.value = null;
   expandedKeys.value = [];
   if (!id) {
@@ -142,6 +150,9 @@ watch(currentProject, async (id) => {
   }
   try {
     const r = await getProjectApi(id);
+    if (currentProject.value !== id) return;
+    removedSlotDirs.value = r.project.removedSlotDirs ?? [];
+    slotInfoReady.value = true;
     envTargets.value = (r.targets ?? []).map((t) => ({
       envType: t.envType,
       serverId: t.serverId,
@@ -149,7 +160,7 @@ watch(currentProject, async (id) => {
     testSlotCount.value = r.project.testSlotCount || 3;
     testSlotPeak.value = r.project.testSlotPeak || r.project.testSlotCount || 3;
   } catch {
-    envTargets.value = [];
+    if (currentProject.value === id) envTargets.value = [];
   }
 });
 
@@ -302,6 +313,17 @@ const revealLoading = ref(false);
 const viewFormat = ref<ConfigFormat>('yaml');
 const viewConvertError = ref('');
 const editorText = ref('');
+const editorBaseline = ref('');
+const canSaveContent = computed(
+  () =>
+    canEditConfig.value &&
+    !contentLoading.value &&
+    !revealLoading.value &&
+    !contentMasked.value &&
+    !viewConvertError.value &&
+    !savingContent.value &&
+    editorText.value !== editorBaseline.value,
+);
 
 const editorLang = computed(() => FORMAT_LANG[viewFormat.value] ?? 'yaml');
 const isConvertedView = computed(
@@ -331,7 +353,10 @@ function refreshEditorText() {
   editorText.value = converted;
 }
 
-watch([content, viewFormat, selected], refreshEditorText);
+watch([content, viewFormat, selected], () => {
+  refreshEditorText();
+  editorBaseline.value = editorText.value;
+});
 
 // Monaco 兜底重排版：编辑器创建于 v-show 隐藏容器时，automaticLayout 的
 // ResizeObserver 偶发不随显示触发（实测 5x5 空白）——显示后广播一次 resize
@@ -342,27 +367,40 @@ watch(
   },
 );
 
+let contentRequest = 0;
+
 async function openContent(f: ConfigFile) {
+  const request = ++contentRequest;
   selected.value = f;
   viewFormat.value = f.format;
-  contentMasked.value = false;
+  content.value = '';
+  editorText.value = '';
+  editorBaseline.value = '';
+  contentMasked.value = true;
   contentLoading.value = true;
   closeDiff();
+  versions.value = [];
+  void loadVersions(f.id);
   try {
     const r = await getConfigContentApi(f.id);
+    if (request !== contentRequest || selected.value?.id !== f.id) return;
     content.value = r.content;
     contentMasked.value = r.masked;
-    await loadVersions(f.id);
+  } catch {
+    // The request interceptor reports the error.
   } finally {
-    contentLoading.value = false;
+    if (request === contentRequest) contentLoading.value = false;
   }
 }
 
 async function reveal() {
-  if (!selected.value) return;
+  if (!selected.value || contentLoading.value || revealLoading.value) return;
+  const id = selected.value.id;
+  const request = contentRequest;
   revealLoading.value = true;
   try {
-    const r = await getConfigContentApi(selected.value.id, true);
+    const r = await getConfigContentApi(id, true);
+    if (request !== contentRequest || selected.value?.id !== id) return;
     content.value = r.content;
     contentMasked.value = false;
     message.info('已显示明文（本次查看已落审计）');
@@ -376,8 +414,10 @@ async function reveal() {
 
 const savingContent = ref(false);
 async function saveContent() {
-  if (!selected.value || contentMasked.value) return;
-  const fmt = selected.value.format;
+  if (!selected.value || !canSaveContent.value) return;
+  const file = selected.value;
+  const request = contentRequest;
+  const fmt = file.format;
   let toSave = editorText.value;
   if (viewFormat.value !== fmt) {
     const back = convertViewWithComments(
@@ -393,12 +433,17 @@ async function saveContent() {
     }
     toSave = back;
   }
+  if (toSave === content.value) {
+    editorBaseline.value = editorText.value;
+    return;
+  }
   savingContent.value = true;
   try {
-    await saveConfigContentApi(selected.value.id, toSave);
-    message.success('内容已保存（新版本）');
-    await openContent(selected.value);
-    await loadVersions(selected.value.id);
+    await saveConfigContentApi(file.id, toSave);
+    message.success('内容已保存');
+    if (request === contentRequest && selected.value?.id === file.id) {
+      await openContent(file);
+    }
   } finally {
     savingContent.value = false;
   }
@@ -471,7 +516,16 @@ function ctxNewFolder() {
   folderModalOpen.value = true;
 }
 
-// 目录删除（v0.14.2）：前缀批量删文件+版本链；confirm 明示数量与范围
+function canDeletePath(path: string) {
+  const env = path.split('/').filter(Boolean)[0] ?? '';
+  return (
+    canEditConfig.value &&
+    (!isSlotEnv(env) ||
+      (slotInfoReady.value && Number(env.slice(3)) > testSlotCount.value))
+  );
+}
+
+// 删除目录前确认文件及历史版本的清理范围。
 function ctxDeleteDir() {
   closeCtxMenu();
   const prefix = ctxMenu.dirKey.replaceAll(/^\/+|\/+$/g, '');
@@ -479,31 +533,46 @@ function ctxDeleteDir() {
     message.warning('根目录不可整体删除（在文件上单独删除）');
     return;
   }
-  if (!currentProject.value) return;
+  const projectId = currentProject.value;
+  if (!projectId || !canDeletePath(prefix)) return;
+  const isSlotRoot = isSlotEnv(prefix);
   const n = projectFiles.value.filter((f) =>
     (f.relPath || '').startsWith(`${prefix}/`),
   ).length;
-  if (n === 0) {
-    message.info('该目录下没有配置文件（空目录随树自动消失或保留为虚拟目录）');
-    return;
-  }
   Modal.confirm({
     title: `删除目录 ${prefix} ？`,
-    content: `将删除该目录下全部 ${n} 个配置文件及其历史版本，不可恢复。`,
+    content:
+      n > 0
+        ? `将删除该目录下全部 ${n} 个配置文件及其历史版本，不可恢复。`
+        : '确认移除此空目录？',
     okButtonProps: { danger: true },
     okText: '删 除',
     cancelText: '取 消',
     async onOk() {
       try {
-        const r = await deleteConfigDirApi(currentProject.value!, prefix);
-        message.success(`已删除 ${r.deleted} 个配置文件`);
+        const r =
+          n > 0 || isSlotRoot
+            ? await deleteConfigDirApi(projectId, prefix)
+            : { deleted: 0 };
+        if (currentProject.value !== projectId) return;
+        if (isSlotRoot) {
+          removedSlotDirs.value = [
+            ...removedSlotDirs.value,
+            Number(prefix.slice(3)),
+          ];
+        }
+        message.success(
+          r.deleted ? `已删除 ${r.deleted} 个配置文件` : '已删除目录',
+        );
         if (
           selected.value &&
           (selected.value.relPath || '').startsWith(`${prefix}/`)
         ) {
           selected.value = null;
         }
-        ephemeralDirs.value = ephemeralDirs.value.filter((d) => d !== prefix);
+        ephemeralDirs.value = ephemeralDirs.value.filter(
+          (d) => d !== prefix && !d.startsWith(`${prefix}/`),
+        );
         await load();
       } catch (error: any) {
         message.error(error?.response?.data?.message ?? '删除失败');
@@ -687,7 +756,15 @@ const fmtVersionAt = computed(() =>
 );
 
 async function loadVersions(id: number) {
-  versions.value = await getConfigVersionsApi(id);
+  const request = contentRequest;
+  try {
+    const history = await getConfigVersionsApi(id);
+    if (request === contentRequest && selected.value?.id === id) {
+      versions.value = history;
+    }
+  } catch {
+    // The request interceptor reports the error independently of the editor.
+  }
 }
 
 async function toggleDiff(v: ConfigVersion, checked: any) {
@@ -842,6 +919,7 @@ async function save() {
 }
 
 async function remove(f: ConfigFile) {
+  if (!canDeletePath(f.relPath)) return;
   await deleteConfigFileApi(f.id);
   if (selected.value?.id === f.id) selected.value = null;
   message.success('已删除');
@@ -1018,7 +1096,7 @@ async function toggleMergedReveal() {
                 下发
               </a-button>
               <a-button
-                :disabled="contentMasked"
+                :disabled="!canSaveContent"
                 :loading="savingContent"
                 size="small"
                 @click="saveContent"
@@ -1026,7 +1104,7 @@ async function toggleMergedReveal() {
                 仅保存
               </a-button>
               <a-button
-                v-if="contentMasked"
+                v-if="contentMasked && !contentLoading"
                 :loading="revealLoading"
                 size="small"
                 @click="reveal"
@@ -1048,7 +1126,11 @@ async function toggleMergedReveal() {
                 </template>
               </a-dropdown>
               <a-button size="small" @click="openEdit(selected)">设置</a-button>
-              <a-popconfirm title="确认删除？" @confirm="remove(selected)">
+              <a-popconfirm
+                v-if="canDeletePath(selected.relPath)"
+                title="确认删除配置文件及其历史版本？"
+                @confirm="remove(selected)"
+              >
                 <a-button danger size="small">删除</a-button>
               </a-popconfirm>
               <a-tag v-if="contentMasked" class="ml-auto" color="orange">
@@ -1075,7 +1157,12 @@ async function toggleMergedReveal() {
               v-model="editorText"
               height="100%"
               :language="editorLang"
-              :read-only="contentMasked"
+              :read-only="
+                contentMasked ||
+                contentLoading ||
+                savingContent ||
+                !canEditConfig
+              "
             />
           </div>
           <a-empty
@@ -1281,7 +1368,7 @@ async function toggleMergedReveal() {
             新建文件夹
           </div>
           <div
-            v-if="ctxMenu.dirKey"
+            v-if="ctxMenu.dirKey && canDeletePath(ctxMenu.dirKey)"
             class="hover:bg-accent text-destructive cursor-pointer px-3 py-1.5"
             @click="ctxDeleteDir"
           >

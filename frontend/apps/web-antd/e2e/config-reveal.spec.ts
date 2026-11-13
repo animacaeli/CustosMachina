@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { request } from '@playwright/test';
 
 import { ADMIN, ensureAdmin, ensureUser, login, loginAs } from './auth';
@@ -13,7 +15,7 @@ import { expect, test } from './fixtures';
 
 const PROJECT = 'e2e-reveal-demo';
 
-async function apiSetup() {
+async function apiSetup(projectName = PROJECT) {
   const ctx = await request.newContext({
     baseURL: process.env.E2E_API_URL ?? 'http://127.0.0.1:18080',
   });
@@ -29,13 +31,13 @@ async function apiSetup() {
   const { data: projects } = (await list.json()) as {
     data: Array<{ id: number; name: string }>;
   };
-  let projectId = projects.find((p) => p.name === PROJECT)?.id;
+  let projectId = projects.find((p) => p.name === projectName)?.id;
   if (!projectId) {
     const srv = await ctx.post('/api/servers', {
       data: {
         authType: 'password',
         host: '127.0.0.1',
-        name: 'e2e-reveal-srv',
+        name: projectName,
         password: 'x',
         port: 22,
         username: 'root',
@@ -45,7 +47,7 @@ async function apiSetup() {
     const { data: server } = (await srv.json()) as { data: { id: number } };
     const proj = await ctx.post('/api/projects', {
       data: {
-        name: PROJECT,
+        name: projectName,
         repoPath: 'org/e2e-reveal-demo',
         repoUrl: 'https://gitea.local/org/e2e-reveal-demo.git',
         testSlotCount: 2,
@@ -92,6 +94,28 @@ async function apiSetup() {
   return { projectId };
 }
 
+async function selectConfigProject(
+  page: import('@playwright/test').Page,
+  name: string,
+) {
+  const select = page.getByRole('main').locator('.ant-select').first();
+  const current = select.locator('.ant-select-selection-item');
+  await expect(current).toBeVisible();
+  if ((await current.textContent()) !== name) {
+    const loaded = page.waitForResponse(
+      (response) =>
+        /\/api\/projects\/\d+$/.test(response.url()) && response.ok(),
+    );
+    await select.locator('.ant-select-selector').click();
+    await page
+      .locator('.ant-select-dropdown:visible .ant-select-item-option')
+      .getByText(name, { exact: true })
+      .click();
+    await loaded;
+  }
+  await expect(current).toHaveText(name);
+}
+
 test.beforeAll(async () => {
   await ensureAdmin();
   await apiSetup();
@@ -110,18 +134,7 @@ test('dev 角色：dev1 明文放行 / prod 明文 403', async ({ page }) => {
   await expect(page.getByText('配置文件').first()).toBeVisible({
     timeout: 10_000,
   });
-  // 显式切到目标项目（全量跑时其他用例已建项目，不能依赖默认选中）。
-  // 点 .ant-select-selector 容器：combobox input 非搜索态 pointer-events:none，
-  // 直接点 combobox role 的 input 永不过 actionability（antd Select 已知坑）
-  await page.getByRole('main').locator('.ant-select-selector').first().click();
-  const opt = page
-    .locator('.ant-select-dropdown:visible .ant-select-item-option')
-    .filter({ hasText: PROJECT });
-  await opt.click();
-  await expect(
-    page.locator('.ant-select-selection-item', { hasText: PROJECT }).first(),
-    '项目应已切换',
-  ).toBeVisible({ timeout: 5000 });
+  await selectConfigProject(page, PROJECT);
   await expect(page.getByText('dev1', { exact: true })).toBeVisible({
     timeout: 5000,
   });
@@ -169,4 +182,85 @@ test('dev 角色：dev1 明文放行 / prod 明文 403', async ({ page }) => {
     page.getByText(/正式环境明文查看需独立权限/),
     'prod reveal 应 403',
   ).toBeVisible({ timeout: 5000 });
+});
+
+test('超管可操作目录，退役目录清理和项目关注跨刷新保留', async ({ page }) => {
+  const projectName = 'e2e-slot-' + randomUUID();
+  const { projectId } = await apiSetup(projectName);
+  const api = await request.newContext({
+    baseURL: process.env.E2E_API_URL ?? 'http://127.0.0.1:18080',
+  });
+  try {
+    const loginRes = await api.post('/api/auth/login', {
+      data: { password: ADMIN.password, username: ADMIN.username },
+    });
+    const { data } = await loginRes.json();
+    const headers = { Authorization: `Bearer ${data.accessToken}` };
+    const update = await api.put(`/api/projects/${projectId}`, {
+      headers,
+      data: {
+        name: projectName,
+        repoPath: 'org/e2e-reveal-demo',
+        repoUrl: 'https://gitea.local/org/e2e-reveal-demo.git',
+        remark: '项目备注回归验证',
+        testSlotCount: 1,
+      },
+    });
+    expect(update.ok()).toBe(true);
+
+    await page.goto('/configs/files');
+    await selectConfigProject(page, projectName);
+    const node = (name: string) =>
+      page.locator('.ant-tree-node-content-wrapper').filter({
+        has: page.getByText(name, { exact: true }),
+      });
+    await node('dev1').click({ button: 'right' });
+    await expect(page.getByText('新建文件夹', { exact: true })).toBeVisible();
+    await expect(page.getByText('删除目录', { exact: true })).toHaveCount(0);
+
+    await page.mouse.click(5, 5);
+    await node('dev2').click({ button: 'right' });
+    await page.getByText('删除目录', { exact: true }).click();
+    await page.getByRole('button', { name: /删\s*除/ }).click();
+    await expect(node('dev2')).toHaveCount(0);
+    await page.reload();
+    await selectConfigProject(page, projectName);
+    await expect(node('dev1')).toBeVisible();
+    await expect(node('dev2')).toHaveCount(0);
+
+    await node('dev1').click();
+    await page.route('**/api/config-files/*/versions', (route) =>
+      route.fulfill({
+        status: 500,
+        json: { code: 500, message: '历史版本暂不可用' },
+      }),
+    );
+    await node('slot-cfg.env').click();
+    await expect(page.getByText('历史版本暂不可用')).toBeVisible();
+    await expect(
+      page.locator('.editor-host .monaco-editor .view-lines'),
+    ).toContainText('DB_HOST');
+    await page.getByRole('button', { name: /查看明文/ }).click();
+    const save = page.getByRole('button', { name: '仅保存' });
+    await expect(
+      page.getByText('已显示明文（本次查看已落审计）'),
+    ).toBeVisible();
+    await expect(save).toBeDisabled();
+    await page.locator('.editor-host .monaco-editor .view-lines').click();
+    await page.keyboard.type('#');
+    await expect(save).toBeEnabled();
+
+    await page.goto('/projects');
+    const row = page.getByRole('row').filter({ hasText: projectName });
+    await expect(row.getByText('项目备注回归验证')).toBeVisible();
+    const star = row.getByRole('button', { name: '关注项目' });
+    await star.click();
+    await expect(star).toHaveAttribute('aria-pressed', 'true');
+    await page.reload();
+    await expect(star).toHaveAttribute('aria-pressed', 'true');
+    await star.click();
+    await expect(star).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    await api.dispose();
+  }
 });

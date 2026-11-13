@@ -431,6 +431,15 @@ func (s *Service) PassedTags(ctx context.Context, projectID uint, env string) ([
 }
 
 func (s *Service) notifyRelease(ctx context.Context, p *projectRow, rel *Release) {
+	title := fmt.Sprintf("发布%s：%s %s", map[string]string{ReleaseSuccess: "成功", ReleaseFailed: "失败"}[rel.Status], p.Name, rel.Tag)
+	if s.notify != nil {
+		key := fmt.Sprintf("release:%d", rel.ID)
+		if rel.ID == 0 {
+			key = fmt.Sprintf("release:promote:%d", time.Now().UnixNano())
+		}
+		s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: p.ID,
+			Key: key, Title: title, Message: envLabel(rel.EnvType)})
+	}
 	var groupID *uint
 	switch rel.EnvType {
 	case "prod":
@@ -447,7 +456,6 @@ func (s *Service) notifyRelease(ctx context.Context, p *projectRow, rel *Release
 	if err != nil {
 		return
 	}
-	title := fmt.Sprintf("发布%s：%s %s", map[string]string{ReleaseSuccess: "成功", ReleaseFailed: "失败"}[rel.Status], p.Name, rel.Tag)
 	content := fmt.Sprintf("环境：%s\n操作人：%s\n标签：%s", envLabel(rel.EnvType), rel.ReleaseBy, rel.Tag)
 	go func() {
 		_ = s.notify.Send(context.WithoutCancel(ctx), g, title, content)

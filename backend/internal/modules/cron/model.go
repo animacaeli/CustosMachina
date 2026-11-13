@@ -58,6 +58,7 @@ func (CronScript) TableName() string { return "cron_scripts" }
 
 // CronJob 定时任务：绑定脚本 + 调度 + 目标主机 + 执行载体。
 type CronJob struct {
+	ProjectID   uint           `gorm:"not null;default:0" json:"projectId"`
 	ID          uint           `gorm:"primarykey" json:"id"`
 	Name        string         `gorm:"size:128;not null" json:"name"`
 	ScriptID    uint           `gorm:"index;not null" json:"scriptId"`

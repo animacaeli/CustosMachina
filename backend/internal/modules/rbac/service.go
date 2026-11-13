@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/casbin/casbin/v2"
@@ -224,7 +225,9 @@ func (s *Service) projectScopeOf(roles []string) (all bool, ids []uint) {
 		}
 	}
 	var rows []RoleProject
-	s.db.Where("role_name IN ?", roles).Find(&rows)
+	if err := s.db.Where("role_name IN ?", roles).Find(&rows).Error; err != nil {
+		return false, nil
+	}
 	if len(rows) == 0 {
 		return true, nil
 	}
@@ -583,4 +586,40 @@ func (s *Service) SetServerTerminalACLs(serverID uint, usernames []string) error
 		}
 	}
 	return nil
+}
+
+// ProjectVisibility applies project list and project scope permissions to a user.
+func ProjectVisibility(u identity.User) (bool, []uint) {
+	if u.Status == identity.StatusDisabled {
+		return false, nil
+	}
+	if u.IsLocalAdmin {
+		return true, nil
+	}
+	if gateService == nil {
+		return false, nil
+	}
+	roles := identity.ParseRoleList(u.Roles)
+	subs := append(slices.Clone(roles), u.UsernameOf())
+	ok, err := EnforceAny(gateService.enforcer, subs, "/projects", "GET")
+	if err != nil || !ok {
+		return false, nil
+	}
+	return gateService.projectScopeOf(roles)
+}
+
+func CanViewProject(c *gin.Context, id uint) bool {
+	claims := auth.ClaimsFromContext(c)
+	if claims == nil || gateService == nil {
+		return false
+	}
+	if claims.IsAdmin {
+		return true
+	}
+	u, err := gateService.users.GetByID(c.Request.Context(), claims.UserID)
+	if err != nil {
+		return false
+	}
+	all, ids := ProjectVisibility(*u)
+	return all || slices.Contains(ids, id)
 }

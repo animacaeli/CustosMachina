@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { getProjectsApi } from '#/api/projects';
+import ProjectFollowStar from '#/components/project-follow-star.vue';
 
 defineOptions({ name: 'ProjectsOverview' });
 
@@ -16,8 +17,11 @@ const keyword = ref('');
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
-  if (!kw) return projects.value;
-  return projects.value.filter(
+  const ordered = [...projects.value].sort(
+    (a, b) => Number(!!b.following) - Number(!!a.following),
+  );
+  if (!kw) return ordered;
+  return ordered.filter(
     (p) =>
       p.name.toLowerCase().includes(kw) ||
       (p.repoPath ?? '').toLowerCase().includes(kw),
@@ -78,6 +82,7 @@ function goEnv(env: 'canary' | 'prod' | 'test') {
       <a-table
         :columns="[
           { title: '项目', key: 'name' },
+          { title: '备注', key: 'remark', width: 220 },
           { title: '正式', key: 'prod', width: 200 },
           { title: '灰度', key: 'canary', width: 180 },
           { title: '测试', key: 'test', width: 180 },
@@ -91,7 +96,12 @@ function goEnv(env: 'canary' | 'prod' | 'test') {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
-            <div>
+            <div class="flex items-center gap-1">
+              <ProjectFollowStar
+                :following="!!record.following"
+                :project-id="record.id"
+                @change="(following) => (record.following = following)"
+              />
               <router-link :to="`/projects/${record.id}`" class="font-medium">
                 {{ record.name }}
               </router-link>
@@ -99,13 +109,14 @@ function goEnv(env: 'canary' | 'prod' | 'test') {
             <div class="text-muted-foreground text-xs">
               {{ record.repoPath }}
             </div>
-            <div v-if="record.remark" class="text-muted-foreground text-xs">
-              <a-tooltip :title="record.remark">
-                <span class="inline-block max-w-[260px] truncate align-bottom">
-                  📝 {{ record.remark }}
-                </span>
-              </a-tooltip>
-            </div>
+          </template>
+          <template v-else-if="column.key === 'remark'">
+            <a-tooltip v-if="record.remark" :title="record.remark">
+              <span class="block max-w-[200px] truncate">{{
+                record.remark
+              }}</span>
+            </a-tooltip>
+            <span v-else class="text-muted-foreground">—</span>
           </template>
           <template v-else-if="column.key === 'prod'">
             <template v-if="stat(record, 'prod')">

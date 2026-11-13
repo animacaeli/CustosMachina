@@ -161,8 +161,26 @@ func TestO2NamePrefixAndLookup(t *testing.T) {
 	if got := svc.o2NameFor(a); got != "demo-project-err-spike" {
 		t.Fatalf("O2 名前缀不符: %q", got)
 	}
-	if _, err := svc.alertByName(ctx, "demo-project-err-spike"); err != nil {
-		t.Fatalf("回流名反解失败: %v", err)
+	if err := svc.db.Exec("INSERT INTO projects (id, name) VALUES (8, 'Other')").Error; err != nil {
+		t.Fatal(err)
+	}
+	collision := Alert{Name: "demo-project-err-spike", ProjectID: 8}
+	if err := svc.db.Create(&collision).Error; err != nil {
+		t.Fatal(err)
+	}
+	match, err := svc.alertByName(ctx, "demo-project-err-spike")
+	if err != nil || match.ID != a.ID {
+		t.Fatalf("O2 名称应匹配项目 7 的规则: match=%+v err=%v", match, err)
+	}
+	// 平台级规则原名也可能与项目侧 O2 名称冲突，此时不能猜测归属。
+	if err := svc.db.Delete(&collision).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.Create(&Alert{Name: "demo-project-err-spike"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if match, err := svc.alertByName(ctx, "demo-project-err-spike"); err == nil || match != nil {
+		t.Fatalf("O2 名称歧义应拒绝匹配: match=%+v err=%v", match, err)
 	}
 	if !strings.Contains(a.ParamsSnapshot, "\"k\"") {
 		t.Fatalf("参数快照缺失: %s", a.ParamsSnapshot)

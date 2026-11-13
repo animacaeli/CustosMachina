@@ -30,11 +30,12 @@ func ciEngineFor(gitProvider string) string {
 
 // PushEvent 归一后的推送事件（各家 webhook payload 的公共语义）。
 type PushEvent struct {
-	Provider string // gitea | gitee（由回调端点决定，不信任 payload）
-	Ref      string // refs/tags/v1.0.0 / refs/heads/<branch>
-	SHA      string
-	RepoPath string // owner/repo
-	Pusher   string
+	DeliveryID string // optional provider delivery ID
+	Provider   string // gitea | gitee（由回调端点决定，不信任 payload）
+	Ref        string // refs/tags/v1.0.0 / refs/heads/<branch>
+	SHA        string
+	RepoPath   string // owner/repo
+	Pusher     string
 }
 
 // BuildRef CI 查询定位：gitea Actions 按 SHA；Jenkins 按 job + tag 参数，

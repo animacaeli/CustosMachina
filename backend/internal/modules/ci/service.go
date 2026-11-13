@@ -2,6 +2,8 @@ package ci
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
@@ -305,7 +307,7 @@ func (s *Service) VerifyGiteaWebhook(ctx context.Context, body []byte, sigHex st
 }
 
 // HandleGiteaPush 解析并处理 gitea 推送（签名校验由 VerifyGiteaWebhook 先行）。
-func (s *Service) HandleGiteaPush(ctx context.Context, body []byte) (*Build, error) {
+func (s *Service) HandleGiteaPush(ctx context.Context, body []byte, deliveryID ...string) (*Build, error) {
 	g, err := s.loadGlobal(ctx)
 	if err != nil {
 		return nil, err
@@ -313,6 +315,9 @@ func (s *Service) HandleGiteaPush(ctx context.Context, body []byte) (*Build, err
 	ev, err := newGiteaClient(g.GiteaBaseURL, "", g.WebhookSecret).ParsePush(body)
 	if err != nil {
 		return nil, err
+	}
+	if len(deliveryID) > 0 {
+		ev.DeliveryID = deliveryID[0]
 	}
 	return s.handlePush(ctx, ev)
 }
@@ -341,7 +346,22 @@ func (s *Service) HandleGiteePush(ctx context.Context, body []byte) (*Build, err
 
 // handlePush 推送事件公共处理：分支推送交给槽位钩子，标签推送匹配项目落构建记录。
 func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error) {
-	if !strings.HasPrefix(ev.Ref, "refs/tags/") {
+	isTag := strings.HasPrefix(ev.Ref, "refs/tags/")
+	projView, err := s.proj.ViewByRepoPath(ctx, ev.RepoPath)
+	if err == nil && projView.Provider == ev.Provider && s.notify != nil &&
+		(isTag || strings.HasPrefix(ev.Ref, "refs/heads/")) {
+		// A ref can legitimately return to the same commit. Use the provider's delivery
+		// identity when present and keep individual arrivals otherwise.
+		deliveryID := ev.DeliveryID
+		if deliveryID == "" {
+			deliveryID = rand.Text()
+		}
+		key := sha256.Sum256([]byte(ev.Provider + "\n" + deliveryID))
+		s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: projView.ID,
+			Key: fmt.Sprintf("push:%x", key), Title: "代码推送：" + projView.Name,
+			Message: fmt.Sprintf("%s · %s", ev.Ref, ev.Pusher)})
+	}
+	if !isTag {
 		// 分支推送：交给槽位自动链路（未注入 hook 则忽略）
 		if s.BranchPushHook != nil && strings.HasPrefix(ev.Ref, "refs/heads/") {
 			s.BranchPushHook(context.WithoutCancel(ctx), ev.RepoPath,
@@ -352,7 +372,6 @@ func (s *Service) handlePush(ctx context.Context, ev *PushEvent) (*Build, error)
 	tag := strings.TrimPrefix(ev.Ref, "refs/tags/")
 
 	// 项目匹配（精确优先/大小写兜底由 Reader 内聚）
-	projView, err := s.proj.ViewByRepoPath(ctx, ev.RepoPath)
 	if err != nil {
 		return nil, nil // 非平台登记的项目，忽略
 	}
@@ -569,6 +588,16 @@ type notifyProjRow struct {
 }
 
 func (s *Service) notifyBuild(ctx context.Context, b Build, proj notifyProjRow, status string) {
+	if s.notify == nil {
+		return
+	}
+	verb := map[string]string{BuildSuccess: "成功", BuildFailed: "失败"}[status]
+	if verb == "" {
+		verb = status
+	}
+	title := fmt.Sprintf("构建%s：%s %s", verb, proj.RepoPath, b.Tag)
+	s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: proj.ID,
+		Key: fmt.Sprintf("build:%d:%s", b.ID, status), Title: title, Message: envLabel(b.EnvType)})
 	if status == BuildSuccess && !proj.NotifyOnSuccess {
 		return
 	}
@@ -588,11 +617,6 @@ func (s *Service) notifyBuild(ctx context.Context, b Build, proj notifyProjRow, 
 	if err != nil {
 		return
 	}
-	verb := "成功"
-	if status == BuildFailed {
-		verb = "失败"
-	}
-	title := fmt.Sprintf("构建%s：%s %s", verb, proj.RepoPath, b.Tag)
 	content := fmt.Sprintf("环境：%s\n构建人：%s\n[查看日志](%s)", envLabel(b.EnvType), b.Builder, b.LogURL)
 	go func() {
 		if err := s.notify.Send(context.WithoutCancel(ctx), g, title, content); err != nil {

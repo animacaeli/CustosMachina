@@ -12,6 +12,7 @@ import {
   getProjectsApi,
   updateProjectApi,
 } from '#/api/projects';
+import ProjectFollowStar from '#/components/project-follow-star.vue';
 
 import BuildDrawer from './build-drawer.vue';
 import PolicyDrawer from './policy-drawer.vue';
@@ -65,8 +66,11 @@ function envStat(record: Project): Partial<EnvStatus> {
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
-  if (!kw) return projects.value;
-  return projects.value.filter(
+  const ordered = [...projects.value].sort(
+    (a, b) => Number(!!b.following) - Number(!!a.following),
+  );
+  if (!kw) return ordered;
+  return ordered.filter(
     (p) =>
       p.name.toLowerCase().includes(kw) ||
       p.repoPath.toLowerCase().includes(kw),
@@ -229,6 +233,7 @@ async function onDelete(p: Project) {
       <a-table
         :columns="[
           { title: '项目', key: 'name' },
+          { title: '备注', key: 'remark', width: 220 },
           { title: '当前版本', key: 'lastTag', width: 150 },
           { title: '状态', key: 'lastStatus', width: 100 },
           { title: '上次发布', key: 'lastAt', width: 160 },
@@ -243,10 +248,25 @@ async function onDelete(p: Project) {
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'name'">
-            <div class="font-medium">{{ record.name }}</div>
+            <div class="flex items-center gap-1 font-medium">
+              <ProjectFollowStar
+                :following="!!record.following"
+                :project-id="record.id"
+                @change="(following) => (record.following = following)"
+              />
+              {{ record.name }}
+            </div>
             <div class="text-muted-foreground text-xs">
               {{ record.repoPath }}
             </div>
+          </template>
+          <template v-else-if="column.key === 'remark'">
+            <a-tooltip v-if="record.remark" :title="record.remark">
+              <span class="block max-w-[200px] truncate">{{
+                record.remark
+              }}</span>
+            </a-tooltip>
+            <span v-else class="text-muted-foreground">—</span>
           </template>
           <template v-else-if="column.key === 'lastTag'">
             <span v-if="envStat(record).lastTag">

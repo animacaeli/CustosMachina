@@ -563,46 +563,67 @@ func (s *Service) o2NameFor(a *Alert) string {
 	}
 	var pname string
 	if err := s.db.WithContext(context.Background()).
-		Table("projects").Select("name").Where("id = ?", a.ProjectID).Scan(&pname).Error; err != nil || pname == "" {
+		Table("projects").Select("name").Where("id = ?", a.ProjectID).Scan(&pname).Error; err != nil {
+		pname = ""
+	}
+	return o2RuleName(a, pname)
+}
+
+func o2RuleName(a *Alert, projectName string) string {
+	if a.ProjectID == 0 {
+		return a.Name
+	}
+	if projectName == "" {
 		return fmt.Sprintf("p%d-%s", a.ProjectID, a.Name)
 	}
-	return strx.NormalizeName(pname) + "-" + a.Name
+	return strx.NormalizeName(projectName) + "-" + a.Name
 }
 
 func (s *Service) alertByName(ctx context.Context, name string) (*Alert, error) {
-	// webhook 回流的 alert_name 是 O2 侧名（项目策略带前缀）——先精确匹配
-	// 平台名，miss 后按 o2NameFor 全量反查（告警量小，可接受）
-	var a Alert
-	if err := s.db.WithContext(ctx).Where("name = ?", name).First(&a).Error; err == nil {
-		return &a, nil
+	// Match the name sent to O2. A project's local rule name is not its O2 name.
+	var rules []struct {
+		Alert
+		ProjectName string
 	}
-	var all []Alert
-	if err := s.db.WithContext(ctx).Find(&all).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&Alert{}).
+		Select("observ_alerts.*, projects.name AS project_name").
+		Joins("LEFT JOIN projects ON projects.id = observ_alerts.project_id").
+		Find(&rules).Error; err != nil {
 		return nil, err
 	}
-	for i := range all {
-		if s.o2NameFor(&all[i]) == name {
-			return &all[i], nil
+	var match *Alert
+	for i := range rules {
+		rule := &rules[i]
+		if o2RuleName(&rule.Alert, rule.ProjectName) != name {
+			continue
 		}
+		if match != nil {
+			return nil, fmt.Errorf("O2 告警名 %q 对应多条规则", name)
+		}
+		match = &rule.Alert
 	}
-	return nil, gorm.ErrRecordNotFound
+	if match == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return match, nil
 }
 
 // P7-M2：AI 分析已上收到 notify 统一入口（两阶段），本模块不再单独触发摘要。
 
 // notifyAlert O2 告警：先落事件（alert_events，告警历史的地基），再投统一
 // 通知路由（先发主通知保及时性；AI 摘要异步补发）。
-func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail string) {
-	s.recordAlertEvent(ctx, string(notify.SourceO2Alert), level,
+func (s *Service) notifyAlert(ctx context.Context, alertName, level, detail string) uint {
+	id := s.recordAlertEvent(ctx, string(notify.SourceO2Alert), level,
 		"O2 告警："+alertName, detail, "o2-"+alertName)
 	if s.notifier == nil {
-		return
+		return id
 	}
 	go func() {
 		s.notifier.NotifyEvent(context.WithoutCancel(ctx),
 			notify.SourceO2Alert, level,
 			"o2-"+alertName, "O2 告警："+alertName, detail)
 	}()
+	return id
 }
 
 // Models 本模块自动迁移清单。

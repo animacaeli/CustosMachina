@@ -18,6 +18,7 @@ import {
   triggerJobApi,
   updateJobApi,
 } from '#/api/cron';
+import { getProjectsApi } from '#/api/projects';
 import { getServerListApi } from '#/api/resources/server';
 import AiAssist from '#/components/ai-assist.vue';
 import CodeEditor from '#/components/yaml-editor.vue';
@@ -51,6 +52,7 @@ const filteredList = computed(() =>
     : list.value,
 );
 const scripts = ref<CronScript[]>([]);
+const projects = ref<{ id: number; name: string }[]>([]);
 const servers = ref<{ host: string; id: number; name: string }[]>([]);
 
 async function load() {
@@ -73,7 +75,12 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void getProjectsApi()
+    .then((items) => (projects.value = items))
+    .catch(() => {});
+});
 
 const statusText: Record<string, string> = {
   failed: '失败',
@@ -92,6 +99,7 @@ const quick = reactive({
   content: '',
   image: 'alpine:3',
   projectName: '',
+  projectId: undefined as number | undefined,
   serverId: undefined as number | undefined,
   service: '',
   timeoutSecs: 300,
@@ -128,6 +136,7 @@ async function quickExecute() {
       enabled: false,
       image: quick.image,
       name: `快速执行 ${ts}`,
+      projectId: quick.projectId ?? 0,
       projectName: quick.projectName,
       retry: 0,
       schedule: '',
@@ -186,6 +195,7 @@ const form = reactive({
   retry: 0,
   schedule: '',
   scriptId: undefined as number | undefined,
+  projectId: undefined as number | undefined,
   serverId: undefined as number | undefined,
   service: '',
   timeoutSecs: 600,
@@ -209,6 +219,7 @@ function openCreate() {
     projectName: '',
     schedule: '0 3 * * *',
     scriptId: undefined,
+    projectId: undefined,
     serverId: undefined,
     service: '',
     timeoutSecs: 600,
@@ -268,6 +279,7 @@ function openEdit(item: CronJobItem) {
     projectName: j.projectName,
     schedule: j.schedule || '0 3 * * *',
     scriptId: j.scriptId,
+    projectId: j.projectId || undefined,
     serverId: j.serverId,
     service: j.service,
     timeoutSecs: j.timeoutSecs,
@@ -287,6 +299,7 @@ async function submitForm() {
   try {
     const data = {
       ...form,
+      projectId: form.projectId ?? 0,
       schedule: form.mode === 'manual' ? '' : form.schedule,
     };
     if (editingId.value) {
@@ -514,6 +527,14 @@ async function onTrigger(item: CronJobItem) {
             </AiAssist>
           </div>
         </a-form-item>
+        <a-form-item label="关联项目">
+          <a-select
+            v-model:value="form.projectId"
+            :options="projects.map((p) => ({ label: p.name, value: p.id }))"
+            allow-clear
+            placeholder="留空则发送平台级通知"
+          />
+        </a-form-item>
         <template v-if="form.carrier === 'run'">
           <a-form-item label="目标主机（服务器级任务：备份/清理等）" required>
             <a-select
@@ -605,6 +626,14 @@ async function onTrigger(item: CronJobItem) {
       @ok="quickExecute"
     >
       <a-form layout="vertical" style="padding-top: 0.5rem">
+        <a-form-item label="关联项目">
+          <a-select
+            v-model:value="quick.projectId"
+            :options="projects.map((p) => ({ label: p.name, value: p.id }))"
+            allow-clear
+            placeholder="留空则发送平台级通知"
+          />
+        </a-form-item>
         <a-form-item v-if="quick.carrier === 'run'" label="目标主机" required>
           <a-select
             v-model:value="quick.serverId"

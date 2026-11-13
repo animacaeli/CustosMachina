@@ -77,3 +77,16 @@ type Reader interface {
 	ViewByRepoPath(ctx context.Context, repoPath string) (*View, error)
 	EncryptedCIToken(ctx context.Context, repoPath string) string
 }
+
+// ValidateTaskProject checks an optional task binding before it is persisted.
+func ValidateTaskProject(ctx context.Context, db *gorm.DB, id *uint) error {
+	if id == nil || *id == 0 {
+		return nil
+	}
+	var p Project
+	err := db.WithContext(ctx).Select("id").First(&p, *id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.New("关联项目不存在")
+	}
+	return err
+}

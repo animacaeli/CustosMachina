@@ -5,6 +5,7 @@ import { onMounted, reactive, ref } from 'vue';
 
 import { message } from 'ant-design-vue';
 
+import { getProjectsApi } from '#/api/projects';
 import { getServerListApi } from '#/api/resources/server';
 import {
   createBackupJobApi,
@@ -20,6 +21,7 @@ defineOptions({ name: 'SystemBackup' });
 
 const loading = ref(false);
 const list = ref<BackupJob[]>([]);
+const projects = ref<{ id: number; name: string }[]>([]);
 const servers = ref<Array<{ id: number; name: string }>>([]);
 const historyJobId = ref<0 | number>(0);
 const history = ref<BackupRun[]>([]);
@@ -40,7 +42,12 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void getProjectsApi()
+    .then((items) => (projects.value = items))
+    .catch(() => {});
+});
 
 const typeText: Record<string, string> = {
   platform_self: '平台自身',
@@ -66,6 +73,7 @@ const form = reactive({
   type: 'platform_self' as 'platform_self' | 'remote_dir',
   schedule: '',
   enabled: true,
+  projectId: undefined as number | undefined,
   serverId: undefined as number | undefined,
   remotePath: '',
   storage: 'local' as 'local' | 's3',
@@ -86,6 +94,7 @@ function openCreate() {
     type: 'platform_self',
     schedule: '',
     enabled: true,
+    projectId: undefined,
     serverId: undefined,
     remotePath: '',
     storage: 'local',
@@ -108,6 +117,7 @@ function openEdit(j: BackupJob) {
     type: j.type,
     schedule: j.schedule,
     enabled: j.enabled,
+    projectId: j.projectId || undefined,
     serverId: j.serverId || undefined,
     remotePath: j.remotePath,
     storage: j.storage,
@@ -151,6 +161,7 @@ async function save() {
   try {
     const payload = {
       ...form,
+      projectId: form.type === 'remote_dir' ? (form.projectId ?? 0) : 0,
       serverId: form.serverId ?? 0,
       schedule: form.schedule || '',
     };
@@ -344,6 +355,14 @@ function humanBytes(n: number) {
           </a-radio-group>
         </a-form-item>
         <template v-if="form.type === 'remote_dir'">
+          <a-form-item label="关联项目">
+            <a-select
+              v-model:value="form.projectId"
+              :options="projects.map((p) => ({ label: p.name, value: p.id }))"
+              allow-clear
+              placeholder="留空则发送平台级通知"
+            />
+          </a-form-item>
           <a-form-item label="目标主机" required>
             <a-select
               v-model:value="form.serverId"

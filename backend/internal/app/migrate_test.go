@@ -24,6 +24,16 @@ func TestUpgradeMigrationsCreateLateTables(t *testing.T) {
 	if err := db.Exec("CREATE TABLE servers (id integer primary key, name text)").Error; err != nil {
 		t.Fatal(err)
 	}
+	for _, stmt := range []string{
+		"CREATE TABLE projects (id integer primary key, test_slot_count integer default 3)",
+		"CREATE TABLE cron_jobs (id integer primary key)",
+		"CREATE TABLE backup_jobs (id integer primary key)",
+		"INSERT INTO projects (id, test_slot_count) VALUES (1, 3)",
+	} {
+		if err := db.Exec(stmt).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := db.AutoMigrate(database.SchemaMigrationModel()); err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +47,20 @@ func TestUpgradeMigrationsCreateLateTables(t *testing.T) {
 		t.Fatalf("增量迁移失败: %v", err)
 	}
 
-	for _, table := range []string{"alert_events", "k3s_clusters"} {
+	for _, table := range []string{"alert_events", "k3s_clusters", "project_follows", "notify_inbox"} {
 		if !db.Migrator().HasTable(table) {
 			t.Errorf("存量库升级后应建出 %s 表", table)
+		}
+	}
+	for table, columns := range map[string][]string{
+		"projects":    {"creator_id", "removed_slot_dirs"},
+		"cron_jobs":   {"project_id"},
+		"backup_jobs": {"project_id"},
+	} {
+		for _, column := range columns {
+			if !db.Migrator().HasColumn(table, column) {
+				t.Errorf("missing column %s.%s after upgrade", table, column)
+			}
 		}
 	}
 	var cnt int64

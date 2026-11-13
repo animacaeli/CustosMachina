@@ -96,5 +96,5 @@ func (SendRecord) TableName() string { return "notify_records" }
 
 // Models 返回本模块需要自动迁移的模型。
 func Models() []any {
-	return []any{&Group{}, &SendRecord{}, &Rule{}, &BusinessToken{}}
+	return []any{&Group{}, &SendRecord{}, &Rule{}, &BusinessToken{}, &InboxItem{}}
 }

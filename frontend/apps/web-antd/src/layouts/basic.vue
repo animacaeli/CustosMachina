@@ -1,7 +1,9 @@
 <script lang="ts" setup>
 import type { NotificationItem } from '@vben/layouts';
 
-import { computed, ref, watch } from 'vue';
+import type { InboxAction } from '#/api/core/inbox';
+
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
@@ -15,6 +17,7 @@ import {
 import { preferences, usePreferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 
+import { getInboxApi, updateInboxApi } from '#/api/core/inbox';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
@@ -26,9 +29,73 @@ const authStore = useAuthStore();
 const accessStore = useAccessStore();
 const { destroyWatermark, updateWatermark } = useWatermark();
 const { isDark } = usePreferences();
-const showDot = computed(() =>
-  notifications.value.some((item) => !item.isRead),
+const unread = ref(0);
+const showDot = computed(() => unread.value > 0);
+const inboxOpen = ref(false);
+const olderItems = ref<NotificationItem[]>([]);
+const inboxItems = computed(() => [
+  ...notifications.value,
+  ...olderItems.value,
+]);
+const next = ref(0);
+const inboxLoading = ref(false);
+let inboxRequest = 0;
+let inboxPoll: ReturnType<typeof setInterval> | undefined;
+
+async function loadInbox(older = false) {
+  if (!accessStore.accessToken || accessStore.loginExpired) return;
+  if (older && (!next.value || inboxLoading.value)) return;
+  const request = ++inboxRequest;
+  inboxLoading.value = true;
+  try {
+    const result = await getInboxApi(older ? next.value : undefined);
+    if (request !== inboxRequest) return;
+    const items: NotificationItem[] = result.items.map((item) => ({
+      ...item,
+      avatar: preferences.logo.source || preferences.app.defaultAvatar,
+      date: new Date(item.createdAt).toLocaleString('zh-CN'),
+      link: item.projectId ? '/projects/' + item.projectId : undefined,
+    }));
+    unread.value = result.unread;
+    if (older) {
+      olderItems.value.push(...items);
+    } else {
+      notifications.value = items;
+      olderItems.value = [];
+    }
+    next.value = result.next;
+  } catch {
+    // 轮询失败后保留最近一次成功加载的数据。
+  } finally {
+    if (request === inboxRequest) inboxLoading.value = false;
+  }
+}
+
+watch(
+  () => userStore.userInfo?.userId,
+  () => {
+    inboxRequest++;
+    inboxLoading.value = false;
+    notifications.value = [];
+    olderItems.value = [];
+    unread.value = 0;
+    next.value = 0;
+    inboxOpen.value = false;
+    void loadInbox();
+  },
 );
+
+onMounted(() => {
+  void loadInbox();
+  inboxPoll = setInterval(() => {
+    if (!document.hidden && !inboxOpen.value && !inboxLoading.value)
+      void loadInbox();
+  }, 30_000);
+});
+onUnmounted(() => {
+  inboxRequest++;
+  clearInterval(inboxPoll);
+});
 
 const isAdmin = computed(() => {
   const roles = userStore.userInfo?.roles ?? [];
@@ -62,30 +129,19 @@ async function handleLogout() {
   await authStore.logout(false);
 }
 
-function handleNoticeClear() {
-  notifications.value = [];
-}
-
-function markRead(id: number | string) {
-  const item = notifications.value.find((item) => item.id === id);
-  if (item) {
-    item.isRead = true;
+async function changeInbox(action: InboxAction, id?: number) {
+  try {
+    await updateInboxApi(action, id);
+    await loadInbox();
+  } catch {
+    // 请求拦截器显示错误。
   }
 }
 
-function remove(id: number | string) {
-  notifications.value = notifications.value.filter((item) => item.id !== id);
-}
-
-function handleMakeAll() {
-  notifications.value.forEach((item) => (item.isRead = true));
-}
-
-const viewAll = () => {};
-
 const handleClick = (item: NotificationItem) => {
-  // 如果通知项有链接，点击时跳转
+  if (!item.isRead) void changeInbox('read', Number(item.id));
   if (item.link) {
+    inboxOpen.value = false;
     navigateTo(item.link, item.query, item.state);
   }
 };
@@ -168,15 +224,37 @@ watch(
       <Notification
         :dot="showDot"
         :notifications="notifications"
-        @clear="handleNoticeClear"
-        @read="(item) => item.id && markRead(item.id)"
-        @remove="(item) => item.id && remove(item.id)"
-        @make-all="handleMakeAll"
+        @clear="changeInbox('clear')"
+        @read="(item) => changeInbox('read', Number(item.id))"
+        @remove="(item) => changeInbox('remove', Number(item.id))"
+        @make-all="changeInbox('read-all')"
         @on-click="handleClick"
-        @view-all="viewAll"
+        @view-all="inboxOpen = true"
       />
     </template>
     <template #extra>
+      <a-drawer v-model:open="inboxOpen" title="站内通知" width="440">
+        <a-empty v-if="inboxItems.length === 0" description="暂无通知" />
+        <ul v-else class="divide-y">
+          <li v-for="item in inboxItems" :key="item.id" class="py-3">
+            <button
+              type="button"
+              class="text-left font-medium"
+              @click="handleClick(item)"
+            >
+              <span v-if="!item.isRead" class="text-primary" aria-label="未读"
+                >●</span
+              >
+              {{ item.title }}
+            </button>
+            <p class="my-1 text-sm">{{ item.message }}</p>
+            <p class="text-muted-foreground text-xs">{{ item.date }}</p>
+          </li>
+        </ul>
+        <a-button v-if="next" :loading="inboxLoading" @click="loadInbox(true)">
+          加载更多
+        </a-button>
+      </a-drawer>
       <AuthenticationLoginExpiredModal
         v-model:open="accessStore.loginExpired"
         :avatar

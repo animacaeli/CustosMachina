@@ -204,3 +204,21 @@ func TestListRoles_Extended(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectScopeFailsClosedWhenLookupFails(t *testing.T) {
+	svc := newTestEnforcer(t)
+	role := "受限观察者"
+	if _, err := svc.CreateRole(SaveRoleInput{Name: role, Actions: []string{"config.view"}, ProjectIDs: []uint{1}}, true); err != nil {
+		t.Fatal(err)
+	}
+	user := identity.User{Roles: role}
+	if all, ids := ProjectVisibility(user); all || len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("expected project 1 before failure: all=%t ids=%v", all, ids)
+	}
+	if err := svc.db.Migrator().DropTable(&RoleProject{}); err != nil {
+		t.Fatal(err)
+	}
+	if all, ids := ProjectVisibility(user); all || len(ids) != 0 {
+		t.Fatalf("expected access denied on lookup failure: all=%t ids=%v", all, ids)
+	}
+}

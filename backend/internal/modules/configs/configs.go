@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
@@ -333,38 +335,97 @@ func (s *Service) Update(ctx context.Context, id uint, in SaveFileInput) error {
 }
 
 func (s *Service) Delete(ctx context.Context, id uint) error {
-	res := s.db.WithContext(ctx).Delete(&File{}, id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	s.db.WithContext(ctx).Where("file_id = ?", id).Delete(&Version{})
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var f File
+		if err := tx.First(&f, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := deletableSlot(tx, f.ProjectID, firstSeg(f.RelPath)); err != nil {
+			return err
+		}
+		var current File
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, id).Error; err != nil {
+			return err
+		}
+		if current.ProjectID != f.ProjectID || current.RelPath != f.RelPath {
+			return fmt.Errorf("配置路径已变化，请刷新后重试")
+		}
+		return deleteFiles(tx, []uint{id})
+	})
 }
 
-// DeleteByPrefix 按层级前缀批量删除（目录树右键「删除」，v0.14.2）：
-// 删 project_id 下 rel_path 以 prefix/ 开头的全部文件及版本链。
-// 前缀归一化后必须匹配至少一个文件（空删报错防手滑）；调用方已 confirm。
+// deletableSlot locks the project row shared with slot count updates.
+func deletableSlot(tx *gorm.DB, projectID uint, env string) (*projects.Project, error) {
+	if !isSlotSeg(env) || projectID == 0 {
+		return nil, nil
+	}
+	var p projects.Project
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, projectID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if slotNum(env) <= p.TestSlotCount {
+		return nil, fmt.Errorf("槽位 %s 仍在使用，禁止删除其配置目录和文件", env)
+	}
+	return &p, nil
+}
+
+func deleteFiles(tx *gorm.DB, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := tx.Where("file_id IN ?", ids).Delete(&Version{}).Error; err != nil {
+		return err
+	}
+	return tx.Delete(&File{}, ids).Error
+}
+
+// DeleteByPrefix deletes matching configuration files and their version history.
 func (s *Service) DeleteByPrefix(ctx context.Context, projectID uint, relPath string) (int, error) {
 	prefix := strings.Trim(strings.TrimSpace(relPath), "/")
 	if prefix == "" {
 		return 0, fmt.Errorf("删除前缀不能为空（根目录不可整体删除）")
 	}
 	var ids []uint
-	if err := s.db.WithContext(ctx).Model(&File{}).
-		Where("project_id = ? AND rel_path LIKE ?", projectID, prefix+"/%").
-		Pluck("id", &ids).Error; err != nil {
-		return 0, err
-	}
-	if len(ids) == 0 {
-		return 0, fmt.Errorf("前缀 %s 下没有配置文件", prefix)
-	}
-	if err := s.db.WithContext(ctx).Where("file_id IN ?", ids).Delete(&Version{}).Error; err != nil {
-		return 0, err
-	}
-	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&File{}).Error; err != nil {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		p, err := deletableSlot(tx, projectID, firstSeg(prefix))
+		if err != nil {
+			return err
+		}
+		var files []File
+		escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(prefix)
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "rel_path").
+			Where("project_id = ? AND rel_path LIKE ? ESCAPE '!'", projectID, escaped+"/%").
+			Find(&files).Error; err != nil {
+			return err
+		}
+		for _, f := range files {
+			if strings.HasPrefix(f.RelPath, prefix+"/") {
+				ids = append(ids, f.ID)
+			}
+		}
+		if err := deleteFiles(tx, ids); err != nil {
+			return err
+		}
+		if p != nil && prefix == firstSeg(prefix) && slotNum(prefix) <= p.TestSlotPeak {
+			slot := slotNum(prefix)
+			if !slices.Contains(p.RemovedSlotDirs, slot) {
+				p.RemovedSlotDirs = append(p.RemovedSlotDirs, slot)
+				return tx.Model(p).Select("RemovedSlotDirs").Updates(p).Error
+			}
+			return nil
+		}
+		if len(ids) == 0 {
+			return fmt.Errorf("前缀 %s 下没有配置文件", prefix)
+		}
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
 	return len(ids), nil
@@ -533,28 +594,39 @@ func (s *Service) GetContent(ctx context.Context, id uint, reveal bool, by strin
 
 // SaveContent 编辑保存（新版本快照）。
 func (s *Service) SaveContent(ctx context.Context, id uint, content string, by string) error {
-	var f File
-	if err := s.db.WithContext(ctx).First(&f, id).Error; err != nil {
-		return ErrNotFound
-	}
-	if err := s.db.WithContext(ctx).Model(&File{}).Where("id = ?", id).
-		Update("content", content).Error; err != nil {
-		return err
-	}
-	s.snapVersion(ctx, id, content, SourceEdit, by)
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var f File
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&f, id).Error; err != nil {
+			return err
+		}
+		if f.Content == content {
+			return nil
+		}
+		if err := tx.Model(&f).Update("content", content).Error; err != nil {
+			return err
+		}
+		return writeVersion(tx, id, content, SourceEdit, by)
+	})
 }
 
 func (s *Service) snapVersion(ctx context.Context, fileID uint, content, source, by string) {
+	_ = writeVersion(s.db.WithContext(ctx), fileID, content, source, by)
+}
+
+func writeVersion(db *gorm.DB, fileID uint, content, source, by string) error {
 	v := Version{FileID: fileID, Content: content, Hash: contentHash(content), Source: source, CreatedBy: by}
-	s.db.WithContext(ctx).Create(&v)
-	// 版本保留上限：每文件 50 个，超限删最旧
-	var ids []uint
-	s.db.WithContext(ctx).Model(&Version{}).Where("file_id = ?", fileID).
-		Order("id DESC").Offset(50).Limit(100).Pluck("id", &ids)
-	if len(ids) > 0 {
-		s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&Version{})
+	if err := db.Create(&v).Error; err != nil {
+		return err
 	}
+	var ids []uint
+	if err := db.Model(&Version{}).Where("file_id = ?", fileID).
+		Order("id DESC").Offset(50).Limit(100).Pluck("id", &ids).Error; err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		return db.Delete(&Version{}, ids).Error
+	}
+	return nil
 }
 
 func contentHash(s string) string {

@@ -14,6 +14,7 @@ export interface CronScript {
 }
 
 export interface CronJob {
+  projectId?: number;
   carrier: 'compose-run' | 'run';
   command: string;
   enabled: boolean;

@@ -2,7 +2,9 @@ package backup
 
 import (
 	"github.com/gin-gonic/gin"
+	"net/http"
 
+	"github.com/custos-machina/backend/internal/modules/rbac"
 	"github.com/custos-machina/backend/internal/pkg/httpx"
 	"github.com/custos-machina/backend/internal/server"
 )
@@ -42,6 +44,10 @@ func (h *Handler) create(c *gin.Context) {
 		httpx.FailBadRequest(c, err.Error())
 		return
 	}
+	if in.ProjectID != nil && *in.ProjectID != 0 && !rbac.CanViewProject(c, *in.ProjectID) {
+		httpx.Fail(c, http.StatusForbidden, 403, "无关联项目的查看权限")
+		return
+	}
 	out, err := h.svc.CreateJob(c.Request.Context(), in)
 	if err != nil {
 		httpx.FailBadRequest(c, err.Error())
@@ -58,6 +64,10 @@ func (h *Handler) update(c *gin.Context) {
 	var in SaveJobInput
 	if err := c.ShouldBindJSON(&in); err != nil {
 		httpx.FailBadRequest(c, err.Error())
+		return
+	}
+	if in.ProjectID != nil && *in.ProjectID != 0 && !rbac.CanViewProject(c, *in.ProjectID) {
+		httpx.Fail(c, http.StatusForbidden, 403, "无关联项目的查看权限")
 		return
 	}
 	out, err := h.svc.UpdateJob(c.Request.Context(), id, in)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/custos-machina/backend/internal/config"
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -124,6 +125,7 @@ func (s *Service) concurrentRunning(jobID uint) bool {
 // ---- CRUD ----
 
 type SaveJobInput struct {
+	ProjectID      *uint  `json:"projectId"`
 	Name           string `json:"name" binding:"required,max=64"`
 	Type           string `json:"type" binding:"required,oneof=platform_self remote_dir"`
 	Enabled        bool   `json:"enabled"`
@@ -146,6 +148,9 @@ type SaveJobInput struct {
 var remotePathRe = regexp.MustCompile(`^/[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
 
 func (s *Service) validateJob(in SaveJobInput) error {
+	if in.ProjectID != nil && *in.ProjectID != 0 && in.Type != TypeRemoteDir {
+		return fmt.Errorf("仅远端目录备份可关联项目")
+	}
 	if in.Schedule != "" {
 		if _, err := cron.ParseStandard(in.Schedule); err != nil {
 			return fmt.Errorf("调度表达式不合法（标准 5 段 crontab）: %v", err)
@@ -184,6 +189,9 @@ func (s *Service) encryptField(plain, aad string) (string, error) {
 }
 
 func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) {
+	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
+		return nil, err
+	}
 	if err := s.validateJob(in); err != nil {
 		return nil, err
 	}
@@ -196,6 +204,9 @@ func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) 
 		Storage: in.Storage, S3Endpoint: in.S3Endpoint, S3Bucket: in.S3Bucket,
 		S3AccessKey: in.S3AccessKey, LocalDir: in.LocalDir,
 		RetentionCount: in.RetentionCount,
+	}
+	if in.ProjectID != nil {
+		j.ProjectID = *in.ProjectID
 	}
 	if in.RetentionCount == 0 {
 		j.RetentionCount = 7
@@ -222,6 +233,9 @@ func (s *Service) CreateJob(ctx context.Context, in SaveJobInput) (*Job, error) 
 }
 
 func (s *Service) UpdateJob(ctx context.Context, id uint, in SaveJobInput) (*Job, error) {
+	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
+		return nil, err
+	}
 	var j Job
 	if err := s.db.WithContext(ctx).First(&j, id).Error; err != nil {
 		return nil, ErrNotFound
@@ -231,6 +245,12 @@ func (s *Service) UpdateJob(ctx context.Context, id uint, in SaveJobInput) (*Job
 	}
 	j.Name, j.Type, j.Enabled, j.Schedule = in.Name, in.Type, in.Enabled, in.Schedule
 	j.ServerID, j.RemotePath = in.ServerID, in.RemotePath
+	if in.ProjectID != nil {
+		j.ProjectID = *in.ProjectID
+	}
+	if j.Type == TypePlatformSelf {
+		j.ProjectID = 0
+	}
 	j.Storage, j.S3Endpoint, j.S3Bucket, j.S3AccessKey = in.Storage, in.S3Endpoint, in.S3Bucket, in.S3AccessKey
 	j.LocalDir = in.LocalDir
 	j.RetentionCount = in.RetentionCount
@@ -351,7 +371,9 @@ func (s *Service) execute(ctx context.Context, j *Job, trigger string) (*Run, er
 	fail := func(err error) (*Run, error) {
 		run.Status = RunFailed
 		run.Output = truncate(err.Error(), 4000)
-		s.db.Model(run).Updates(map[string]any{"status": run.Status, "output": run.Output})
+		if s.db.Model(run).Updates(map[string]any{"status": run.Status, "output": run.Output}).Error == nil {
+			s.recordRun(ctx, j, run)
+		}
 		s.notifyFailure(ctx, j, err)
 		return run, err
 	}
@@ -422,9 +444,12 @@ func (s *Service) execute(ctx context.Context, j *Job, trigger string) (*Run, er
 	run.SizeBytes = fi.Size()
 	run.Output = fmt.Sprintf("产物 %s（%s，%d 项%s）；保留清理 %d 个",
 		name, humanBytes(fi.Size()), mf.Entries, retentionNote(removed), removed)
-	s.db.Model(run).Updates(map[string]any{
+	if err := s.db.Model(run).Updates(map[string]any{
 		"status": run.Status, "artifact": run.Artifact, "size_bytes": run.SizeBytes, "output": run.Output,
-	})
+	}).Error; err != nil {
+		return run, err
+	}
+	s.recordRun(ctx, j, run)
 	return run, nil
 }
 
@@ -476,4 +501,12 @@ func sanitizePrefix(s string) string {
 		out = "backup"
 	}
 	return out
+}
+
+func (s *Service) recordRun(ctx context.Context, j *Job, run *Run) {
+	if recorder, ok := s.notifier.(notify.ProjectEventRecorder); ok {
+		recorder.RecordProjectEvent(ctx, notify.ProjectEvent{PlatformOnMissingProject: true, ProjectID: j.ProjectID,
+			Key: fmt.Sprintf("backup:%d", run.ID), Title: "备份：" + j.Name,
+			Message: map[string]string{RunSuccess: "执行成功", RunFailed: "执行失败"}[run.Status]})
+	}
 }

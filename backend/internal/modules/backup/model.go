@@ -36,7 +36,8 @@ const (
 
 // Job 备份任务。
 type Job struct {
-	ID uint `gorm:"primarykey" json:"id"`
+	ProjectID uint `gorm:"not null;default:0" json:"projectId"`
+	ID        uint `gorm:"primarykey" json:"id"`
 	// 定义
 	Name    string `gorm:"size:64;not null" json:"name"`
 	Type    string `gorm:"size:16;not null" json:"type"` // platform_self | remote_dir

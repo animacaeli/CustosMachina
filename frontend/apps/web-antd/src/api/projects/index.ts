@@ -138,6 +138,8 @@ export interface Project {
   testSlotCount: number;
   /** 槽位数历史峰值（只增不减）——配置目录树环境层固化依据 */
   testSlotPeak: number;
+  following?: boolean;
+  removedSlotDirs?: null | number[];
   trafficCap: number;
 }
 
@@ -169,6 +171,13 @@ export interface EnvTarget {
   projectId: number;
   runtime: 'compose' | 'k3s';
   serverId: number;
+}
+
+export function setProjectFollowApi(projectId: number, following: boolean) {
+  return requestClient.put<{ following: boolean }>('/auth/project-follow', {
+    projectId,
+    following,
+  });
 }
 
 export async function getProjectsApi() {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1021,13 +1022,20 @@ func TestValidateTargetWhitelist(t *testing.T) {
 func TestDeleteByPrefix(t *testing.T) {
 	svc, db, _ := testSvc(t)
 	ctx := context.Background()
+	if err := db.AutoMigrate(&projects.Project{}); err != nil {
+		t.Fatal(err)
+	}
+	p := projects.Project{ID: 1, Name: "demo", TestSlotCount: 1, TestSlotPeak: 3}
+	if err := db.Create(&p).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec(`CREATE TABLE IF NOT EXISTS project_env_targets (id INTEGER PRIMARY KEY, project_id INTEGER, env_type TEXT, server_id INTEGER)`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO project_env_targets (project_id, env_type, server_id) VALUES (1, 'test', 1), (1, 'prod', 1)`).Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, rp := range []string{"dev1/a.yaml", "dev1/sub/b.yaml", "dev2/c.yaml", "prod/d.yaml"} {
+	for _, rp := range []string{"dev2/a.yaml", "dev2/sub/b.yaml", "dev1/c.yaml", "dev1/sub/e.yaml", "prod/d.yaml"} {
 		if _, err := svc.Create(ctx, SaveFileInput{
 			Name: rp, ServerID: 1, Path: "/x/" + rp, Format: FormatYAML,
 			Content: "k: 1\n", ApplyAction: ApplyNone, ProjectID: 1, RelPath: rp,
@@ -1035,28 +1043,77 @@ func TestDeleteByPrefix(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 前缀匹配精确到段（dev1 不吃掉 dev2）
-	n, err := svc.DeleteByPrefix(ctx, 1, "dev1")
+	var protected File
+	if err := db.Where("rel_path = ?", "dev1/c.yaml").First(&protected).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(ctx, protected.ID); err == nil {
+		t.Fatal("在用槽位的单文件删除应拒绝")
+	}
+	if _, err := svc.DeleteByPrefix(ctx, 1, "dev1"); err == nil {
+		t.Fatal("在用槽位的目录删除应拒绝")
+	}
+	if err := svc.SaveContent(ctx, protected.ID, protected.Content, "t"); err != nil {
+		t.Fatal(err)
+	}
+	var versionCount int64
+	if err := db.Model(&Version{}).Where("file_id = ?", protected.ID).Count(&versionCount).Error; err != nil || versionCount != 1 {
+		t.Fatalf("无差异保存不应产生版本: count=%d err=%v", versionCount, err)
+	}
+	n, err := svc.DeleteByPrefix(ctx, 1, "dev2")
 	if err != nil || n != 2 {
-		t.Fatalf("dev1 前缀应删 2 个: n=%d err=%v", n, err)
+		t.Fatalf("退役槽位 dev2 应删 2 个: n=%d err=%v", n, err)
 	}
 	var cnt int64
 	db.Model(&File{}).Where("project_id = ?", 1).Count(&cnt)
-	if cnt != 2 {
+	if cnt != 3 {
 		t.Fatalf("剩余文件数不符: %d", cnt)
 	}
-	// 空删报错
-	if _, err := svc.DeleteByPrefix(ctx, 1, "dev1"); err == nil {
-		t.Fatal("空删应报错")
+	if n, err := svc.DeleteByPrefix(ctx, 1, "dev3"); err != nil || n != 0 {
+		t.Fatalf("应可清理空的退役槽位: n=%d err=%v", n, err)
+	}
+	if err := db.First(&p, p.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(p.RemovedSlotDirs) != "[2 3]" {
+		t.Fatalf("退役目录清理状态未保存: %v", p.RemovedSlotDirs)
+	}
+	proj := projects.NewService(db, nil)
+	out, err := proj.Update(ctx, p.ID, projects.SaveProjectInput{Name: p.Name, TestSlotCount: 2})
+	if err != nil || fmt.Sprint(out.RemovedSlotDirs) != "[3]" {
+		t.Fatalf("重新启用槽位应恢复目录: out=%+v err=%v", out, err)
 	}
 	// 根前缀拒绝
 	if _, err := svc.DeleteByPrefix(ctx, 1, ""); err == nil {
 		t.Fatal("空前缀应拒绝")
 	}
+	for _, table := range []string{"backup_jobs", "cron_jobs"} {
+		if err := db.Exec("CREATE TABLE " + table + " (id INTEGER PRIMARY KEY, project_id INTEGER)").Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec("INSERT INTO "+table+" (project_id) VALUES (?), (?)", p.ID, p.ID+1).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := proj.Delete(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"backup_jobs", "cron_jobs"} {
+		var ids []uint
+		if err := db.Table(table).Order("id").Pluck("project_id", &ids).Error; err != nil || !slices.Equal(ids, []uint{0, p.ID + 1}) {
+			t.Fatalf("仅删除项目的任务应解绑: table=%s ids=%v err=%v", table, ids, err)
+		}
+	}
+	if err := svc.Delete(ctx, protected.ID); err != nil {
+		t.Fatalf("应能清理已删除项目的遗留文件: %v", err)
+	}
+	if n, err := svc.DeleteByPrefix(ctx, p.ID, "dev1"); n != 1 || err != nil {
+		t.Fatalf("应能清理已删除项目的遗留目录: n=%d err=%v", n, err)
+	}
 	// 版本链随之清理
 	var vn int64
 	db.Model(&Version{}).Count(&vn)
-	if vn != 2 { // dev2 + prod 两个文件的初始版本
+	if vn != 1 { // 只剩 prod 的初始版本
 		t.Fatalf("版本链未随删: %d", vn)
 	}
 }

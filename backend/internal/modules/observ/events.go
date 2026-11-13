@@ -33,14 +33,16 @@ const (
 )
 
 // recordAlertEvent 落一条事件（失败只打日志——留痕不阻塞通知主链路）。
-func (s *Service) recordAlertEvent(ctx context.Context, source, level, title, detail, dedupKey string) {
+func (s *Service) recordAlertEvent(ctx context.Context, source, level, title, detail, dedupKey string) uint {
 	ev := AlertEvent{
 		Source: source, Level: level, Title: title, Detail: detail,
 		DedupKey: dedupKey, Status: EventStatusOpen,
 	}
 	if err := s.db.WithContext(ctx).Create(&ev).Error; err != nil {
 		logger.Errorf("[observ] 告警事件落库失败 source=%s title=%s: %v", source, title, err)
+		return 0
 	}
+	return ev.ID
 }
 
 // AlertEventPage 事件分页。

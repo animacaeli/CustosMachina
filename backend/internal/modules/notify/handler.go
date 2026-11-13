@@ -40,6 +40,8 @@ func (h *Handler) listRecords(c *gin.Context) {
 }
 
 func (h *Handler) RegisterRoutes(r server.Router) {
+	r.Authed.GET("/auth/inbox", h.inbox)
+	r.Authed.PUT("/auth/inbox", h.inbox)
 	g := r.Authed.Group("/notify-groups")
 	{
 		g.GET("", h.list)

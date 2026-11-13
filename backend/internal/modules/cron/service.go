@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/modules/resources"
 	"github.com/custos-machina/backend/internal/pkg/jobs"
 	"github.com/custos-machina/backend/internal/pkg/logger"
@@ -223,6 +224,7 @@ func validateCarrier(scriptType, carrier, image, project, service string) error 
 }
 
 type JobInput struct {
+	ProjectID   *uint  `json:"projectId"`
 	Name        string `json:"name" binding:"required,max=128"`
 	ScriptID    uint   `json:"scriptId" binding:"required"`
 	Schedule    string `json:"schedule" binding:"omitempty,max=64"` // 空 = 仅手动执行（一次性脚本）
@@ -239,6 +241,9 @@ type JobInput struct {
 }
 
 func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator string) (*CronJob, error) {
+	if err := projects.ValidateTaskProject(ctx, s.db, in.ProjectID); err != nil {
+		return nil, err
+	}
 	var sc CronScript
 	if err := s.db.WithContext(ctx).First(&sc, in.ScriptID).Error; err != nil {
 		return nil, fmt.Errorf("脚本不存在")
@@ -272,6 +277,9 @@ func (s *Service) SaveJob(ctx context.Context, id uint, in JobInput, operator st
 	job.Name, job.ScriptID, job.Schedule, job.ServerID = in.Name, in.ScriptID, in.Schedule, in.ServerID
 	job.Carrier, job.Image, job.ProjectName, job.Service = in.Carrier, in.Image, in.ProjectName, in.Service
 	job.Command, job.Network = in.Command, in.Network
+	if in.ProjectID != nil {
+		job.ProjectID = *in.ProjectID
+	}
 	if in.TimeoutSecs > 0 {
 		job.TimeoutSecs = in.TimeoutSecs
 	}
@@ -453,16 +461,19 @@ func (s *Service) startRun(job *CronJob, trigger string) (*CronRun, bool) {
 	return run, true
 }
 
-func (s *Service) finishRun(run *CronRun, status, output string, start time.Time) {
+func (s *Service) finishRun(run *CronRun, status, output string, start time.Time) error {
 	output = truncateUTF8(output, 64*1024) // 所有路径统一截断（成功/失败/超时）
 	now := time.Now()
 	run.Status, run.Output, run.FinishedAt = status, output, &now
 	run.DurationSecs = int(now.Sub(start).Seconds())
-	s.db.Model(run).Updates(map[string]any{
+	if err := s.db.Model(run).Updates(map[string]any{
 		"status": status, "output": output, "finished_at": now,
 		"duration_secs": run.DurationSecs,
-	})
+	}).Error; err != nil {
+		return err
+	}
 	s.db.Model(&CronJob{}).Where("id = ?", run.JobID).Update("last_status", status)
+	return nil
 }
 
 // buildCommand 按载体拼目标机 shell 命令（hostScriptPath 已由调用方落好脚本文件；
@@ -595,7 +606,13 @@ func (s *Service) executeWithRetry(ctx context.Context, job *CronJob, run *CronR
 // finishAndMaybeRetry 落结果 + 全量输出落目标机文件 + 失败推运维群 + 重试链。
 func (s *Service) finishAndMaybeRetry(ctx context.Context, job *CronJob, run *CronRun, attempt int, status, output string, start time.Time, fullOut string) {
 	outputFile := s.writeFullOutput(ctx, job, run, fullOut)
-	s.finishRun(run, status, output, start)
+	if err := s.finishRun(run, status, output, start); err != nil {
+		logger.Warnf("[cron] 记录任务结果失败 run=%d: %v", run.ID, err)
+	} else if recorder, ok := s.notifier.(notify.ProjectEventRecorder); ok {
+		recorder.RecordProjectEvent(ctx, notify.ProjectEvent{PlatformOnMissingProject: true, ProjectID: job.ProjectID,
+			Key: fmt.Sprintf("cron:%d", run.ID), Title: "定时任务：" + job.Name,
+			Message: fmt.Sprintf("%s · 第 %d 次尝试", status, attempt+1)})
+	}
 	if outputFile != "" {
 		s.db.Model(run).Update("output_file", outputFile)
 		run.OutputFile = outputFile

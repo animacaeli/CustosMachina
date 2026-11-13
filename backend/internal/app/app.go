@@ -136,6 +136,19 @@ func init() {
 		}
 		return db.Exec("UPDATE projects SET test_slot_peak = test_slot_count WHERE test_slot_peak = 0 OR test_slot_peak IS NULL").Error
 	})
+	database.RegisterGoHook("0014", addColIfMissing(&projects.Project{}, "RemovedSlotDirs", "removed_slot_dirs"))
+	database.RegisterGoHook("0015", func(db *gorm.DB) error {
+		if err := addColIfMissing(&projects.Project{}, "CreatorID", "creator_id")(db); err != nil {
+			return err
+		}
+		return db.AutoMigrate(&projects.Follow{}, &notify.InboxItem{})
+	})
+	database.RegisterGoHook("0016", func(db *gorm.DB) error {
+		if err := addColIfMissing(&backup.Job{}, "ProjectID", "project_id")(db); err != nil {
+			return err
+		}
+		return addColIfMissing(&cronmod.CronJob{}, "ProjectID", "project_id")(db)
+	})
 }
 
 // ProvideDBModelList 全量模型清单（模块在此登记）——Migrate 与跳级回归测试共用。

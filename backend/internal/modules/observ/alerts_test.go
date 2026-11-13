@@ -15,6 +15,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
+	"github.com/custos-machina/backend/internal/modules/notify"
+	"github.com/custos-machina/backend/internal/modules/projects"
 	"github.com/custos-machina/backend/internal/pkg/crypto"
 )
 
@@ -41,7 +43,7 @@ func alertsTestEnv(t *testing.T) (*Service, *httptest.Server, *int64, *int64) {
 	}
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1) // :memory: 多连接=多库
-	if err := db.AutoMigrate(&Alert{}); err != nil {
+	if err := db.AutoMigrate(&Alert{}, &projects.Project{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`CREATE TABLE IF NOT EXISTS platform_settings (skey TEXT PRIMARY KEY, value TEXT)`).Error; err != nil {
@@ -340,4 +342,54 @@ func TestPromqlAlertSyncLegacy(t *testing.T) {
 		t.Fatal("应已调 O2 alerts API")
 	}
 	_ = o2
+}
+
+type inboxRecorder struct {
+	events []notify.ProjectEvent
+}
+
+func (*inboxRecorder) NotifyEvent(context.Context, string, string, string, string, string) {}
+
+func (r *inboxRecorder) RecordProjectEvent(_ context.Context, event notify.ProjectEvent) {
+	r.events = append(r.events, event)
+}
+
+func TestO2InboxPreservesIndependentTriggersAndLevel(t *testing.T) {
+	svc, _, _, _ := alertsTestEnv(t)
+	if err := svc.db.AutoMigrate(&AlertEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	critical := Alert{Name: "critical-alert", Level: notify.LevelCritical}
+	if err := svc.db.Create(&critical).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.Model(&critical).Update("level", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.db.Create(&Alert{Name: "repeated-alert", Level: notify.LevelCritical}).Error; err != nil {
+		t.Fatal(err)
+	}
+	recorder := &inboxRecorder{}
+	svc.SetNotifier(recorder)
+	h := NewHandler(svc, nil)
+	cfg, _ := svc.o2Config(t.Context())
+	for _, name := range []string{"repeated-alert", "repeated-alert", "critical-alert"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/observ/alerts/webhook",
+			strings.NewReader("{\"alert_name\":\""+name+"\",\"trigger_time\":\"{trigger_time}\"}"))
+		c.Request.Header.Set("X-Custos-Token", cfg.Token)
+		h.o2AlertWebhook(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("webhook returned %d: %s", w.Code, w.Body)
+		}
+	}
+	if len(recorder.events) != 3 || recorder.events[0].Key == recorder.events[1].Key {
+		t.Fatalf("independent alerts must have distinct event keys: %+v", recorder.events)
+	}
+	for i, want := range []string{notify.LevelCritical, notify.LevelCritical, notify.LevelWarn} {
+		if recorder.events[i].Message != "级别："+want {
+			t.Fatalf("event %d: want %s, got %q", i, want, recorder.events[i].Message)
+		}
+	}
 }

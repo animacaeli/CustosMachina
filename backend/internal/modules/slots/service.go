@@ -408,6 +408,11 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 	}
 	if res := s.db.WithContext(ctx).Create(&b); res.Error == nil {
 		s.db.WithContext(ctx).Model(slot).Update("last_build_id", b.ID)
+		if s.notify != nil {
+			s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: p.ID,
+				Key: fmt.Sprintf("build:%d:%s", b.ID, b.Status), Title: "测试构建：" + p.Name,
+				Message: fmt.Sprintf("%s · %s", tag, b.Status)})
+		}
 	}
 	// 同步落一条部署记录（测试环境发布列表可见、可重新部署/看 CD 日志）
 	rel := releasemod.Release{
@@ -421,6 +426,10 @@ func (s *Service) rebuild(ctx context.Context, p *projectRow, slot *Slot, source
 	}
 	if err := s.db.WithContext(ctx).Create(&rel).Error; err != nil {
 		logger.Warnf("[slots] 落部署记录失败: %v", err)
+	} else if s.notify != nil {
+		s.notify.RecordProjectEvent(ctx, notify.ProjectEvent{ProjectID: p.ID,
+			Key: fmt.Sprintf("release:%d", rel.ID), Title: "测试发布：" + p.Name,
+			Message: fmt.Sprintf("%s · %s", tag, rel.Status)})
 	}
 	verb := "部署成功"
 	if status == ci.BuildFailed {
